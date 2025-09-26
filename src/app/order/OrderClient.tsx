@@ -1,39 +1,39 @@
-// src/app/order/OrderClient.tsx
+// src/app/order/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON } from '@/lib/api';
+import { fetchJSON, fmtDayLabel } from '@/lib/api';
 
 type SingleResp = {
   ok: boolean;
   summary: null | { fullName: string; date: string; mealBox: string; extra1: string; extra2: string; orderId: string };
 };
 
-type DatesResp = { ok: boolean; dates: string[] };
-
-export default function OrderClient() {
-  // 1) креды
+export default function OrderPage() {
+  // 1) читаем query один раз при монтировании
   const [org, setOrg] = useState('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
 
-  // 2) данные по датам
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState('');
 
-  // Подстановка из query/localStorage при монтировании
+  // ——————————————————————————————————————————
+  // Инициализация кредов из URL / localStorage
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
+
     setOrg(o); setEmployeeID(e); setToken(t);
+
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
       localStorage.setItem('baza.employeeID', e);
@@ -41,46 +41,81 @@ export default function OrderClient() {
     }
   }, []);
 
-  // Загрузка опубликованных дат
+  // ——————————————————————————————————————————
+  // Подгружаем опубликованные даты
   useEffect(() => {
     (async () => {
       try {
         if (!org) return;
         setLoading(true); setError('');
-        const r = await fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}`);
+        const r = await fetchJSON<{ ok:boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
         setDates(r.dates || []);
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
       } finally {
         setLoading(false);
       }
     })();
   }, [org]);
 
-  // Для каждой даты — статус заказа (single)
-  useEffect(() => {
-    (async () => {
-      if (!employeeID || !org || !token || dates.length === 0) return;
-      const out: Record<string, SingleResp> = {};
-      for (const d of dates) {
-        try {
-          const u = new URL('/api/hr_orders', window.location.origin);
-          u.searchParams.set('mode','single');
-          u.searchParams.set('employeeID', employeeID);
-          u.searchParams.set('org', org);
-          u.searchParams.set('token', token);
-          u.searchParams.set('date', d);
-          const r = await fetchJSON<SingleResp>(u.toString());
-          out[d] = r;
-        } catch {
-          out[d] = { ok: false, summary: null };
-        }
+  // ——————————————————————————————————————————
+  // Функция загрузки занятости по всем датам
+  async function loadBusyMap(datesList: string[]) {
+    if (!employeeID || !org || !token || datesList.length === 0) return;
+    const out: Record<string, SingleResp> = {};
+    for (const d of datesList) {
+      try {
+        const u = new URL('/api/hr_orders', window.location.origin);
+        u.searchParams.set('mode','single');
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('org', org);
+        u.searchParams.set('token', token);
+        u.searchParams.set('date', d);
+        const r = await fetchJSON<SingleResp>(u.toString());
+        out[d] = r;
+      } catch {
+        out[d] = { ok: false, summary: null };
       }
-      setBusy(out);
-    })();
+    }
+    setBusy(out);
+  }
+
+  // Грузим занятость, когда появились даты/креды
+  useEffect(() => {
+    if (dates.length) { void loadBusyMap(dates); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dates, employeeID, org, token]);
+
+  // Авто-обновление занятости при возврате на вкладку/фокусе
+  useEffect(() => {
+    function onFocus() { void loadBusyMap(dates); }
+    function onVisibility() { if (document.visibilityState === 'visible') void loadBusyMap(dates); }
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dates, employeeID, org, token]);
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
+
+  // ——————————————————————————————————————————
+  // Переход в квиз (для свободной даты — сразу, без модалки)
+  function goToQuiz(dateISO: string) {
+    const u = new URL('/order/quiz', window.location.origin);
+    u.searchParams.set('date', dateISO);
+    u.searchParams.set('step','1');
+    // прокинем креды из текущей страницы
+    const sp = new URLSearchParams(window.location.search);
+    for (const k of ['org','employeeID','token']) {
+      const v = sp.get(k);
+      if (v) u.searchParams.set(k, v);
+    }
+    window.location.href = u.toString();
+  }
 
   return (
     <main>
@@ -90,7 +125,7 @@ export default function OrderClient() {
         </p>
       </Panel>
 
-      {/* Блок авторизации (на случай, если пришли без query) */}
+      {/* Блок авторизации (на случай если пришли без query) */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -113,7 +148,15 @@ export default function OrderClient() {
             return (
               <Button
                 key={d}
-                onClick={()=>setSelected(d)}
+                onClick={()=>{
+                  if (has) {
+                    // Занято — показываем модалку с составом и действиями
+                    setSelected(d);
+                  } else {
+                    // Свободно — сразу идём в квиз (без промежуточной модалки)
+                    goToQuiz(d);
+                  }
+                }}
                 className="w-full"
                 variant={has ? 'ghost' : 'primary'}
               >
@@ -123,38 +166,49 @@ export default function OrderClient() {
           })}
         </div>
 
-        {/* Подсказка по цветам */}
+        {/* Легенда */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-4 rounded bg-brand-500" /> свободно
+            <span className="inline-block w-3 h-3 rounded bg-yellow-400" /> Свободно
           </span>
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-4 rounded bg-white/10" /> уже заказано
+            <span className="inline-block w-3 h-3 rounded bg-white/10" /> Уже заказано
           </span>
         </div>
       </Panel>
 
-      {/* Модалка по выбранной дате */}
-      {selected && (
+      {/* Модалка только если заказ уже есть */}
+      {selected && busy[selected]?.summary && (
         <DateModal
           iso={selected}
           employeeID={employeeID}
           org={org}
           token={token}
           info={busy[selected]}
-          onClose={()=>setSelected(null)}
+          onClose={()=>{
+            setSelected(null);
+            // подстрахуемся и перечитаем статусы
+            void loadBusyMap(dates);
+          }}
+          onChanged={()=>{
+            // если HR или сотрудник изменил/отменил заказ — перезагрузить статусы
+            void loadBusyMap(dates);
+          }}
         />
       )}
     </main>
   );
 }
 
-/* ——— Модалка: если заказ уже есть — показываем состав и кнопки ОК/Изменить/Отменить;
-      если свободно — сразу «Перейти к выбору» (квиз) */
-function DateModal({ iso, employeeID, org, token, info, onClose }:{
+/* ——— Модалка: показываем состав и кнопки ОК/Изменить/Отменить */
+function DateModal({
+  iso, employeeID, org, token, info, onClose, onChanged
+}:{
   iso: string;
   employeeID: string; org: string; token: string;
-  info?: SingleResp; onClose: ()=>void;
+  info?: SingleResp;
+  onClose: ()=>void;
+  onChanged: ()=>void;
 }) {
   const has = Boolean(info?.summary);
   const s   = info?.summary;
@@ -166,19 +220,22 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:{
     if (!s?.orderId) return;
     try {
       setWorking(true); setErr('');
-      await fetchJSON('/api/order_cancel', {
+      const r = await fetchJSON<{ ok:boolean; error?:string }>('/api/order_cancel', {
         method: 'POST',
         body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' }),
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' }
       });
+      if (!r.ok) throw new Error(r.error || 'Не удалось отменить заказ');
       onClose();
+      onChanged();
       alert('Заказ отменён.');
     } catch(e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
     } finally { setWorking(false); }
   }
 
-  function toQuiz() {
+  function changeOrder() {
     const u = new URL('/order/quiz', window.location.origin);
     u.searchParams.set('date', iso);
     u.searchParams.set('step','1');
@@ -210,27 +267,12 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:{
             {err && <div className="text-red-400">{err}</div>}
             <div className="flex gap-3 pt-2">
               <Button onClick={onClose}>ОК</Button>
-              <Button onClick={toQuiz} variant="ghost">Изменить</Button>
+              <Button onClick={changeOrder} variant="ghost">Изменить</Button>
               <Button onClick={cancelOrder} variant="danger" disabled={working}>{working ? 'Отмена…' : 'Отменить'}</Button>
             </div>
           </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="text-white/80 text-sm">На эту дату заказа ещё нет. Перейти к выбору блюд?</div>
-            <div className="flex gap-3">
-              <Button onClick={toQuiz}>Перейти к выбору</Button>
-              <Button onClick={onClose} variant="ghost">Отмена</Button>
-            </div>
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
-}
-
-function fmtDayLabel(d: string) {
-  if (!d) return '';
-  const dt = new Date(`${d}T00:00:00`);
-  const s = dt.toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' });
-  return s.replace(/^[а-яё]/, ch => ch.toUpperCase());
 }
