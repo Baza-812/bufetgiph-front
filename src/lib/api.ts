@@ -1,6 +1,6 @@
 // src/lib/api.ts
 
-/** Базовый URL API; указываем в .env.local -> NEXT_PUBLIC_API_BASE=https://bufetgiph-api.vercel.app/api */
+/** Базовый URL API; укажите в .env.local -> NEXT_PUBLIC_API_BASE=https://bufetgiph-api.vercel.app/api */
 export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, '');
 
 /** Склеивает относительный путь с базой API. */
@@ -9,7 +9,7 @@ export function apiUrl(path: string) {
   return API_BASE ? `${API_BASE}${p}` : p;
 }
 
-/** Универсальный fetch JSON (без дублей), по умолчанию ходит на API_BASE. */
+/** Универсальный fetch JSON (без дублей и без any). */
 export async function fetchJSON<T = unknown>(input: string, init?: RequestInit): Promise<T> {
   const url = input.includes('://') ? input : apiUrl(input);
 
@@ -17,22 +17,30 @@ export async function fetchJSON<T = unknown>(input: string, init?: RequestInit):
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     cache: 'no-store',
-    // @ts-ignore — поле next допустимо в Next.js среде
+    // Next.js расширяет типы (TS их не знает) — нужна директива:
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-expect-error next runtime hint
     next: { revalidate: 0 },
   };
 
   const res = await fetch(url, req);
+
   if (!res.ok) {
     const ct = res.headers.get('content-type') || '';
     if (ct.includes('application/json')) {
-      const j = await res.json().catch(() => ({}));
-      throw new Error((j as any)?.error || `${res.status} ${res.statusText}`);
+      const j = (await res.json().catch(() => ({}))) as unknown;
+      const errMsg =
+        typeof j === 'object' && j !== null && 'error' in (j as Record<string, unknown>)
+          ? String((j as { error?: unknown }).error ?? `HTTP ${res.status}`)
+          : `HTTP ${res.status} ${res.statusText}`;
+      throw new Error(errMsg);
     } else {
       const t = await res.text().catch(() => '');
       throw new Error(`HTTP ${res.status}: ${t?.slice(0, 200)}`);
     }
   }
-  return res.json() as Promise<T>;
+
+  return (res.json() as unknown) as T;
 }
 
 /* ====================== Меню ====================== */
@@ -47,6 +55,17 @@ export type MenuItem = {
   ingredients?: string;
 };
 
+type RawMenu = {
+  id?: string;
+  name?: unknown;
+  description?: unknown;
+  category?: unknown;
+  price?: unknown;
+  garnirnoe?: unknown;
+  ingredients?: unknown;
+  fields?: Record<string, unknown>;
+};
+
 /** Забирает первое значение из массива/lookup. */
 function first(v: unknown): string {
   if (Array.isArray(v)) return String(v[0] ?? '');
@@ -54,14 +73,15 @@ function first(v: unknown): string {
 }
 
 /** Преобразование сырой записи из Airtable/бэкенда к нашему типу MenuItem. */
-export function mapMenuItem(raw: any): MenuItem {
+export function mapMenuItem(raw: unknown): MenuItem {
+  const r = (raw ?? {}) as RawMenu;
+  const f = (r.fields ?? {}) as Record<string, unknown>;
+
   // Если уже в целевом формате — вернём как есть
-  if (raw && raw.id && raw.name) return raw as MenuItem;
+  if (typeof r === 'object' && r && 'id' in r && 'name' in r && typeof (r as { name: unknown }).name === 'string') {
+    return r as unknown as MenuItem;
+  }
 
-  const r = raw || {};
-  const f = r.fields || r || {};
-
-  // Возможные поля из разных источников
   const name =
     first(f['Dish Name (from Dish)']) ||
     first(f['Dish Name']) ||
@@ -78,18 +98,21 @@ export function mapMenuItem(raw: any): MenuItem {
     first(r.category);
 
   const priceRaw = f['Price'] ?? r.price;
-  const price = typeof priceRaw === 'number' ? priceRaw : Number(priceRaw || 0) || undefined;
+  const price =
+    typeof priceRaw === 'number'
+      ? priceRaw
+      : priceRaw == null
+      ? undefined
+      : Number(priceRaw) || undefined;
 
   // Гарнирность: либо формула "Garnirnoe Bool", либо lookup "Garnirnoe (from Dish)"
   const garnBool = f['Garnirnoe Bool'];
   const garnLookup = f['Garnirnoe (from Dish)'];
 
-  const garnirnoe =
-    typeof garnBool === 'number'
-      ? garnBool === 1
-      : Array.isArray(garnLookup)
-        ? Boolean(garnLookup[0])
-        : Boolean(f['garnirnoe'] ?? r.garnirnoe);
+  let garnirnoe: boolean | undefined = undefined;
+  if (typeof garnBool === 'number') garnirnoe = garnBool === 1;
+  else if (Array.isArray(garnLookup)) garnirnoe = Boolean(garnLookup[0]);
+  else if (typeof r.garnirnoe === 'boolean') garnirnoe = r.garnirnoe;
 
   const ingredients =
     first(f['Ingredients (from Dish)']) ||
@@ -97,7 +120,7 @@ export function mapMenuItem(raw: any): MenuItem {
     first(r.ingredients);
 
   return {
-    id: r.id || String(f.id || ''),
+    id: String(r.id || f['id'] || ''),
     name,
     description: description || undefined,
     category: category || undefined,
