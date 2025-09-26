@@ -142,19 +142,29 @@ export default function HRConsolePage() {
 
   // действия HR
   function openQuizFor(emp: HREmployee) {
-    const u = new URL('/order/quiz', window.location.origin);
-    u.searchParams.set('date', date);
-    u.searchParams.set('step', '1');
-    // HR-креды
-    u.searchParams.set('employeeID', employeeID);
-    u.searchParams.set('org', org);
-    u.searchParams.set('token', token);
-    // таргет сотрудник
-    u.searchParams.set('forEmployeeID', emp.id);
-    // вернуться в консоль после подтверждения
-    u.searchParams.set('back', '/hr/console');
-    window.location.href = u.toString();
+  const u = new URL('/order/quiz', window.location.origin);
+  u.searchParams.set('date', date);
+  u.searchParams.set('step', '1');
+
+  // HR-креды (именно HR-id/token, потому что он действует "за сотрудника")
+  u.searchParams.set('employeeID', employeeID);
+  u.searchParams.set('org', org);
+  u.searchParams.set('token', token);
+
+  // таргет-сотрудник
+  u.searchParams.set('forEmployeeID', emp.id);
+
+  // если у сотрудника на выбранную дату уже есть заказ — добавляем orderId
+  const sum = orderByEmp[emp.id];
+  if (sum?.orderId) {
+    u.searchParams.set('orderId', sum.orderId);
   }
+
+  // чтобы после подтверждения вернуться в консоль
+  u.searchParams.set('back', '/hr/console');
+
+  window.location.href = u.toString();
+}
 
   async function cancelOrder(emp: HREmployee) {
     const s = orderByEmp[emp.id];
