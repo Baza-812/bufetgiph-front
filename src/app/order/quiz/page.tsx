@@ -1,5 +1,3 @@
-
-// src/app/order/quiz/page.tsx
 'use client';
 // форсим серверный рендер вместо предрендера
 export const dynamic = 'force-dynamic';
