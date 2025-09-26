@@ -6,6 +6,8 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import { useCallback, useEffect, useState } from 'react';
+
 
 type SingleResp = {
   ok: boolean;
@@ -72,39 +74,33 @@ export default function OrderClient() {
   }, [org]);
 
   // подгрузка статусов на все даты
-  async function reloadBusy() {
-    if (reloadingRef.current) return;
-    if (!employeeID || !org || !token || dates.length === 0) return;
-    reloadingRef.current = true;
+  const reloadBusy = useCallback(async () => {
+  if (!employeeID || !org || !token || dates.length === 0) return;
+
+  const out: Record<string, { ok: boolean; summary: unknown | null }> = {};
+  for (const d of dates) {
     try {
-      setLoadingBusy(true);
-      const out: Record<string, SingleResp> = {};
-      const ts = Date.now().toString();
-      for (const d of dates) {
-        const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode','single');
-        u.searchParams.set('employeeID', employeeID);
-        u.searchParams.set('org', org);
-        u.searchParams.set('token', token);
-        u.searchParams.set('date', d);
-        u.searchParams.set('_ts', ts);
-        try {
-          const r = await fetchJSON<SingleResp>(u.toString(), { cache: 'no-store' });
-          out[d] = r;
-        } catch {
-          out[d] = { ok: false, summary: null };
-        }
-      }
+      const u = new URL('/api/hr_orders', window.location.origin);
+      u.searchParams.set('mode','single');
+      u.searchParams.set('employeeID', employeeID);
+      u.searchParams.set('org', org);
+      u.searchParams.set('token', token);
+      u.searchParams.set('date', d);
+      const r = await fetchJSON<{ ok: boolean; summary: unknown }>(u.toString());
+      out[d] = r;
+    } catch {
+      out[d] = { ok: false, summary: null };
+    }
+  }
       setBusy(out);
-    } finally {
-      setLoadingBusy(false);
-      reloadingRef.current = false;
+}, [employeeID, org, token, dates]);
     }
   }
 
   // первичная загрузка busy
   useEffect(() => {
-    reloadBusy();
+  reloadBusy();
+}, [reloadBusy]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dates, employeeID, org, token]);
 
