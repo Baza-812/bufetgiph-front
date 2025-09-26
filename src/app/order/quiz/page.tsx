@@ -320,16 +320,14 @@ function QuizPageInner() {
 
       {/* Шаг 3s — Замена супа на салат */}
       {!loading && !err && step === '3s' && (
-        <SaladStep
-          byCat={byCat}
-          onPick={(it)=>pickSoup(it,true)}
-          // onSwap отсутствует умышленно
-          // @ts-expect-error: отключаем кнопку swap на этом шаге
-          onSwap={undefined}
-          draft={draft}
-          onBack={()=>go('3')}
-        />
-      )}
+  <SaladStep
+    byCat={byCat}
+    onPick={(it)=>pickSoup(it,true)}
+    // onSwap намеренно отсутствует на этом шаге
+    onBack={()=>go('3')}
+    draft={draft}
+  />
+)}
 
       {/* Шаг 3a — Замена супа на … */}
       {!loading && !err && step === '3a' && (
