@@ -1,4 +1,44 @@
 // src/lib/api.ts
+export const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, ''); // без финального слеша
+
+export function apiUrl(path: string) {
+  // path можно передавать как "/hr_orders?..." или "hr_orders?..."
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return API_BASE ? `${API_BASE}${p}` : p;
+}
+
+// Универсальный fetch JSON c no-store
+export async function fetchJSON<T = unknown>(
+  input: string,
+  init?: RequestInit
+): Promise<T> {
+  const url = input.includes('://')
+    ? input
+    : apiUrl(input); // <-- главное: заворачиваем через apiUrl
+
+  const req: RequestInit = {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    cache: 'no-store',
+    next: { revalidate: 0 },
+  };
+
+  const r = await fetch(url, req);
+  if (!r.ok) {
+    // попробуем показать текст, если это не JSON
+    const ct = r.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error((j as any)?.error || `${r.status} ${r.statusText}`);
+    } else {
+      const t = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status}: ${t?.slice(0, 200)}`);
+    }
+  }
+  return r.json();
+}
+
 
 export type MenuItem = {
   id: string;
