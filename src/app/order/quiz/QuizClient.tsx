@@ -1,6 +1,7 @@
+// src/app/order/quiz/QuizClient.tsx
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
@@ -33,17 +34,7 @@ type Draft = {
 // у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
 const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
-/* ——— ВРАППЕР С SUSPENSE ——— */
-export default function QuizPageWrapper() {
-  return (
-    <Suspense fallback={<div className="p-4 text-white/70">Загрузка…</div>}>
-      <QuizPageInner />
-    </Suspense>
-  );
-}
-
-/* ——— ОСНОВНОЙ КОМПОНЕНТ ——— */
-function QuizPageInner() {
+export default function QuizClient() {
   const sp = useSearchParams();
   const qOrg  = sp.get('org') || '';
   const qEmp  = sp.get('employeeID') || '';
@@ -73,12 +64,9 @@ function QuizPageInner() {
 
   // Подтянуть креды из localStorage, если не пришли в query
   useEffect(() => {
-    // намеренно один раз при монтировании
-    (async () => {
-      if (!org)  setOrg(localStorage.getItem('baza.org') || '');
-      if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
-      if (!token) setToken(localStorage.getItem('baza.token') || '');
-    })();
+    if (!org)  setOrg(localStorage.getItem('baza.org') || '');
+    if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
+    if (!token) setToken(localStorage.getItem('baza.token') || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -111,16 +99,14 @@ function QuizPageInner() {
     })();
   }, [date, org]);
 
-  // Нормализация категорий из Airtable -> наши канонические
+  // Нормализация категорий
   const byCat = useMemo(() => {
     const NORM: Record<string, string> = {
-      // множественное → единственное
       Casseroles: 'Zapekanka',
       Bakery:     'Zapekanka',
       Pancakes:   'Zapekanka',
       Salads:     'Salad',
       Soups:      'Soup',
-      // как есть
       Zapekanka:  'Zapekanka',
       Salad:      'Salad',
       Soup:       'Soup',
@@ -149,13 +135,13 @@ function QuizPageInner() {
   function pickSalad(it: MenuItem, isSwap=false) {
     const d: Draft = { ...draft, date, saladId: it.id, saladName: it.name, saladIsSwap: isSwap };
     setDraft(d); saveDraft(d);
-    go('3'); // дальше «Суп»
+    go('3');
   }
 
   function pickSoup(it: MenuItem, isSwap=false) {
     const d: Draft = { ...draft, date, soupId: it.id, soupName: it.name, soupIsSwap: isSwap };
     setDraft(d); saveDraft(d);
-    go('4'); // «Основное»
+    go('4');
   }
 
   function pickMain(it: MenuItem) {
@@ -165,26 +151,20 @@ function QuizPageInner() {
       mainId: it.id, mainName: it.name, mainGarnirnoe: garn
     };
     setDraft(d); saveDraft(d);
-    if (garn) {
-      // гарнирное блюдо — сразу подтверждение
-      go('6');
-    } else {
-      // без гарнира — выбрать гарнир
-      go('5');
-    }
+    if (garn) go('6'); else go('5');
   }
 
   function pickSide(it: MenuItem | null) {
     const d: Draft = { ...draft, date, sideId: it?.id, sideName: it?.name || null };
     setDraft(d); saveDraft(d);
-    go('6'); // подтверждение
+    go('6');
   }
 
   async function submitOrder() {
     try {
       setLoading(true); setErr('');
 
-      // extras: максимум 2 — берём салат и суп
+      // extras: максимум 2 — салат и суп
       const extras: string[] = [];
       if (draft.saladId) extras.push(draft.saladId);
       if (draft.soupId)  extras.push(draft.soupId);
@@ -210,8 +190,8 @@ function QuizPageInner() {
       // очистить черновик этой даты
       saveDraft({ date } as Draft);
 
-      // редирект:
-      const backTo = sp.get('back') || ''; // если шли из HR-консоли, там back=/hr/console
+      // редирект: если пришли из HR-консоли — назад туда
+      const backTo = sp.get('back') || '';
       if (backTo) {
         const u = new URL(backTo, window.location.origin);
         u.searchParams.set('org', org);
@@ -317,16 +297,15 @@ function QuizPageInner() {
         />
       )}
 
-      {/* Шаг 3s — Замена супа на салат */}
+      {/* Шаг 3s — Замена супа на салат (без «заменить салат на …») */}
       {!loading && !err && step === '3s' && (
-  <SaladStep
-    byCat={byCat}
-    onPick={(it)=>pickSoup(it,true)}
-    // onSwap намеренно отсутствует на этом шаге
-    onBack={()=>go('3')}
-    draft={draft}
-  />
-)}
+        <SaladStep
+          byCat={byCat}
+          onPick={(it)=>pickSoup(it,true)}
+          draft={draft}
+          onBack={()=>go('3')}
+        />
+      )}
 
       {/* Шаг 3a — Замена супа на … */}
       {!loading && !err && step === '3a' && (
@@ -419,7 +398,7 @@ function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
   byCat: Record<string, MenuItem[]>;
   onPick: (it: MenuItem)=>void;
   onSwap?: ()=>void;
-  draft: Draft;
+  draft: { saladId?: string; saladName?: string; saladIsSwap?: boolean };
   onBack: ()=>void;
 }) {
   const salads = SALAD_CATS.flatMap(c => byCat[c] || []);
@@ -459,7 +438,7 @@ function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
   );
 }
 
-/* Универсальная «замена на …» (для салата и супа) */
+/* Универсальная «замена на …» */
 function SwapStep({ title, byCat, cats, onPick, onBack }:{
   title: string;
   byCat: Record<string, MenuItem[]>;
@@ -497,7 +476,7 @@ function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
   onPick: (it: MenuItem)=>void;
   onSwapSalad: ()=>void;
   onSwapOther: ()=>void;
-  draft: Draft;
+  draft: { soupId?: string; soupName?: string; soupIsSwap?: boolean };
   onBack: ()=>void;
 }) {
   const soups = SOUP_CATS.flatMap(c => byCat[c] || []);
@@ -534,7 +513,7 @@ function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
   );
 }
 
-/* Универсальный листинг (для Основного и Гарнира) */
+/* Универсальный листинг (Основное/Гарнир) */
 function ListStep({ title, byCat, cats, onPick, emptyText, extraFooter }:{
   title: string;
   byCat: Record<string, MenuItem[]>;
