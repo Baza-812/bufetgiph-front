@@ -2,7 +2,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
@@ -10,20 +9,13 @@ import { fetchJSON, fmtDayLabel } from '@/lib/api';
 
 type SingleResp = {
   ok: boolean;
-  summary: null | {
-    fullName: string;
-    date: string;
-    mealBox: string;
-    extra1: string;
-    extra2: string;
-    orderId: string;
-  };
+  summary: null | { fullName: string; date: string; mealBox: string; extra1: string; extra2: string; orderId: string };
+  error?: string;
 };
 
-export default function OrderPage() {
-  const router = useRouter();
+type DatesResp = { ok: boolean; dates: string[]; error?: string };
 
-  // 1) читаем query один раз при монтировании
+export default function OrderPage() {
   const [org, setOrg] = useState('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
@@ -31,7 +23,7 @@ export default function OrderPage() {
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null); // только для модалки с существующим заказом
+  const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -39,9 +31,7 @@ export default function OrderPage() {
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
-
     setOrg(o); setEmployeeID(e); setToken(t);
-
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
       localStorage.setItem('baza.employeeID', e);
@@ -49,21 +39,21 @@ export default function OrderPage() {
     }
   }, []);
 
-  // 2) подгружаем опубликованные даты
   useEffect(() => {
     (async () => {
+      if (!org) return;
       try {
-        if (!org) return;
         setLoading(true); setError('');
-        const r = await fetchJSON<{ ok:boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
+        const r = await fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}`);
+        if (!r.ok) throw new Error(r.error || 'Ошибка загрузки дат');
         setDates(r.dates || []);
-      } catch (e:any) {
-        setError(e?.message || String(e));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
       } finally { setLoading(false); }
     })();
   }, [org]);
 
-  // 3) для каждой даты проверим — есть ли заказ (для подсветки кнопок и модалки)
   useEffect(() => {
     (async () => {
       if (!employeeID || !org || !token || dates.length === 0) return;
@@ -86,45 +76,6 @@ export default function OrderPage() {
     })();
   }, [dates, employeeID, org, token]);
 
-  const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
-
-  // 4) клик по дате: если заказа нет — сразу в квиз; если есть — показываем модалку
-  async function handlePickDate(d: string) {
-    try {
-      const u = new URL('/api/hr_orders', window.location.origin);
-      u.searchParams.set('mode','single');
-      u.searchParams.set('employeeID', employeeID);
-      u.searchParams.set('org', org);
-      u.searchParams.set('token', token);
-      u.searchParams.set('date', d);
-      const r = await fetchJSON<SingleResp>(u.toString());
-
-      if (!r?.summary?.orderId) {
-        // свободно — сразу в квиз
-        const q = new URL('/order/quiz', window.location.origin);
-        q.searchParams.set('date', d);
-        q.searchParams.set('step', '1');
-        q.searchParams.set('org', org);
-        q.searchParams.set('employeeID', employeeID);
-        q.searchParams.set('token', token);
-        router.push(q.toString());
-        return;
-      }
-
-      // есть готовый заказ — откроем модалку
-      setSelected(d);
-    } catch {
-      // при ошибке проверки — тоже идём в квиз (чтобы не стопорить пользователя)
-      const q = new URL('/order/quiz', window.location.origin);
-      q.searchParams.set('date', d);
-      q.searchParams.set('step', '1');
-      q.searchParams.set('org', org);
-      q.searchParams.set('employeeID', employeeID);
-      q.searchParams.set('token', token);
-      router.push(q.toString());
-    }
-  }
-
   return (
     <main>
       <Panel title="Добро пожаловать!">
@@ -133,7 +84,6 @@ export default function OrderPage() {
         </p>
       </Panel>
 
-      {/* Блок авторизации (на случай если пришли без query) */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -156,7 +106,7 @@ export default function OrderPage() {
             return (
               <Button
                 key={d}
-                onClick={()=>handlePickDate(d)}
+                onClick={()=>setSelected(d)}
                 className="w-full"
                 variant={has ? 'ghost' : 'primary'}
               >
@@ -166,7 +116,6 @@ export default function OrderPage() {
           })}
         </div>
 
-        {/* Подсказка по цветам */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
             <span className="inline-block w-4 h-4 rounded bg-brand-500" /> свободно
@@ -177,7 +126,6 @@ export default function OrderPage() {
         </div>
       </Panel>
 
-      {/* Модалка по выбранной дате — теперь только если заказ уже существует */}
       {selected && (
         <DateModal
           iso={selected}
@@ -192,13 +140,13 @@ export default function OrderPage() {
   );
 }
 
-/* ——— Модалка: показываем состав и кнопки ОК/Изменить/Отменить,
-      вызывается только когда заказ уже есть */
-function DateModal({ iso, employeeID, org, token, info, onClose }:{
+type DateModalProps = {
   iso: string;
   employeeID: string; org: string; token: string;
   info?: SingleResp; onClose: ()=>void;
-}) {
+};
+
+function DateModal({ iso, employeeID, org, token, info, onClose }:DateModalProps) {
   const has = Boolean(info?.summary);
   const s   = info?.summary;
 
@@ -209,14 +157,16 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:{
     if (!s?.orderId) return;
     try {
       setWorking(true); setErr('');
-      await fetchJSON('/api/order_cancel', {
+      await fetchJSON<{ok:boolean; error?:string}>('/api/order_cancel', {
         method: 'POST',
-        body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' })
+        body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' }),
+        headers: { 'Content-Type': 'application/json' },
       });
       onClose();
       alert('Заказ отменён.');
-    } catch(e:any) {
-      setErr(e.message || String(e));
+    } catch(e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
     } finally { setWorking(false); }
   }
 
@@ -240,37 +190,39 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:{
             {err && <div className="text-red-400">{err}</div>}
             <div className="flex gap-3 pt-2">
               <Button onClick={onClose}>ОК</Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  const u = new URL('/order/quiz', window.location.origin);
-                  u.searchParams.set('date', iso);
-                  u.searchParams.set('step', '1');
-                  u.searchParams.set('org', org);
-                  u.searchParams.set('employeeID', employeeID);
-                  u.searchParams.set('token', token);
-
-// креды из текущего урла
-  const sp = new URLSearchParams(window.location.search);
-  for (const k of ['org','employeeID','token']) {
-    const v = sp.get(k);
-    if (v) u.searchParams.set(k, v);
-  }
-
-  // <<< НОВОЕ: пробрасываем orderId для режима правки
-  if (s?.orderId) u.searchParams.set('orderId', s.orderId);
-
-                  window.location.href = u.toString();
-                }}
-              >
-                Изменить
-              </Button>
-              <Button onClick={cancelOrder} variant="danger" disabled={working}>
-                {working ? 'Отмена…' : 'Отменить'}
-              </Button>
+              <Button onClick={()=>{
+                const u = new URL('/order/quiz', window.location.origin);
+                u.searchParams.set('date', iso);
+                u.searchParams.set('step','1');
+                const sp = new URLSearchParams(window.location.search);
+                for (const k of ['org','employeeID','token']) {
+                  const v = sp.get(k);
+                  if (v) u.searchParams.set(k, v);
+                }
+                window.location.href = u.toString();
+              }} variant="ghost">Изменить</Button>
+              <Button onClick={cancelOrder} variant="danger" disabled={working}>{working ? 'Отмена…' : 'Отменить'}</Button>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <div className="space-y-3">
+            <div className="text-white/80 text-sm">На эту дату заказа ещё нет. Перейти к выбору блюд?</div>
+            <div className="flex gap-3">
+              <Button onClick={()=>{
+                const u = new URL('/order/quiz', window.location.origin);
+                u.searchParams.set('date', iso);
+                u.searchParams.set('step','1');
+                const sp = new URLSearchParams(window.location.search);
+                for (const k of ['org','employeeID','token']) {
+                  const v = sp.get(k);
+                  if (v) u.searchParams.set(k, v);
+                }
+                window.location.href = u.toString();
+              }}>Перейти к выбору</Button>
+              <Button onClick={onClose} variant="ghost">Отмена</Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
