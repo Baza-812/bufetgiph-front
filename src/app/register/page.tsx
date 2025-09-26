@@ -1,111 +1,111 @@
+// src/app/register/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
+import { fetchJSON } from '@/lib/api';
 
-type OrgResp = { ok:boolean; orgName?:string; org?:string; error?:string };
-type RegisterResp = { ok:boolean; sent?:boolean; email?:string; error?:string };
+type OrgInfoResp = { ok: boolean; name?: string };
+type RegisterResp =
+  | { ok: true; employeeId: string }
+  | { ok: false; error: string };
 
 export default function RegisterPage() {
   const [org, setOrg] = useState('');
   const [orgName, setOrgName] = useState<string>('');
 
-  const [lastName, setLastName]   = useState('');
+  const [lastName, setLastName] = useState('');
   const [firstName, setFirstName] = useState('');
-  const [email, setEmail]         = useState('');
+  const [email, setEmail] = useState('');
 
-  const [loading, setLoading] = useState(false);
-  const [err, setErr]         = useState('');
-  const [okMsg, setOkMsg]     = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string>('');
+  const [err, setErr] = useState<string>('');
 
-  // читаем org из ссылки и подтягиваем её название
   useEffect(() => {
+    // org из query
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || '';
     setOrg(o);
 
-    if (o) {
-      fetch(`/api/org_name?org=${encodeURIComponent(o)}`)
-        .then(r => r.json())
-        .then((js:OrgResp) => setOrgName(js.orgName || ''))
-        .catch(()=>{});
-    }
+    (async () => {
+      if (!o) return;
+      try {
+        setErr('');
+        const resp = await fetchJSON<OrgInfoResp>(`/api/org_info?org=${encodeURIComponent(o)}`);
+        setOrgName(resp?.name || '');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setErr(msg);
+      }
+    })();
   }, []);
 
-  function canSubmit() {
-    return !!(org && lastName.trim() && firstName.trim() && email.trim());
-  }
-
-  async function onSubmit() {
+  async function submit() {
     try {
-      setErr(''); setOkMsg(''); setLoading(true);
-
-      // примитивная валидация e-mail
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-        throw new Error('Введите корректный e-mail');
-      }
-
-      const r = await fetch('/api/register', {
+      setBusy(true);
+      setErr(''); setMsg('');
+      const body = { org, lastName, firstName, email };
+      const r = await fetchJSON<RegisterResp>('/api/register', {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({
-          org,
-          firstName: firstName.trim(),
-          lastName : lastName.trim(),
-          email    : email.trim(),
-        })
-      });
-      const js: RegisterResp = await r.json();
-      if (!js.ok) throw new Error(js.error || 'Не удалось выполнить регистрацию');
-
-      // Ссылку НЕ показываем — только сообщение об успехе
-      setOkMsg(`Письмо с персональной ссылкой отправлено на ${js.email || email}.`);
-    } catch (e:any) {
-      setErr(e.message || String(e));
+        body: JSON.stringify(body),
+      } as unknown as RequestInit);
+      if (!r.ok) throw new Error('Не удалось зарегистрировать сотрудника');
+      setMsg('Готово! Ссылка отправлена на указанный email.');
+      setLastName(''); setFirstName(''); setEmail('');
+    } catch (e: unknown) {
+      const m = e instanceof Error ? e.message : String(e);
+      setErr(m);
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   }
 
   return (
     <main>
-      <Panel title={`Регистрация для заказа обедов${orgName ? ' · '+orgName : ''}`}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <Panel title="Регистрация сотрудника">
+        <div className="text-white/80 mb-2">
+          Организация: <span className="font-semibold">{orgName || org || '—'}</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Field label="Фамилия">
-            {/* компактная ширина */}
-            <Input className="max-w-sm" value={lastName} onChange={e=>setLastName(e.target.value)} />
+            <Input
+              value={lastName}
+              onChange={e=>setLastName(e.target.value)}
+              placeholder="Иванов"
+              maxLength={64}
+            />
           </Field>
-
           <Field label="Имя">
-            <Input className="max-w-sm" value={firstName} onChange={e=>setFirstName(e.target.value)} />
+            <Input
+              value={firstName}
+              onChange={e=>setFirstName(e.target.value)}
+              placeholder="Иван"
+              maxLength={64}
+            />
           </Field>
-
-          <div className="md:col-span-2">
-  <Field label="Email">
-    <Input
-      className="max-w-md"
-      type="email"
-      value={email}
-      onChange={(e) => setEmail(e.target.value)}
-    />
-    {/* подсказка вместо prop help */}
-    <p className="text-white/60 text-xs mt-1">
-      На этот адрес придёт постоянная персональная ссылка для заказа обедов.
-    </p>
-  </Field>
-</div>
+          <Field label='Email' help='На этот адрес придёт постоянная ссылка для заказа обедов'>
+            <Input
+              type="email"
+              value={email}
+              onChange={e=>setEmail(e.target.value)}
+              placeholder="name@company.com"
+              maxLength={120}
+            />
+          </Field>
         </div>
 
         {err && <div className="text-red-400 text-sm mt-3">{err}</div>}
-        {okMsg && <div className="text-green-400 text-sm mt-3">{okMsg}</div>}
+        {msg && <div className="text-green-400 text-sm mt-3">{msg}</div>}
 
         <div className="mt-4 flex gap-3">
-          <Button onClick={onSubmit} disabled={!canSubmit() || loading}>
-            {loading ? 'Отправка…' : 'Отправить'}
+          <Button onClick={submit} disabled={busy || !org || !email || !lastName || !firstName}>
+            {busy ? 'Отправка…' : 'Зарегистрировать и выслать ссылку'}
           </Button>
-          <Button variant="ghost" onClick={()=>history.back()}>Назад</Button>
         </div>
       </Panel>
     </main>
