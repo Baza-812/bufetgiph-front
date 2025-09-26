@@ -39,6 +39,7 @@ export default function QuizClient() {
   const qOrg  = sp.get('org') || '';
   const qEmp  = sp.get('employeeID') || '';
   const qTok  = sp.get('token') || '';
+  const qFor = sp.get('forEmployeeID') || '';
   const router = useRouter();
 
   const date = sp.get('date') || '';
