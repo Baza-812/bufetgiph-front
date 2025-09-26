@@ -161,100 +161,142 @@ export default function QuizClient() {
     go('6');
   }
 
-      async function submitOrder() {
+        async function submitOrder() {
     try {
       setLoading(true); setErr('');
 
-      // 1) сформируем extras: максимум 2 — салат и суп
+      // extras: максимум 2 — салат и суп
       const extras: string[] = [];
       if (draft.saladId) extras.push(draft.saladId);
       if (draft.soupId)  extras.push(draft.soupId);
 
-      // 2) определим, за кого оформляем (если HR — то есть forEmployeeID)
+      // Определяем контекст: HR редактирует чужой заказ?
       const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
       const forEmployeeID = sp.get('forEmployeeID') || undefined;
+      const isHRActingFor = Boolean(forEmployeeID && forEmployeeID !== employeeID);
       const targetEmpId   = forEmployeeID || employeeID;
 
-      // 3) узнаём — есть ли уже заказ у целевого сотрудника на эту дату
+      // Есть ли у target уже заказ на эту дату?
       let existingOrderId: string | undefined;
       try {
         const u = new URL('/api/hr_orders', window.location.origin);
         u.searchParams.set('mode', 'single');
-        u.searchParams.set('employeeID', employeeID); // инициатор запроса (HR/сам сотрудник)
+        // инициатор — HR или сам сотрудник
+        u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
         u.searchParams.set('date', date);
-        if (forEmployeeID) u.searchParams.set('forEmployeeID', targetEmpId);
+        if (isHRActingFor) u.searchParams.set('forEmployeeID', targetEmpId);
         const r = await fetchJSON<{ ok: boolean; summary: { orderId?: string } | null }>(u.toString());
         existingOrderId = r?.summary?.orderId || undefined;
       } catch {
         existingOrderId = undefined;
       }
 
-      // 4) общее содержимое заказа
-      const payloadIncluded = {
+      const included = {
         mainId: draft.mainId || undefined,
         sideId: draft.sideId || undefined,
         extras: extras.slice(0, 2),
       };
 
-      // 5) если заказ уже есть — обновляем через /api/order_update
-      if (existingOrderId) {
-        const bodyUpdate = {
-          employeeID, org, token,
-          orderId: existingOrderId,
-          included: payloadIncluded,
-          // специально НЕ отправляем date — апдейт идёт по конкретному orderId
-          // (если на сервере требуется, можно добавить date)
-          ...(forEmployeeID ? { forEmployeeID } : {}),
-          clientToken: crypto.randomUUID(),
-        };
+      // Вспомогательная обёртка «попробовать 2 формата»
+      async function tryPost(url: string, primaryBody: Record<string, unknown>, fallbackBody?: Record<string, unknown>) {
+        const res1 = await fetchJSON<{ ok?: boolean; error?: string }>(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(primaryBody),
+        }).catch(e => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
 
-        const upd = await fetchJSON<{ ok: boolean; error?: string }>(
-          '/api/order_update',
-          {
+        if (res1.ok) return res1;
+
+        if (fallbackBody) {
+          const res2 = await fetchJSON<{ ok?: boolean; error?: string }>(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bodyUpdate),
-          }
-        );
-        if (!upd?.ok) throw new Error(upd?.error || 'Не удалось обновить заказ');
-      } else {
-        // 6) иначе — создаём новый через /api/order
-        const bodyCreate = {
-          employeeID, org, token, date,
-          included: payloadIncluded,
-          ...(forEmployeeID ? { forEmployeeID } : {}),
-          clientToken: crypto.randomUUID(),
-        };
-        const crt = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(
-          '/api/order',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bodyCreate),
-          }
-        );
-        if (!crt?.ok || !crt?.orderId) throw new Error(crt?.error || 'Не удалось создать заказ');
+            body: JSON.stringify(fallbackBody),
+          }).catch(e => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+
+          if (res2.ok) return res2;
+          throw new Error(res2.error || res1.error || 'Запрос не выполнен');
+        }
+
+        throw new Error(res1.error || 'Запрос не выполнен');
       }
 
-      // 7) чистим драфт по этой дате
+      if (existingOrderId) {
+        // === UPDATE ===
+        // Вариант А (предпочтительный для большинства бэкендов):
+        //   employeeID = ЦЕЛЕВОЙ СОТРУДНИК, manager = HR
+        const bodyPrimary = {
+          employeeID: targetEmpId,
+          org,
+          token,            // токен HR (или общий)
+          manager: isHRActingFor ? employeeID : undefined,
+          orderId: existingOrderId,
+          included,
+          date,             // на всякий случай — если апдейт сверяет дату
+          clientToken: crypto.randomUUID(),
+        };
+
+        // Вариант B (fallback): «старый» формат с forEmployeeID
+        const bodyFallback = {
+          employeeID,       // инициатор — HR
+          org,
+          token,
+          forEmployeeID: isHRActingFor ? targetEmpId : undefined,
+          orderId: existingOrderId,
+          included,
+          date,
+          clientToken: crypto.randomUUID(),
+        };
+
+        const upd = await tryPost('/api/order_update', bodyPrimary, bodyFallback);
+        if (!upd.ok) throw new Error(upd.error || 'Не удалось обновить заказ');
+      } else {
+        // === CREATE ===
+        // Вариант А: employeeID = ЦЕЛЕВОЙ СОТРУДНИК, manager = HR
+        const bodyPrimary = {
+          employeeID: targetEmpId,
+          org,
+          token,
+          manager: isHRActingFor ? employeeID : undefined,
+          date,
+          included,
+          clientToken: crypto.randomUUID(),
+        };
+
+        // Вариант B: инициатор HR + forEmployeeID
+        const bodyFallback = {
+          employeeID,       // инициатор — HR
+          org,
+          token,
+          forEmployeeID: isHRActingFor ? targetEmpId : undefined,
+          date,
+          included,
+          clientToken: crypto.randomUUID(),
+        };
+
+        const crt = await tryPost('/api/order', bodyPrimary, bodyFallback) as { ok?: boolean; orderId?: string; error?: string };
+        if (!crt.ok || !crt.orderId) throw new Error(crt.error || 'Не удалось создать заказ');
+      }
+
+      // очищаем драфт текущей даты
       saveDraft({ date } as Draft);
 
-      // 8) редирект: если квиз был открыт из HR-консоли — вернуться туда, иначе — на выбор дат
+      // редирект обратно (если из HR) или на список дат
       const backTo = sp.get('back') || '';
       if (backTo) {
         const u = new URL(backTo, window.location.origin);
         u.searchParams.set('org', org);
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('token', token);
-        return router.push(u.toString());
+        router.push(u.toString());
       } else {
         const u = new URL('/order', window.location.origin);
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
-        return router.push(u.toString());
+        router.push(u.toString());
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
