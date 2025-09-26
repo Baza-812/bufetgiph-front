@@ -1,3 +1,4 @@
+// src/app/order/quiz/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -8,10 +9,9 @@ import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, mapMenuItem, MenuItem } from '@/lib/api';
 import { loadDraft, saveDraft } from '@/lib/draft';
 
-type MenuResponse = { ok: boolean; items: any[] } | any;
+type RawMenu = { id: string; fields?: Record<string, unknown> };
+type MenuAPIResponse = { ok?: boolean; items?: RawMenu[]; records?: RawMenu[]; menu?: RawMenu[] };
 
-/** Порядок и набор категорий на витрине меню */
-const SHOWCASE_CATEGORIES = ['Zapekanka', 'Salad', 'Soup', 'Main', 'Side'];
 /** Для салатов */
 const SALAD_CATS = ['Salad'];
 /** Для «замена салата/супа на …» */
@@ -32,7 +32,7 @@ type Draft = {
 };
 
 // у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
-const isGarnirnoe = (it: MenuItem) => Boolean((it as any)?.garnirnoe);
+const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
 export default function QuizPage() {
   const sp = useSearchParams();
@@ -40,14 +40,9 @@ export default function QuizPage() {
   const qEmp  = sp.get('employeeID') || '';
   const qTok  = sp.get('token') || '';
   const router = useRouter();
-  const qFor = sp.get('forEmployeeID') || '';
 
   const date = sp.get('date') || '';
   const step = sp.get('step') || '1';
-  // <<< НОВОЕ:
-const existingOrderId = sp.get('orderId') || '';
-const forEmployeeID = sp.get('forEmployeeID') || '';
-const returnTo = sp.get('returnTo') || '';
 
   const [org, setOrg] = useState(qOrg || '');
   const [employeeID, setEmployeeID] = useState(qEmp || '');
@@ -62,16 +57,20 @@ const returnTo = sp.get('returnTo') || '';
     return { date, ...(saved as Partial<Draft>) };
   });
 
-  // если дата в URL поменялась (маловероятно на этой странице) — синхронизируем черновик
+  // если дата в URL поменялась — синхронизируем черновик
   useEffect(() => {
-    setDraft(d => ({ date, ...(loadDraft(date) as Partial<Draft>), }));
+    setDraft(() => ({ date, ...(loadDraft(date) as Partial<Draft>) }));
   }, [date]);
 
   // Подтянуть креды из localStorage, если не пришли в query
   useEffect(() => {
-    if (!org)  setOrg(localStorage.getItem('baza.org') || '');
-    if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
-    if (!token) setToken(localStorage.getItem('baza.token') || '');
+    // намеренно один раз при монтировании
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    (async () => {
+      if (!org)  setOrg(localStorage.getItem('baza.org') || '');
+      if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
+      if (!token) setToken(localStorage.getItem('baza.token') || '');
+    })();
   }, []);
 
   // Сохранить креды
@@ -90,12 +89,16 @@ const returnTo = sp.get('returnTo') || '';
         const u = new URL('/api/menu', window.location.origin);
         u.searchParams.set('date', date);
         u.searchParams.set('org', org);
-        const r = await fetchJSON<MenuResponse>(u.toString());
-        const arr = (r.items || r.records || r.menu || []).map(mapMenuItem);
+        const r = await fetchJSON<MenuAPIResponse>(u.toString());
+        const rows = (r.items ?? r.records ?? r.menu ?? []) as RawMenu[];
+        const arr = rows.map(mapMenuItem);
         setMenu(arr);
-      } catch (e:any) {
-        setErr(e.message || String(e));
-      } finally { setLoading(false); }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setErr(msg);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [date, org]);
 
@@ -168,61 +171,60 @@ const returnTo = sp.get('returnTo') || '';
     go('6'); // подтверждение
   }
 
-async function submitOrder() {
-  try {
-    setLoading(true); setErr('');
+  async function submitOrder() {
+    try {
+      setLoading(true); setErr('');
 
-    // extras: максимум 2 — салат и суп
-    const extras: string[] = [];
-    if (draft.saladId) extras.push(draft.saladId);
-    if (draft.soupId)  extras.push(draft.soupId);
+      // extras: максимум 2 — берём салат и суп
+      const extras: string[] = [];
+      if (draft.saladId) extras.push(draft.saladId);
+      if (draft.soupId)  extras.push(draft.soupId);
 
-    // общее тело
-    const base = {
-      employeeID, org, token, date,
-      // если HR действует "за сотрудника" — пробросим его id
-      ...(forEmployeeID ? { forEmployeeID } : {}),
-      included: {
-        mainId: draft.mainId || undefined,
-        sideId: draft.sideId || undefined,
-        extras: extras.slice(0, 2),
-      },
-      clientToken: crypto.randomUUID(),
-    };
+      const body = {
+        employeeID, org, token, date,
+        included: {
+          mainId: draft.mainId || undefined,
+          sideId: draft.sideId || undefined,
+          extras: extras.slice(0, 2),
+        },
+        clientToken: crypto.randomUUID(),
+      };
 
-    // если есть orderId — это РЕДАКТИРОВАНИЕ
-    const url = existingOrderId ? '/api/order_update' : '/api/order';
-    const body = existingOrderId ? { ...base, orderId: existingOrderId } : base;
+      const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>('/api/order', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+      });
 
-    const r = await fetchJSON(url, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      headers: { 'Content-Type': 'application/json' },
-    });
+      if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
 
-    if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось сохранить заказ');
+      // очистить черновик этой даты
+      saveDraft({ date } as Draft);
 
-    // очистим черновик
-    saveDraft({ date } as Draft);
+      // редирект:
+      const backTo = sp.get('back') || ''; // если шли из HR-консоли, там back=/hr/console
+      if (backTo) {
+        const u = new URL(backTo, window.location.origin);
+        u.searchParams.set('org', org);
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('token', token);
+        router.push(u.toString());
+        return;
+      }
 
-    // если есть returnTo — вернёмся в консоль HR
-    if (returnTo) {
-      router.push(returnTo);
-      return;
+      // иначе — на страницу выбора дат
+      const u = new URL('/order', window.location.origin);
+      u.searchParams.set('employeeID', employeeID);
+      u.searchParams.set('org', org);
+      u.searchParams.set('token', token);
+      router.push(u.toString());
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
+    } finally {
+      setLoading(false);
     }
-
-    // иначе — обычный сценарий: на выбор даты
-    const u = new URL('/order', window.location.origin);
-    u.searchParams.set('employeeID', employeeID);
-    u.searchParams.set('org', org);
-    u.searchParams.set('token', token);
-    router.push(u.toString());
-  } catch (e:any) {
-    setErr(e.message || String(e));
-  } finally {
-    setLoading(false);
   }
-}
 
   const niceDate = formatRuDate(date);
 
@@ -311,6 +313,8 @@ async function submitOrder() {
         <SaladStep
           byCat={byCat}
           onPick={(it)=>pickSoup(it,true)}
+          // onSwap отсутствует умышленно
+          // @ts-expect-error выключаем кнопку swap на этом шаге
           onSwap={undefined}
           draft={draft}
           onBack={()=>go('3')}
@@ -336,7 +340,7 @@ async function submitOrder() {
           cats={MAIN_CATS}
           onPick={pickMain}
           emptyText="На сегодня нет основных блюд."
-          onBack={()=>go('3')}
+          extraFooter={<Button variant="ghost" onClick={()=>go('3')}>Назад</Button>}
         />
       )}
 
@@ -348,9 +352,11 @@ async function submitOrder() {
           cats={SIDE_CATS}
           onPick={(it)=>pickSide(it)}
           emptyText="На сегодня нет гарниров."
-          onBack={()=>go('4')}
           extraFooter={
-            <Button variant="ghost" onClick={()=>pickSide(null)}>Без гарнира</Button>
+            <div className="flex gap-3">
+              <Button variant="ghost" onClick={()=>go('4')}>Назад</Button>
+              <Button variant="ghost" onClick={()=>pickSide(null)}>Без гарнира</Button>
+            </div>
           }
         />
       )}
@@ -405,7 +411,7 @@ function Showcase({ byCat }:{ byCat: Record<string, MenuItem[]> }) {
 function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
   byCat: Record<string, MenuItem[]>;
   onPick: (it: MenuItem)=>void;
-  onSwap?: ()=>void;             // ← было обязательно, стало опционально
+  onSwap?: ()=>void;
   draft: Draft;
   onBack: ()=>void;
 }) {
@@ -446,7 +452,6 @@ function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
   );
 }
 
-
 /* Универсальная «замена на …» (для салата и супа) */
 function SwapStep({ title, byCat, cats, onPick, onBack }:{
   title: string;
@@ -486,8 +491,8 @@ function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
   onSwapSalad: ()=>void;
   onSwapOther: ()=>void;
   draft: Draft;
-  onBack: ()=>void;             // ← добавили в тип
-}) {                            // ← и в параметры функции
+  onBack: ()=>void;
+}) {
   const soups = SOUP_CATS.flatMap(c => byCat[c] || []);
   return (
     <Panel title="Выберите суп">
@@ -522,18 +527,14 @@ function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
   );
 }
 
-
 /* Универсальный листинг (для Основного и Гарнира) */
-function ListStep({
-  title, byCat, cats, onPick, emptyText, extraFooter, onBack,
-}:{
+function ListStep({ title, byCat, cats, onPick, emptyText, extraFooter }:{
   title: string;
   byCat: Record<string, MenuItem[]>;
   cats: string[];
   onPick: (it: MenuItem)=>void;
   emptyText: string;
   extraFooter?: React.ReactNode;
-  onBack?: ()=>void;               // ← добавили
 }) {
   const items = cats.flatMap(c => byCat[c] || []);
   return (
@@ -550,17 +551,10 @@ function ListStep({
         ))}
       </div>
 
-      {/* нижний блок: слева — доп.кнопки, справа — Назад */}
-      {(extraFooter || onBack) && (
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <div>{extraFooter}</div>
-          {onBack && <Button variant="ghost" onClick={onBack}>Назад</Button>}
-        </div>
-      )}
+      {extraFooter ? <div className="mt-4">{extraFooter}</div> : null}
     </Panel>
   );
 }
-
 
 /* Подтверждение */
 function ConfirmStep({ draft, onSubmit, onBack }:{
@@ -580,7 +574,6 @@ function ConfirmStep({ draft, onSubmit, onBack }:{
       <div className="mt-4 flex gap-3">
         <Button onClick={onSubmit}>Подтвердить заказ</Button>
         <Button variant="ghost" onClick={onBack}>Назад</Button>
-    
       </div>
     </Panel>
   );
