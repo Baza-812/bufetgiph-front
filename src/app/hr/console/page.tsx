@@ -1,9 +1,11 @@
+// src/app/hr/console/page.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
+import { fetchJSON } from '@/lib/api';
 
 type HREmployee = {
   id: string;
@@ -17,29 +19,49 @@ type HREmployee = {
 };
 
 type HREmployeesResp = { ok: boolean; count: number; items: HREmployee[] };
-type SingleOrderResp = {
-  ok: boolean;
-  summary: null | { fullName: string; date: string; mealBox: string; extra1: string; extra2: string; orderId: string };
-};
+
+type SingleSummary = {
+  fullName: string;
+  date: string;
+  mealBox: string;
+  extra1: string;
+  extra2: string;
+  orderId: string;
+} | null;
+
+type SingleOrderResp = { ok: boolean; summary: SingleSummary };
+
 type DatesResp = { ok: boolean; dates: string[] };
 
+type HRListItem = {
+  employeeId: string;
+  fullName: string;
+  date: string;
+  orderId: string;
+  mealBox: string;
+  extra1: string;
+  extra2: string;
+};
+
+type HRListResp = { ok: boolean; items: HRListItem[] };
+
 export default function HRConsolePage() {
+  // креды HR
   const [org, setOrg] = useState('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
 
-  const [orgName, setOrgName] = useState<string>('');
-
+  // данные страницы
   const [dates, setDates] = useState<string[]>([]);
   const [date, setDate] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
+  // сотрудники и заказы на выбранную дату
   const [rows, setRows] = useState<HREmployee[]>([]);
-  const [orderByEmp, setOrderByEmp] = useState<Record<string, SingleOrderResp['summary']>>({});
+  const [orderByEmp, setOrderByEmp] = useState<Record<string, SingleSummary>>({});
 
-  const [showCreds, setShowCreds] = useState(false);
-
+  // начальная подстановка из URL/localStorage
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
@@ -48,38 +70,24 @@ export default function HRConsolePage() {
     setOrg(o); setEmployeeID(e); setToken(t);
   }, []);
 
-  // Имя организации
-  useEffect(() => {
-    (async () => {
-      if (!org) { setOrgName(''); return; }
-      try {
-        const r = await fetch(`/api/org_info?org=${encodeURIComponent(org)}`);
-        const js = await r.json() as { ok:boolean; name?:string };
-        setOrgName(js?.ok ? (js.name || '') : '');
-      } catch {
-        setOrgName('');
-      }
-    })();
-  }, [org]);
-
-  // Даты
+  // загрузка дат (после установки org)
   useEffect(() => {
     (async () => {
       if (!org) return;
       try {
         setErr('');
-        const r = await fetch(`/api/dates?org=${encodeURIComponent(org)}`);
-        const js: DatesResp = await r.json();
-        if (!js.ok) throw new Error((js as any).error || 'Ошибка загрузки дат');
+        const js = await fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}`);
+        if (!js.ok) throw new Error((js as unknown as { error?: string }).error || 'Ошибка загрузки дат');
         setDates(js.dates || []);
         if (!date && js.dates?.length) setDate(js.dates[0]);
-      } catch (e:any) {
-        setErr(e.message || String(e));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setErr(msg);
       }
     })();
-  }, [org]);
+  }, [org, date]);
 
-  // Сотрудники
+  // загрузка сотрудников (кнопкой)
   async function loadEmployees() {
     if (!org || !employeeID || !token) { setErr('Укажите org, employeeID и token'); return; }
     try {
@@ -88,22 +96,23 @@ export default function HRConsolePage() {
       u.searchParams.set('org', org);
       u.searchParams.set('employeeID', employeeID);
       u.searchParams.set('token', token);
-      const r = await fetch(u.toString());
-      const js: HREmployeesResp = await r.json();
-      if (!js.ok) throw new Error((js as any).error || 'Ошибка загрузки сотрудников');
+      const js = await fetchJSON<HREmployeesResp>(u.toString());
+      if (!js.ok) throw new Error((js as unknown as { error?: string }).error || 'Ошибка загрузки сотрудников');
       setRows(js.items || []);
+      // сохраним доступы
       localStorage.setItem('baza.org', org);
       localStorage.setItem('baza.employeeID', employeeID);
       localStorage.setItem('baza.token', token);
-    } catch (e:any) {
-      setErr(e.message || String(e));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
     } finally { setLoading(false); }
   }
 
-  // Статусы заказов (лист)
+  // загрузка статуса заказов по выбранной дате (одним запросом list)
   useEffect(() => {
     (async () => {
-      if (!org || !employeeID || !token || !date) return;
+      if (!org || !employeeID || !token || !date || rows.length === 0) return;
       try {
         setErr('');
         const u = new URL('/api/hr_orders', window.location.origin);
@@ -112,15 +121,12 @@ export default function HRConsolePage() {
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
         u.searchParams.set('date', date);
-        const r = await fetch(u.toString());
-        const js = await r.json() as { ok: boolean; items: { orderId:string; date:string; fullName:string; mealBox:string; extra1:string; extra2:string, employeeId?:string }[] };
-        if (!js.ok) throw new Error((js as any).error || 'Ошибка загрузки заказов');
-
-        const map: Record<string, SingleOrderResp['summary']> = {};
+        const js = await fetchJSON<HRListResp>(u.toString());
+        if (!js.ok) throw new Error((js as unknown as { error?: string }).error || 'Ошибка загрузки заказов');
+        const map: Record<string, SingleSummary> = {};
+        // маппим по имени; если имена не уникальны — лучше перейти на batched / single по id
         for (const it of js.items || []) {
-          const emp = rows.find(r =>
-            (it as any).employeeId ? (r.id === (it as any).employeeId) : (r.name === it.fullName)
-          );
+          const emp = rows.find(r => r.name === it.fullName);
           if (emp) {
             map[emp.id] = {
               fullName: it.fullName, date: it.date,
@@ -129,53 +135,46 @@ export default function HRConsolePage() {
           }
         }
         setOrderByEmp(map);
-      } catch (e:any) {
-        setErr(e.message || String(e));
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setErr(msg);
       }
     })();
   }, [org, employeeID, token, date, rows]);
 
-  // Действия
+  // действия HR
   function openQuizFor(emp: HREmployee) {
-    const origin = window.location.origin;
-
-    const back = new URL('/hr/console', origin);
-    back.searchParams.set('org', org);
-    back.searchParams.set('employeeID', employeeID);
-    back.searchParams.set('token', token);
-    if (date) back.searchParams.set('date', date);
-
-    const sum = orderByEmp[emp.id];
-
-    const u = new URL('/order/quiz', origin);
+    const u = new URL('/order/quiz', window.location.origin);
     u.searchParams.set('date', date);
     u.searchParams.set('step', '1');
+    // HR-креды
     u.searchParams.set('employeeID', employeeID);
     u.searchParams.set('org', org);
     u.searchParams.set('token', token);
+    // таргет сотрудник
     u.searchParams.set('forEmployeeID', emp.id);
-    if (sum?.orderId) u.searchParams.set('orderId', sum.orderId);
-    u.searchParams.set('returnTo', back.toString());
-
+    // вернуться в консоль после подтверждения
+    u.searchParams.set('back', '/hr/console');
     window.location.href = u.toString();
   }
 
   async function cancelOrder(emp: HREmployee) {
     const s = orderByEmp[emp.id];
     if (!s?.orderId) return;
-    if (!confirm(`Отменить заказ сотрудника «${emp.name || '—'}» на ${fmtDayLabel(date)}?`)) return;
+    if (!confirm(`Отменить заказ сотрудника «${emp.name}» на ${fmtDayLabel(date)}?`)) return;
     try {
       setLoading(true); setErr('');
-      const r = await fetch('/api/order_cancel', {
+      const js = await fetchJSON<{ ok: boolean; error?: string }>('/api/order_cancel', {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
         body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'hr_cancel' })
       });
-      const js = await r.json();
       if (!js.ok) throw new Error(js.error || 'Не удалось отменить заказ');
-      setOrderByEmp(m => ({ ...m, [emp.id]: null as any }));
-    } catch (e:any) {
-      setErr(e.message || String(e));
+      // локально очистим состояние
+      setOrderByEmp(m => ({ ...m, [emp.id]: null }));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
     } finally { setLoading(false); }
   }
 
@@ -186,30 +185,25 @@ export default function HRConsolePage() {
     return s.replace(/^[а-яё]/, ch => ch.toUpperCase());
   }
 
-  const sorted = useMemo(() => [...rows].sort((a,b)=> (a.name||'').localeCompare(b.name||'', 'ru')), [rows]);
+  const sorted = useMemo(
+    () => [...rows].sort((a,b)=> (a.name||'').localeCompare(b.name||'', 'ru')),
+    [rows]
+  );
 
   return (
     <main>
       <Panel title="HR-консоль">
-        <div className="space-y-3">
-          {/* 1-я строка: Организация + ссылка Показать доступы справа */}
-          <div className="flex items-end justify-between gap-3">
-            <div className="flex-1">
-              <Field label="Организация">
-                <Input value={orgName || org || '—'} readOnly />
-                {!!org && <div className="text-xs text-white/50 mt-1">ID: {org}</div>}
-              </Field>
-            </div>
-            <button
-              onClick={()=>setShowCreds(v=>!v)}
-              className="text-xs text-white/60 hover:text-white underline mb-2"
-            >
-              {showCreds ? 'Скрыть доступы' : 'Показать доступы'}
-            </button>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Field label="Org"><Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" /></Field>
+          <Field label="Ваш Employee ID"><Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." /></Field>
+          <Field label="Token"><Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" /></Field>
+        </div>
 
-          {/* 2-я строка: Дата + кнопка — в одной линии слева */}
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button onClick={loadEmployees} disabled={loading}>{loading ? 'Загрузка…' : 'Загрузить сотрудников'}</Button>
+
+          {/* выбор даты */}
+          <div className="flex items-center gap-2">
             <span className="text-white/70 text-sm">Дата:</span>
             <select
               value={date}
@@ -218,25 +212,10 @@ export default function HRConsolePage() {
             >
               {dates.map(d => <option key={d} value={d}>{fmtDayLabel(d)}</option>)}
             </select>
-
-            <Button onClick={loadEmployees} disabled={loading}>
-              {loading ? 'Загрузка…' : 'Загрузить сотрудников'}
-            </Button>
           </div>
-
-          {/* Скрытые креды — по кнопке */}
-          {showCreds && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Field label="Ваш Employee ID"><Input value={employeeID} readOnly /></Field>
-              <Field label="Token"><Input value={token} readOnly /></Field>
-              <div className="text-xs text-white/50 self-end">
-                Эти поля берутся из персональной ссылки/LS и не требуются для ручного ввода.
-              </div>
-            </div>
-          )}
-
-          {err && <div className="text-red-400 text-sm">{err}</div>}
         </div>
+
+        {err && <div className="text-red-400 text-sm mt-2">{err}</div>}
       </Panel>
 
       {!!sorted.length && (
