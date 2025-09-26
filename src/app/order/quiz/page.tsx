@@ -1,3 +1,9 @@
+// форсим серверный рендер вместо предрендера
+export const dynamic = 'force-dynamic';
+// отключаем кэш, чтобы CSR/запросы не склеивались
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
+
 // src/app/order/quiz/page.tsx
 'use client';
 
