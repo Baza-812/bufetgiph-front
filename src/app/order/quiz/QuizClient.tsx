@@ -36,10 +36,11 @@ const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: bo
 
 export default function QuizClient() {
   const sp = useSearchParams();
+  const qFor = sp.get('forEmployeeID') || '';
+  const qOrderId = sp.get('orderId') || '';
   const qOrg  = sp.get('org') || '';
   const qEmp  = sp.get('employeeID') || '';
   const qTok  = sp.get('token') || '';
-  const qFor = sp.get('forEmployeeID') || '';
   const router = useRouter();
 
   const date = sp.get('date') || '';
