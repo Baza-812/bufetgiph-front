@@ -1,7 +1,7 @@
 // src/app/order/quiz/page.tsx
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
@@ -34,7 +34,17 @@ type Draft = {
 // у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
 const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
-export default function QuizPage() {
+/* ——— ВРАППЕР С SUSPENSE ——— */
+export default function QuizPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-4 text-white/70">Загрузка…</div>}>
+      <QuizPageInner />
+    </Suspense>
+  );
+}
+
+/* ——— ОСНОВНОЙ КОМПОНЕНТ ——— */
+function QuizPageInner() {
   const sp = useSearchParams();
   const qOrg  = sp.get('org') || '';
   const qEmp  = sp.get('employeeID') || '';
@@ -62,15 +72,16 @@ export default function QuizPage() {
     setDraft(() => ({ date, ...(loadDraft(date) as Partial<Draft>) }));
   }, [date]);
 
-  // Подтянуть креды из localStorage, если не пришли в query — один раз
-  const didInit = useRef(false);
+  // Подтянуть креды из localStorage, если не пришли в query
   useEffect(() => {
-    if (didInit.current) return;
-    didInit.current = true;
-    if (!org)  setOrg(localStorage.getItem('baza.org') || '');
-    if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
-    if (!token) setToken(localStorage.getItem('baza.token') || '');
-  }, [org, employeeID, token]);
+    // намеренно один раз при монтировании
+    (async () => {
+      if (!org)  setOrg(localStorage.getItem('baza.org') || '');
+      if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
+      if (!token) setToken(localStorage.getItem('baza.token') || '');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Сохранить креды
   useEffect(() => {
@@ -200,8 +211,8 @@ export default function QuizPage() {
       // очистить черновик этой даты
       saveDraft({ date } as Draft);
 
-      // редирект: если шли из HR-консоли, вернёмся туда
-      const backTo = sp.get('back') || '';
+      // редирект:
+      const backTo = sp.get('back') || ''; // если шли из HR-консоли, там back=/hr/console
       if (backTo) {
         const u = new URL(backTo, window.location.origin);
         u.searchParams.set('org', org);
@@ -307,12 +318,14 @@ export default function QuizPage() {
         />
       )}
 
-      {/* Шаг 3s — Замена супа на салат (без «заменить салат на …») */}
+      {/* Шаг 3s — Замена супа на салат */}
       {!loading && !err && step === '3s' && (
         <SaladStep
           byCat={byCat}
           onPick={(it)=>pickSoup(it,true)}
-          // onSwap намеренно отсутствует — не показываем кнопку
+          // onSwap отсутствует умышленно
+          // @ts-expect-error: отключаем кнопку swap на этом шаге
+          onSwap={undefined}
           draft={draft}
           onBack={()=>go('3')}
         />
