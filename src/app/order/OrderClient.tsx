@@ -1,30 +1,33 @@
+// src/app/order/OrderClient.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import { fetchJSON } from '@/lib/api';
 
 type SingleResp = {
   ok: boolean;
   summary: null | { fullName: string; date: string; mealBox: string; extra1: string; extra2: string; orderId: string };
-  error?: string;
 };
 
-type DatesResp = { ok: boolean; dates: string[]; error?: string };
+type DatesResp = { ok: boolean; dates: string[] };
 
-export default function OrderPage() {
+export default function OrderClient() {
+  // 1) креды
   const [org, setOrg] = useState('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
 
+  // 2) данные по датам
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState('');
 
+  // Подстановка из query/localStorage при монтировании
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
@@ -38,21 +41,23 @@ export default function OrderPage() {
     }
   }, []);
 
+  // Загрузка опубликованных дат
   useEffect(() => {
     (async () => {
-      if (!org) return;
       try {
+        if (!org) return;
         setLoading(true); setError('');
         const r = await fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}`);
-        if (!r.ok) throw new Error(r.error || 'Ошибка загрузки дат');
         setDates(r.dates || []);
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setError(msg);
-      } finally { setLoading(false); }
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [org]);
 
+  // Для каждой даты — статус заказа (single)
   useEffect(() => {
     (async () => {
       if (!employeeID || !org || !token || dates.length === 0) return;
@@ -75,6 +80,8 @@ export default function OrderPage() {
     })();
   }, [dates, employeeID, org, token]);
 
+  const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
+
   return (
     <main>
       <Panel title="Добро пожаловать!">
@@ -83,6 +90,7 @@ export default function OrderPage() {
         </p>
       </Panel>
 
+      {/* Блок авторизации (на случай, если пришли без query) */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -115,6 +123,7 @@ export default function OrderPage() {
           })}
         </div>
 
+        {/* Подсказка по цветам */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
             <span className="inline-block w-4 h-4 rounded bg-brand-500" /> свободно
@@ -125,6 +134,7 @@ export default function OrderPage() {
         </div>
       </Panel>
 
+      {/* Модалка по выбранной дате */}
       {selected && (
         <DateModal
           iso={selected}
@@ -139,13 +149,13 @@ export default function OrderPage() {
   );
 }
 
-type DateModalProps = {
+/* ——— Модалка: если заказ уже есть — показываем состав и кнопки ОК/Изменить/Отменить;
+      если свободно — сразу «Перейти к выбору» (квиз) */
+function DateModal({ iso, employeeID, org, token, info, onClose }:{
   iso: string;
   employeeID: string; org: string; token: string;
   info?: SingleResp; onClose: ()=>void;
-};
-
-function DateModal({ iso, employeeID, org, token, info, onClose }:DateModalProps) {
+}) {
   const has = Boolean(info?.summary);
   const s   = info?.summary;
 
@@ -156,7 +166,7 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:DateModalProps
     if (!s?.orderId) return;
     try {
       setWorking(true); setErr('');
-      await fetchJSON<{ok:boolean; error?:string}>('/api/order_cancel', {
+      await fetchJSON('/api/order_cancel', {
         method: 'POST',
         body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' }),
         headers: { 'Content-Type': 'application/json' },
@@ -164,9 +174,20 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:DateModalProps
       onClose();
       alert('Заказ отменён.');
     } catch(e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErr(msg);
+      setErr(e instanceof Error ? e.message : String(e));
     } finally { setWorking(false); }
+  }
+
+  function toQuiz() {
+    const u = new URL('/order/quiz', window.location.origin);
+    u.searchParams.set('date', iso);
+    u.searchParams.set('step','1');
+    const sp = new URLSearchParams(window.location.search);
+    for (const k of ['org','employeeID','token']) {
+      const v = sp.get(k);
+      if (v) u.searchParams.set(k, v);
+    }
+    window.location.href = u.toString();
   }
 
   return (
@@ -189,17 +210,7 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:DateModalProps
             {err && <div className="text-red-400">{err}</div>}
             <div className="flex gap-3 pt-2">
               <Button onClick={onClose}>ОК</Button>
-              <Button onClick={()=>{
-                const u = new URL('/order/quiz', window.location.origin);
-                u.searchParams.set('date', iso);
-                u.searchParams.set('step','1');
-                const sp = new URLSearchParams(window.location.search);
-                for (const k of ['org','employeeID','token']) {
-                  const v = sp.get(k);
-                  if (v) u.searchParams.set(k, v);
-                }
-                window.location.href = u.toString();
-              }} variant="ghost">Изменить</Button>
+              <Button onClick={toQuiz} variant="ghost">Изменить</Button>
               <Button onClick={cancelOrder} variant="danger" disabled={working}>{working ? 'Отмена…' : 'Отменить'}</Button>
             </div>
           </div>
@@ -207,17 +218,7 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:DateModalProps
           <div className="space-y-3">
             <div className="text-white/80 text-sm">На эту дату заказа ещё нет. Перейти к выбору блюд?</div>
             <div className="flex gap-3">
-              <Button onClick={()=>{
-                const u = new URL('/order/quiz', window.location.origin);
-                u.searchParams.set('date', iso);
-                u.searchParams.set('step','1');
-                const sp = new URLSearchParams(window.location.search);
-                for (const k of ['org','employeeID','token']) {
-                  const v = sp.get(k);
-                  if (v) u.searchParams.set(k, v);
-                }
-                window.location.href = u.toString();
-              }}>Перейти к выбору</Button>
+              <Button onClick={toQuiz}>Перейти к выбору</Button>
               <Button onClick={onClose} variant="ghost">Отмена</Button>
             </div>
           </div>
@@ -225,4 +226,11 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:DateModalProps
       </div>
     </div>
   );
+}
+
+function fmtDayLabel(d: string) {
+  if (!d) return '';
+  const dt = new Date(`${d}T00:00:00`);
+  const s = dt.toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  return s.replace(/^[а-яё]/, ch => ch.toUpperCase());
 }
