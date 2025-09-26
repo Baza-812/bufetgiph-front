@@ -1,11 +1,11 @@
 // src/app/order/page.tsx
+'use client';
+
 // форсим серверный рендер вместо предрендера
 export const dynamic = 'force-dynamic';
 // отключаем кэш, чтобы CSR/запросы не склеивались
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
-
-'use client';
 
 import { useEffect, useState } from 'react';
 import Panel from '@/components/ui/Panel';
