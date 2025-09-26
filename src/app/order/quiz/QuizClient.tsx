@@ -161,87 +161,102 @@ export default function QuizClient() {
     go('6');
   }
 
-    async function submitOrder() {
+      async function submitOrder() {
     try {
       setLoading(true); setErr('');
 
-      // 1) Собираем extras: максимум 2 — салат и суп
+      // 1) сформируем extras: максимум 2 — салат и суп
       const extras: string[] = [];
       if (draft.saladId) extras.push(draft.saladId);
       if (draft.soupId)  extras.push(draft.soupId);
 
-      // 2) Определяем, за кого оформляем: сам сотрудник или HR "за другого"
-      const targetEmpId = (typeof window !== 'undefined')
-        ? (new URLSearchParams(window.location.search).get('forEmployeeID') || employeeID)
-        : employeeID;
+      // 2) определим, за кого оформляем (если HR — то есть forEmployeeID)
+      const sp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+      const forEmployeeID = sp.get('forEmployeeID') || undefined;
+      const targetEmpId   = forEmployeeID || employeeID;
 
-      // 3) Если есть уже заказ на эту дату для целевого сотрудника — получим его orderId
-      let existingOrderId: string | undefined = undefined;
+      // 3) узнаём — есть ли уже заказ у целевого сотрудника на эту дату
+      let existingOrderId: string | undefined;
       try {
         const u = new URL('/api/hr_orders', window.location.origin);
         u.searchParams.set('mode', 'single');
-        u.searchParams.set('employeeID', employeeID);     // кто делает запрос (HR или сам сотрудник)
+        u.searchParams.set('employeeID', employeeID); // инициатор запроса (HR/сам сотрудник)
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
         u.searchParams.set('date', date);
-        if (targetEmpId !== employeeID) {
-          // если HR меняет за другого — обязательно укажем forEmployeeID
-          u.searchParams.set('forEmployeeID', targetEmpId);
-        }
+        if (forEmployeeID) u.searchParams.set('forEmployeeID', targetEmpId);
         const r = await fetchJSON<{ ok: boolean; summary: { orderId?: string } | null }>(u.toString());
         existingOrderId = r?.summary?.orderId || undefined;
       } catch {
-        // тихо игнорим — будем считать, что заказа нет (создадим новый)
+        existingOrderId = undefined;
       }
 
-      // 4) Формируем тело запроса на создание/изменение
-      const qFor = (typeof window !== 'undefined')
-        ? (new URLSearchParams(window.location.search).get('forEmployeeID') || '')
-        : '';
-      const body = {
-        employeeID,                  // кто инициатор (HR или сам сотрудник)
-        org,
-        token,
-        date,
-        forEmployeeID: qFor || undefined,   // если HR — целевой сотрудник
-        orderId: existingOrderId,           // <-- ключевая строка: если есть — обновим
-        included: {
-          mainId: draft.mainId || undefined,
-          sideId: draft.sideId || undefined,
-          extras: extras.slice(0, 2),
-        },
-        clientToken: crypto.randomUUID(),
+      // 4) общее содержимое заказа
+      const payloadIncluded = {
+        mainId: draft.mainId || undefined,
+        sideId: draft.sideId || undefined,
+        extras: extras.slice(0, 2),
       };
 
-      const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>('/api/order', {
-        method: 'POST',
-        body: JSON.stringify(body),
-        headers: { 'Content-Type': 'application/json' },
-      });
+      // 5) если заказ уже есть — обновляем через /api/order_update
+      if (existingOrderId) {
+        const bodyUpdate = {
+          employeeID, org, token,
+          orderId: existingOrderId,
+          included: payloadIncluded,
+          // специально НЕ отправляем date — апдейт идёт по конкретному orderId
+          // (если на сервере требуется, можно добавить date)
+          ...(forEmployeeID ? { forEmployeeID } : {}),
+          clientToken: crypto.randomUUID(),
+        };
 
-      if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать/изменить заказ');
+        const upd = await fetchJSON<{ ok: boolean; error?: string }>(
+          '/api/order_update',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyUpdate),
+          }
+        );
+        if (!upd?.ok) throw new Error(upd?.error || 'Не удалось обновить заказ');
+      } else {
+        // 6) иначе — создаём новый через /api/order
+        const bodyCreate = {
+          employeeID, org, token, date,
+          included: payloadIncluded,
+          ...(forEmployeeID ? { forEmployeeID } : {}),
+          clientToken: crypto.randomUUID(),
+        };
+        const crt = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(
+          '/api/order',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyCreate),
+          }
+        );
+        if (!crt?.ok || !crt?.orderId) throw new Error(crt?.error || 'Не удалось создать заказ');
+      }
 
-      // 5) Чистим драфт этой даты
+      // 7) чистим драфт по этой дате
       saveDraft({ date } as Draft);
 
-      // 6) Возврат: если пришли из HR-консоли — назад в консоль, иначе — на выбор дат
-      const backTo = (typeof window !== 'undefined')
-        ? (new URLSearchParams(window.location.search).get('back') || '')
-        : '';
+      // 8) редирект: если квиз был открыт из HR-консоли — вернуться туда, иначе — на выбор дат
+      const backTo = sp.get('back') || '';
       if (backTo) {
         const u = new URL(backTo, window.location.origin);
         u.searchParams.set('org', org);
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('token', token);
         return router.push(u.toString());
+      } else {
+        const u = new URL('/order', window.location.origin);
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('org', org);
+        u.searchParams.set('token', token);
+        return router.push(u.toString());
       }
-
-      const u = new URL('/order', window.location.origin);
-      u.searchParams.set('employeeID', employeeID);
-      u.searchParams.set('org', org);
-      u.searchParams.set('token', token);
-      router.push(u.toString());
-    } catch (e: unknown) {
+    } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
