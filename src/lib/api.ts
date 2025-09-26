@@ -17,10 +17,6 @@ export async function fetchJSON<T = unknown>(input: string, init?: RequestInit):
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     cache: 'no-store',
-    // Next.js расширяет типы (TS их не знает) — нужна директива:
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error next runtime hint
-    next: { revalidate: 0 },
   };
 
   const res = await fetch(url, req);
@@ -42,6 +38,7 @@ export async function fetchJSON<T = unknown>(input: string, init?: RequestInit):
 
   return (res.json() as unknown) as T;
 }
+
 
 /* ====================== Меню ====================== */
 
