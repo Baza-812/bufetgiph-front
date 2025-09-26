@@ -29,8 +29,6 @@ type SingleSummary = {
   orderId: string;
 } | null;
 
-type SingleOrderResp = { ok: boolean; summary: SingleSummary };
-
 type DatesResp = { ok: boolean; dates: string[] };
 
 type HRListItem = {
