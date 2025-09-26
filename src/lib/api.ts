@@ -1,61 +1,83 @@
 // src/lib/api.ts
-const sleep = (ms:number)=> new Promise(r=>setTimeout(r,ms));
 
-export async function fetchJSON<T=any>(url:string, opts: RequestInit = {}, retries=3): Promise<T> {
-  for (let i=0;i<retries;i++){
-    const r = await fetch(url, {
-      ...opts,
-      headers: { 'Content-Type':'application/json', ...(opts.headers||{}) }
-    });
-    if (r.ok) return r.json();
-    if (r.status === 429 || r.status >= 500) {
-      const ra = Number(r.headers.get('retry-after'));
-      const delay = !isNaN(ra) ? ra*1000 : 300 * Math.pow(2, i);
-      await sleep(delay); continue;
-    }
-    throw new Error(`${r.status} ${await r.text()}`);
-  }
-  throw new Error('Network error after retries');
-}
-
-export function fmtDayLabel(iso:string) {
-  const d = new Date(iso+'T00:00:00');
-  const days = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-  const dd = String(d.getDate()).padStart(2,'0');
-  const mm = String(d.getMonth()+1).padStart(2,'0');
-  return `${days[d.getDay()]} • ${dd}.${mm}`;
-}
-
-// Тип меню: предполагаем поля id, name, description, category.
-// Если у вашего /api/menu поля называются иначе — подправим в mapMenuItem ниже.
 export type MenuItem = {
   id: string;
   name: string;
-  description?: string;
-  category?: string;
+  description: string;
+  category: string;
+  price?: number;
   garnirnoe?: boolean;
 };
 
-// Универсальный маппер ответа /api/menu к MenuItem[]
-// src/lib/api.ts
-export function mapMenuItem(raw: any): MenuItem {
-  // Если бэкенд уже прислал нормализованный объект — просто вернём его
-  if (raw && typeof raw === 'object' && raw.id && raw.name) {
-    // гарантируем наличие category (иначе поставим 'Other')
-    return {
-      id: raw.id,
-      name: raw.name,
-      description: raw.description || '',
-      category: raw.category || 'Other',
-      garnirnoe: Boolean(raw.garnirnoe)
-    };
+// Универсальный fetch JSON без any
+export async function fetchJSON<T>(input: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(input, init);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
   }
-  // Фолбэк для "сырых" записей Airtable
-  const id = raw?.id || raw?.recordId || '';
-  const f  = raw?.fields || raw || {};
-  const name = f.Name || f.title || f.Item || f['Dish Name (from Dish)'] || '';
-  const description = f.Description || f.desc || f.Details || f['Description (from Dish)'] || '';
-  const category = f.Category || f.Type || f.group || 'Other';
-  return { id, name, description, category };
+  return (await res.json()) as T;
 }
 
+// Аккуратный mapper без any
+export function mapMenuItem(raw: unknown): MenuItem {
+  // Пытаемся прочитать несколько возможных форматов ответа
+  // (Airtable record / наш собственный объект)
+  const rec = raw as {
+    id?: string;
+    fields?: Record<string, unknown>;
+    name?: unknown;
+    description?: unknown;
+    category?: unknown;
+    price?: unknown;
+    garnirnoe?: unknown;
+  };
+
+  // 1) Если это уже «наш» формат
+  if (typeof rec?.name === 'string' && typeof rec?.category === 'string') {
+    return {
+      id: String(rec.id ?? ''),
+      name: rec.name,
+      description: typeof rec.description === 'string' ? rec.description : '',
+      category: rec.category,
+      price: typeof rec.price === 'number' ? rec.price : undefined,
+      garnirnoe: typeof rec.garnirnoe === 'boolean' ? rec.garnirnoe : undefined,
+    };
+  }
+
+  // 2) Airtable-подобный
+  const id = String(rec?.id ?? '');
+  const f = (rec?.fields ?? {}) as Record<string, unknown>;
+
+  // Поля из Airtable handlers/menu.js
+  const name =
+    (Array.isArray(f['Dish Name (from Dish)']) ? f['Dish Name (from Dish)'][0] : f['Dish Name (from Dish)']) ??
+    f['Name'];
+  const description =
+    (Array.isArray(f['Description (from Dish)']) ? f['Description (from Dish)'][0] : f['Description (from Dish)']) ??
+    f['Description'];
+  const category = f['Category'];
+  const price = f['Price'];
+  const garnirnoe =
+    // новое булево поле
+    f['Garnirnoe Bool'] ??
+    // либо lookup
+    (Array.isArray(f['Garnirnoe (from Dish)']) ? f['Garnirnoe (from Dish)'][0] : f['Garnirnoe (from Dish)']);
+
+  return {
+    id,
+    name: typeof name === 'string' ? name : '',
+    description: typeof description === 'string' ? description : '',
+    category: typeof category === 'string' ? category : String(category ?? 'Other'),
+    price: typeof price === 'number' ? price : undefined,
+    garnirnoe: typeof garnirnoe === 'boolean' ? garnirnoe : Boolean(garnirnoe),
+  };
+}
+
+// Утилита форматирования «ДД.ММ, пн»
+export function fmtDayLabel(d: string) {
+  if (!d) return '';
+  const dt = new Date(`${d}T00:00:00`);
+  const s = dt.toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  return s.replace(/^[а-яё]/, (ch) => ch.toUpperCase());
+}
