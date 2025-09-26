@@ -172,6 +172,7 @@ export default function QuizClient() {
 
       const body = {
         employeeID, org, token, date,
+        forEmployeeID: qFor || undefined,
         included: {
           mainId: draft.mainId || undefined,
           sideId: draft.sideId || undefined,
