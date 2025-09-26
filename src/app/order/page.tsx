@@ -1,10 +1,9 @@
 // src/app/order/page.tsx
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-export const fetchCache = 'force-no-store';
+'use client';
 
 import OrderClient from './OrderClient';
 
-export default function Page() {
+export default function OrderPage() {
+  // Никакой собственной логики на странице — всё внутри OrderClient
   return <OrderClient />;
 }
