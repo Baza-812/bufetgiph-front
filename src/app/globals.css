@@ -1,0 +1,22 @@
+/* src/app/globals.css */
+@import "tailwindcss";
+
+/* Базовые CSS-переменные под наш тёмный фон */
+:root {
+  --background: #171717; /* Tailwind neutral-900 */
+  --foreground: #ffffff;
+  --font-sans: Arial, Helvetica, sans-serif;
+}
+
+/* Жёстко фиксируем тёмную тему (без media-query) */
+html, body, :root {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* Базовая типографика */
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
