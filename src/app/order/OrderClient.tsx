@@ -1,12 +1,14 @@
 // src/app/order/OrderClient.tsx
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {useEffect, useMemo, useState} from 'react';
+import {useSearchParams, useRouter} from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import { fetchJSON } from '@/lib/api';
 
+type DatesResp = { ok: boolean; dates: string[] };
 type SingleResp = {
   ok: boolean;
   summary: null | {
@@ -19,106 +21,104 @@ type SingleResp = {
   };
 };
 
-type DatesResp = { ok: boolean; dates: string[] };
-
 export default function OrderClient() {
-  // креды сотрудника из ссылки/LS
-  const [org, setOrg] = useState('');
-  const [employeeID, setEmployeeID] = useState('');
-  const [token, setToken] = useState('');
+  const sp = useSearchParams();
+  const router = useRouter();
 
-  const [dates, setDates] = useState<string[]>([]);
-  const [busy, setBusy] = useState<Record<string, SingleResp>>({});
-  const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [error, setError] = useState('');
+  // креды из линка или локального хранилища
+  const qOrg  = sp.get('org') || '';
+  const qEmp  = sp.get('employeeID') || '';
+  const qTok  = sp.get('token') || '';
 
-  // 1) подстановка из query/LS один раз
+  const [org, setOrg] = useState(qOrg || localStorage.getItem('baza.org') || '');
+  const [employeeID, setEmployeeID] = useState(qEmp || localStorage.getItem('baza.employeeID') || '');
+  const [token, setToken] = useState(qTok || localStorage.getItem('baza.token') || '');
+
+  // если пришли новые из query — сохраним
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    const o = q.get('org') || localStorage.getItem('baza.org') || '';
-    const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
-    const t = q.get('token') || localStorage.getItem('baza.token') || '';
-    setOrg(o);
-    setEmployeeID(e);
-    setToken(t);
-
-    if (o && e && t) {
-      localStorage.setItem('baza.org', o);
-      localStorage.setItem('baza.employeeID', e);
-      localStorage.setItem('baza.token', t);
-    }
+    if (qOrg)  { setOrg(qOrg);  localStorage.setItem('baza.org', qOrg); }
+    if (qEmp)  { setEmployeeID(qEmp); localStorage.setItem('baza.employeeID', qEmp); }
+    if (qTok)  { setToken(qTok); localStorage.setItem('baza.token', qTok); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 2) загрузка дат после org
+  const [dates, setDates] = useState<string[]>([]);
+  const [busy, setBusy]   = useState<Record<string, SingleResp>>({});
+  const [loadingDates, setLoadingDates] = useState(false);
+  const [loadingBusy, setLoadingBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  // 1) загрузка опубликованных дат
   useEffect(() => {
     (async () => {
+      if (!org) return;
       try {
-        if (!org) return;
-        setLoading(true);
-        setError('');
+        setError(''); setLoadingDates(true);
         const r = await fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}`);
         setDates(r.dates || []);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setError(msg);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setLoading(false);
+        setLoadingDates(false);
       }
     })();
   }, [org]);
 
-  // 3) функция, которая подгружает статусы заказов по всем датам
-  const reloadBusy = useCallback(async () => {
-    if (!employeeID || !org || !token || dates.length === 0) return;
-
-    const out: Record<string, SingleResp> = {};
-    for (const d of dates) {
-      try {
-        const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode', 'single');
-        u.searchParams.set('employeeID', employeeID);
-        u.searchParams.set('org', org);
-        u.searchParams.set('token', token);
-        u.searchParams.set('date', d);
-        const r = await fetchJSON<SingleResp>(u.toString());
-        out[d] = r;
-      } catch {
-        out[d] = { ok: false, summary: null };
+  // 2) загрузка занятости (только если есть все креды)
+  async function reloadBusy() {
+    if (!org || !employeeID || !token || dates.length === 0) return;
+    try {
+      setLoadingBusy(true);
+      const results = await Promise.allSettled(
+        dates.map(async (d) => {
+          const u = new URL('/api/hr_orders', window.location.origin);
+          u.searchParams.set('mode','single');
+          u.searchParams.set('employeeID', employeeID);
+          u.searchParams.set('org', org);
+          u.searchParams.set('token', token);
+          u.searchParams.set('date', d);
+          const r = await fetchJSON<SingleResp>(u.toString());
+          return [d, r] as const;
+        })
+      );
+      const map: Record<string, SingleResp> = {};
+      for (const it of results) {
+        if (it.status === 'fulfilled') {
+          const [d, r] = it.value;
+          map[d] = r;
+        }
       }
+      setBusy(map);
+    } catch (e) {
+      // молча — нам важнее не уронить сетку дат
+      console.warn('busy load failed', e);
+    } finally {
+      setLoadingBusy(false);
     }
-    setBusy(out);
-  }, [employeeID, org, token, dates]);
+  }
 
-  // 4) первичная загрузка busy + перезагрузка при смене зависимостей
-  useEffect(() => {
-    reloadBusy();
-  }, [reloadBusy]);
+  useEffect(() => { reloadBusy(); }, [org, employeeID, token, dates]);
 
-  // имя сотрудника (если уже есть рез-ты по выбранной дате)
-  const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
+  const canCheckBusy = Boolean(org && employeeID && token);
 
-  // Клик по дате
-  function onPickDate(d: string) {
-    const has = Boolean(busy[d]?.summary);
-    if (has) {
-      // если дата занята — открываем модалку с составом заказа
-      setSelected(d);
-    } else {
-      // свободно — сразу в квиз
-      const u = new URL('/order/quiz', window.location.origin);
-      u.searchParams.set('date', d);
-      u.searchParams.set('step', '1');
+  function fmtDayLabel(isoDate: string) {
+    if (!isoDate) return '';
+    const dt = new Date(`${isoDate}T00:00:00`);
+    const s = dt.toLocaleDateString('ru-RU', {
+      weekday: 'short', day: '2-digit', month: '2-digit'
+    });
+    return s.replace(/^[а-яё]/, (ch) => ch.toUpperCase());
+  }
 
-      // прокинем креды
-      const sp = new URLSearchParams(window.location.search);
-      for (const k of ['org', 'employeeID', 'token']) {
-        const v = sp.get(k) || (k === 'org' ? org : k === 'employeeID' ? employeeID : token);
-        if (v) u.searchParams.set(k, v);
-      }
-
-      window.location.href = u.toString();
-    }
+  function goToQuiz(iso: string) {
+    const u = new URL('/order/quiz', window.location.origin);
+    u.searchParams.set('date', iso);
+    u.searchParams.set('step','1');
+    // прокинем креды из текущей страницы
+    if (org)        u.searchParams.set('org', org);
+    if (employeeID) u.searchParams.set('employeeID', employeeID);
+    if (token)      u.searchParams.set('token', token);
+    router.push(u.toString());
   }
 
   return (
@@ -129,181 +129,63 @@ export default function OrderClient() {
         </p>
       </Panel>
 
-      {/* Блок авторизации (на случай если пришли без query) */}
-      {(!org || !employeeID || !token) && (
+      {/* Подсказка, если не хватает кредов для проверки занятости */}
+      {!canCheckBusy && (
         <Panel title="Данные доступа">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="text-sm text-white/70 mb-2">
+            Чтобы отмечать занятые даты и открывать модалку с составом заказа, укажите ваши креды
+            (обычно они подставляются автоматически по персональной ссылке).
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Field label="Org">
-              <Input value={org} onChange={(e) => setOrg(e.target.value)} placeholder="org120" />
+              <Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" />
             </Field>
             <Field label="Employee ID">
-              <Input
-                value={employeeID}
-                onChange={(e) => setEmployeeID(e.target.value)}
-                placeholder="rec..."
-              />
+              <Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." />
             </Field>
             <Field label="Token">
-              <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="token" />
+              <Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" />
             </Field>
-          </div>
-          <div className="text-xs text-white/50">
-            Обычно эти поля подставляются автоматически из персональной ссылки.
           </div>
         </Panel>
       )}
 
       <Panel title="Выберите дату">
-        {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
+        {loadingDates && <div className="text-white/60 text-sm">Загрузка дат…</div>}
         {error && <div className="text-red-400 text-sm">Ошибка: {error}</div>}
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map((d) => {
-            const has = Boolean(busy[d]?.summary);
-            const label = fmtDayLabel(d);
+            const has = Boolean(busy[d]?.summary); // есть заказ — занято
             return (
               <Button
                 key={d}
-                onClick={() => onPickDate(d)}
                 className="w-full"
-                variant={has ? 'ghost' : 'primary'}
+                variant={has ? 'ghost' : 'primary'} // ghost = серый, primary = жёлтый
+                onClick={() => goToQuiz(d)}
+                title={fmtDayLabel(d)}
               >
-                {label}
+                {fmtDayLabel(d)}
               </Button>
             );
           })}
         </div>
 
-        {/* Легенда цветов */}
+        {/* Легенда */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-4 rounded bg-brand-500" /> свободно
+            <span className="inline-block w-3 h-3 rounded bg-yellow-400" /> свободно
           </span>
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-4 rounded bg-white/10" /> уже заказано
+            <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
           </span>
+          {canCheckBusy && (
+            <Button size="sm" variant="ghost" onClick={reloadBusy} disabled={loadingBusy}>
+              {loadingBusy ? 'Обновление…' : 'Обновить статусы'}
+            </Button>
+          )}
         </div>
       </Panel>
-
-      {/* Модалка по выбранной занятой дате */}
-      {selected && busy[selected]?.summary && (
-        <DateModal
-          iso={selected}
-          employeeID={employeeID}
-          org={org}
-          token={token}
-          info={busy[selected]}
-          onClose={() => setSelected(null)}
-          afterCancel={reloadBusy}
-        />
-      )}
     </main>
-  );
-}
-
-/* ——— Модалка, если заказ уже есть — показываем состав и кнопки ОК/Изменить/Отменить */
-function DateModal({
-  iso,
-  employeeID,
-  org,
-  token,
-  info,
-  onClose,
-  afterCancel,
-}: {
-  iso: string;
-  employeeID: string;
-  org: string;
-  token: string;
-  info?: SingleResp;
-  onClose: () => void;
-  afterCancel: () => void;
-}) {
-  const has = Boolean(info?.summary);
-  const s = info?.summary;
-
-  const [working, setWorking] = useState(false);
-  const [err, setErr] = useState('');
-
-  async function cancelOrder() {
-    if (!s?.orderId) return;
-    try {
-      setWorking(true);
-      setErr('');
-      await fetchJSON('/api/order_cancel', {
-        method: 'POST',
-        body: JSON.stringify({
-          employeeID,
-          org,
-          token,
-          orderId: s.orderId,
-          reason: 'user_cancel',
-        }),
-      });
-      onClose();
-      await afterCancel(); // перезагрузить статусы, чтобы кнопка «посерела»
-      alert('Заказ отменён.');
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErr(msg);
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
-      <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-lg font-bold">{fmtDayLabel(iso)}</div>
-          <button onClick={onClose} className="text-white/60 hover:text-white text-sm">
-            Закрыть
-          </button>
-        </div>
-
-        {has ? (
-          <div className="space-y-2 text-sm">
-            <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
-            <div className="rounded-xl bg-white/5 border border-white/10 p-3">
-              <div>
-                <span className="text-white/60">Сотрудник:</span> {s?.fullName || '—'}
-              </div>
-              <div>
-                <span className="text-white/60">Meal Box:</span> {s?.mealBox || '—'}
-              </div>
-              <div>
-                <span className="text-white/60">Экстра 1:</span> {s?.extra1 || '—'}
-              </div>
-              <div>
-                <span className="text-white/60">Экстра 2:</span> {s?.extra2 || '—'}
-              </div>
-            </div>
-            {err && <div className="text-red-400">{err}</div>}
-            <div className="flex gap-3 pt-2">
-              <Button onClick={onClose}>ОК</Button>
-              <Button
-                onClick={() => {
-                  const u = new URL('/order/quiz', window.location.origin);
-                  u.searchParams.set('date', iso);
-                  u.searchParams.set('step', '1');
-                  const sp = new URLSearchParams(window.location.search);
-                  for (const k of ['org', 'employeeID', 'token']) {
-                    const v = sp.get(k);
-                    if (v) u.searchParams.set(k, v);
-                  }
-                  window.location.href = u.toString();
-                }}
-                variant="ghost"
-              >
-                Изменить
-              </Button>
-              <Button onClick={cancelOrder} variant="danger" disabled={working}>
-                {working ? 'Отмена…' : 'Отменить'}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
   );
 }
