@@ -1,42 +1,31 @@
 // src/lib/api.ts
 
 /** Базовый URL API; укажите в .env.local -> NEXT_PUBLIC_API_BASE=https://bufetgiph-api.vercel.app/api */
-export const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || '').replace(/\/$/, '');
+// src/lib/api.ts (фрагмент)
 
-/** Склеивает относительный путь с базой API. */
-export function apiUrl(path: string) {
-  const p = path.startsWith('/') ? path : `/${path}`;
-  return API_BASE ? `${API_BASE}${p}` : p;
+// Собираем полный URL к API: если передан абсолютный — вернём как есть,
+// иначе добавим префикс из NEXT_PUBLIC_API_URL (в проде) или оставим относительный (в dev с rewrites)
+function buildApiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+  return base ? `${base}${path}` : path; // dev: вернётся относительный и перепишется next.config
 }
 
-/** Универсальный fetch JSON (без дублей и без any). */
-export async function fetchJSON<T = unknown>(input: string, init?: RequestInit): Promise<T> {
-  const url = input.includes('://') ? input : apiUrl(input);
-
-  const req: RequestInit = {
+// Универсальный fetch JSON без any
+export async function fetchJSON<T>(input: string, init?: RequestInit): Promise<T> {
+  const url = buildApiUrl(input);
+  const res = await fetch(url, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    // запретим кэш, чтобы статусы «занято/свободно» всегда были актуальны
     cache: 'no-store',
-  };
-
-  const res = await fetch(url, req);
+  });
 
   if (!res.ok) {
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('application/json')) {
-      const j = (await res.json().catch(() => ({}))) as unknown;
-      const errMsg =
-        typeof j === 'object' && j !== null && 'error' in (j as Record<string, unknown>)
-          ? String((j as { error?: unknown }).error ?? `HTTP ${res.status}`)
-          : `HTTP ${res.status} ${res.statusText}`;
-      throw new Error(errMsg);
-    } else {
-      const t = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}: ${t?.slice(0, 200)}`);
-    }
+    const text = await res.text().catch(() => '');
+    // Получим более информативную ошибку (видно и статус, и тело)
+    throw new Error(`${res.status} ${res.statusText}${text ? `: ${text}` : ''}`);
   }
-
-  return (res.json() as unknown) as T;
+  return (await res.json()) as T;
 }
 
 
