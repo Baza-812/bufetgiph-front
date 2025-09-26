@@ -1,3 +1,4 @@
+// src/app/order/OrderClient.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -9,23 +10,33 @@ import { fetchJSON, fmtDayLabel } from '@/lib/api';
 
 type SingleResp = {
   ok: boolean;
-  summary: null | { fullName: string; date: string; mealBox: string; extra1: string; extra2: string; orderId: string };
+  summary: null | {
+    fullName: string;
+    date: string;
+    mealBox: string;
+    extra1: string;
+    extra2: string;
+    orderId: string;
+  };
 };
 
 export default function OrderClient() {
   const router = useRouter();
 
+  // креды
   const [org, setOrg] = useState('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
 
+  // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null); // для модалки
   const [error, setError] = useState('');
 
-  // 1) креды один раз
+  // —————————————————————————————————————————————
+  // 1) забираем креды из query/localStorage (один раз, строго на клиенте)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
@@ -41,13 +52,14 @@ export default function OrderClient() {
     }
   }, []);
 
-  // 2) даты (после org)
+  // —————————————————————————————————————————————
+  // 2) грузим опубликованные даты (как только известна org)
   useEffect(() => {
     (async () => {
+      if (!org) return;
       try {
-        if (!org) return;
         setLoading(true); setError('');
-        const r = await fetchJSON<{ ok:boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
+        const r = await fetchJSON<{ ok: boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
         setDates(r.dates || []);
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : String(e));
@@ -57,35 +69,49 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // 3) занятость (после дат и всех кредов)
-  useEffect(() => {
-    (async () => {
-      if (!employeeID || !org || !token || dates.length === 0) return;
-      const out: Record<string, SingleResp> = {};
-      for (const d of dates) {
-        try {
-          const u = new URL('/api/hr_orders', window.location.origin);
-          u.searchParams.set('mode','single');
-          u.searchParams.set('employeeID', employeeID);
-          u.searchParams.set('org', org);
-          u.searchParams.set('token', token);
-          u.searchParams.set('date', d);
-          const r = await fetchJSON<SingleResp>(u.toString());
-          out[d] = r;
-        } catch {
-          out[d] = { ok: false, summary: null };
-        }
+  // —————————————————————————————————————————————
+  // 3) по каждой дате проверяем — есть ли заказ (для цвета кнопки/модалки)
+  const reloadBusy = async () => {
+    if (!employeeID || !org || !token || dates.length === 0) return;
+    const out: Record<string, SingleResp> = {};
+    for (const d of dates) {
+      try {
+        const u = new URL('/api/hr_orders', window.location.origin);
+        u.searchParams.set('mode', 'single');
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('org', org);
+        u.searchParams.set('token', token);
+        u.searchParams.set('date', d);
+        const r = await fetchJSON<SingleResp>(u.toString());
+        out[d] = r;
+      } catch {
+        out[d] = { ok: false, summary: null };
       }
-      setBusy(out);
-    })();
+    }
+    setBusy(out);
+  };
+
+  useEffect(() => {
+    reloadBusy();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dates, employeeID, org, token]);
+
+  // также обновляем при возвращении на вкладку (после квиза)
+  useEffect(() => {
+    const onFocus = () => { reloadBusy(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dates, employeeID, org, token]);
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
+  // —————————————————————————————————————————————
+  // 4) клик по дате
   async function handlePickDate(d: string) {
     try {
       const u = new URL('/api/hr_orders', window.location.origin);
-      u.searchParams.set('mode','single');
+      u.searchParams.set('mode', 'single');
       u.searchParams.set('employeeID', employeeID);
       u.searchParams.set('org', org);
       u.searchParams.set('token', token);
@@ -93,6 +119,7 @@ export default function OrderClient() {
       const r = await fetchJSON<SingleResp>(u.toString());
 
       if (!r?.summary?.orderId) {
+        // свободно — сразу в квиз
         const q = new URL('/order/quiz', window.location.origin);
         q.searchParams.set('date', d);
         q.searchParams.set('step', '1');
@@ -102,8 +129,11 @@ export default function OrderClient() {
         router.push(q.toString());
         return;
       }
+
+      // заказ есть — модалка
       setSelected(d);
     } catch {
+      // при ошибке проверки всё равно пускаем в квиз
       const q = new URL('/order/quiz', window.location.origin);
       q.searchParams.set('date', d);
       q.searchParams.set('step', '1');
@@ -122,12 +152,19 @@ export default function OrderClient() {
         </p>
       </Panel>
 
+      {/* креды вручную — на случай, если пришли без query */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Field label="Org"><Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" /></Field>
-            <Field label="Employee ID"><Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." /></Field>
-            <Field label="Token"><Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" /></Field>
+            <Field label="Org">
+              <Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" />
+            </Field>
+            <Field label="Employee ID">
+              <Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." />
+            </Field>
+            <Field label="Token">
+              <Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" />
+            </Field>
           </div>
           <div className="text-xs text-white/50">Обычно эти поля подставляются автоматически из персональной ссылки.</div>
         </Panel>
@@ -139,12 +176,12 @@ export default function OrderClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map(d => {
-            const has = Boolean(busy[d]?.summary);
+            const has = Boolean(busy[d]?.summary); // ← СЕРОЕ если заказ уже есть
             const label = fmtDayLabel(d);
             return (
               <Button
                 key={d}
-                onClick={()=>handlePickDate(d)}
+                onClick={() => handlePickDate(d)}
                 className="w-full"
                 variant={has ? 'ghost' : 'primary'}
               >
@@ -154,16 +191,18 @@ export default function OrderClient() {
           })}
         </div>
 
+        {/* Легенда */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-4 rounded bg-brand-500" /> свободно
+            <span className="inline-block w-3 h-3 rounded bg-brand-500" /> свободно
           </span>
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-4 rounded bg-white/10" /> уже заказано
+            <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
           </span>
         </div>
       </Panel>
 
+      {/* Модалка со составом — показываем только когда заказ есть */}
       {selected && (
         <DateModal
           iso={selected}
@@ -171,17 +210,21 @@ export default function OrderClient() {
           org={org}
           token={token}
           info={busy[selected]}
-          onClose={()=>setSelected(null)}
+          onClose={() => setSelected(null)}
+          onChanged={reloadBusy}
         />
       )}
     </main>
   );
 }
 
-function DateModal({ iso, employeeID, org, token, info, onClose }:{
+/* ——— Модалка: состав + действия ——— */
+function DateModal({
+  iso, employeeID, org, token, info, onClose, onChanged,
+}: {
   iso: string;
   employeeID: string; org: string; token: string;
-  info?: SingleResp; onClose: ()=>void;
+  info?: SingleResp; onClose: ()=>void; onChanged: ()=>void;
 }) {
   const has = Boolean(info?.summary);
   const s   = info?.summary;
@@ -195,14 +238,18 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:{
       setWorking(true); setErr('');
       await fetchJSON('/api/order_cancel', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' })
       });
       onClose();
+      onChanged();
       alert('Заказ отменён.');
     } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setWorking(false); }
   }
+
+  if (!has) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
@@ -212,38 +259,36 @@ function DateModal({ iso, employeeID, org, token, info, onClose }:{
           <button onClick={onClose} className="text-white/60 hover:text-white text-sm">Закрыть</button>
         </div>
 
-        {has ? (
-          <div className="space-y-2 text-sm">
-            <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
-            <div className="rounded-xl bg-white/5 border border-white/10 p-3">
-              <div><span className="text-white/60">Сотрудник:</span> {s?.fullName || '—'}</div>
-              <div><span className="text-white/60">Meal Box:</span> {s?.mealBox || '—'}</div>
-              <div><span className="text-white/60">Экстра 1:</span> {s?.extra1 || '—'}</div>
-              <div><span className="text-white/60">Экстра 2:</span> {s?.extra2 || '—'}</div>
-            </div>
-            {err && <div className="text-red-400">{err}</div>}
-            <div className="flex gap-3 pt-2">
-              <Button onClick={onClose}>ОК</Button>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  const u = new URL('/order/quiz', window.location.origin);
-                  u.searchParams.set('date', iso);
-                  u.searchParams.set('step', '1');
-                  u.searchParams.set('org', org);
-                  u.searchParams.set('employeeID', employeeID);
-                  u.searchParams.set('token', token);
-                  window.location.href = u.toString();
-                }}
-              >
-                Изменить
-              </Button>
-              <Button onClick={cancelOrder} variant="danger" disabled={working}>
-                {working ? 'Отмена…' : 'Отменить'}
-              </Button>
-            </div>
+        <div className="space-y-2 text-sm">
+          <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
+          <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+            <div><span className="text-white/60">Сотрудник:</span> {s?.fullName || '—'}</div>
+            <div><span className="text-white/60">Meal Box:</span> {s?.mealBox || '—'}</div>
+            <div><span className="text-white/60">Экстра 1:</span> {s?.extra1 || '—'}</div>
+            <div><span className="text-white/60">Экстра 2:</span> {s?.extra2 || '—'}</div>
           </div>
-        ) : null}
+          {err && <div className="text-red-400">{err}</div>}
+          <div className="flex gap-3 pt-2">
+            <Button onClick={onClose}>ОК</Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                const u = new URL('/order/quiz', window.location.origin);
+                u.searchParams.set('date', iso);
+                u.searchParams.set('step', '1');
+                u.searchParams.set('org', org);
+                u.searchParams.set('employeeID', employeeID);
+                u.searchParams.set('token', token);
+                window.location.href = u.toString();
+              }}
+            >
+              Изменить
+            </Button>
+            <Button onClick={cancelOrder} variant="danger" disabled={working}>
+              {working ? 'Отмена…' : 'Отменить'}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
