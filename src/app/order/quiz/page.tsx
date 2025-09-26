@@ -1,7 +1,7 @@
 // src/app/order/quiz/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
@@ -62,16 +62,15 @@ export default function QuizPage() {
     setDraft(() => ({ date, ...(loadDraft(date) as Partial<Draft>) }));
   }, [date]);
 
-  // Подтянуть креды из localStorage, если не пришли в query
+  // Подтянуть креды из localStorage, если не пришли в query — один раз
+  const didInit = useRef(false);
   useEffect(() => {
-    // намеренно один раз при монтировании
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    (async () => {
-      if (!org)  setOrg(localStorage.getItem('baza.org') || '');
-      if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
-      if (!token) setToken(localStorage.getItem('baza.token') || '');
-    })();
-  }, []);
+    if (didInit.current) return;
+    didInit.current = true;
+    if (!org)  setOrg(localStorage.getItem('baza.org') || '');
+    if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
+    if (!token) setToken(localStorage.getItem('baza.token') || '');
+  }, [org, employeeID, token]);
 
   // Сохранить креды
   useEffect(() => {
@@ -201,8 +200,8 @@ export default function QuizPage() {
       // очистить черновик этой даты
       saveDraft({ date } as Draft);
 
-      // редирект:
-      const backTo = sp.get('back') || ''; // если шли из HR-консоли, там back=/hr/console
+      // редирект: если шли из HR-консоли, вернёмся туда
+      const backTo = sp.get('back') || '';
       if (backTo) {
         const u = new URL(backTo, window.location.origin);
         u.searchParams.set('org', org);
@@ -313,9 +312,7 @@ export default function QuizPage() {
         <SaladStep
           byCat={byCat}
           onPick={(it)=>pickSoup(it,true)}
-          // onSwap отсутствует умышленно
-          // @ts-expect-error выключаем кнопку swap на этом шаге
-          onSwap={undefined}
+          // onSwap намеренно отсутствует — не показываем кнопку
           draft={draft}
           onBack={()=>go('3')}
         />
