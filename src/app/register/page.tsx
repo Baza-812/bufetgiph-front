@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON } from '@/lib/api';
 
-type OrgInfoResp = { ok: boolean; name?: string };
+type OrgInfoResp = { ok: boolean; name?: string; error?: string };
 type RegisterResp =
   | { ok: true; employeeId: string }
   | { ok: false; error: string };
@@ -25,7 +25,6 @@ export default function RegisterPage() {
   const [err, setErr] = useState<string>('');
 
   useEffect(() => {
-    // org из query
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || '';
     setOrg(o);
@@ -35,6 +34,7 @@ export default function RegisterPage() {
       try {
         setErr('');
         const resp = await fetchJSON<OrgInfoResp>(`/api/org_info?org=${encodeURIComponent(o)}`);
+        if (!resp.ok) throw new Error(resp.error || 'Ошибка загрузки организации');
         setOrgName(resp?.name || '');
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -48,12 +48,13 @@ export default function RegisterPage() {
       setBusy(true);
       setErr(''); setMsg('');
       const body = { org, lastName, firstName, email };
-      const r = await fetchJSON<RegisterResp>('/api/register', {
+      const opts: RequestInit = {
         method: 'POST',
         headers: { 'Content-Type':'application/json' },
         body: JSON.stringify(body),
-      } as unknown as RequestInit);
-      if (!r.ok) throw new Error('Не удалось зарегистрировать сотрудника');
+      };
+      const r = await fetchJSON<RegisterResp>('/api/register', opts);
+      if (!r.ok) throw new Error(r.error || 'Не удалось зарегистрировать сотрудника');
       setMsg('Готово! Ссылка отправлена на указанный email.');
       setLastName(''); setFirstName(''); setEmail('');
     } catch (e: unknown) {
