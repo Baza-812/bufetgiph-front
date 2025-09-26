@@ -20,14 +20,16 @@ type HREmployee = {
 
 type HREmployeesResp = { ok: boolean; count: number; items: HREmployee[] };
 
-type SingleSummary = {
-  fullName: string;
-  date: string;
-  mealBox: string;
-  extra1: string;
-  extra2: string;
-  orderId: string;
-} | null;
+type SingleSummary =
+  | {
+      fullName: string;
+      date: string;
+      mealBox: string;
+      extra1: string;
+      extra2: string;
+      orderId: string;
+    }
+  | null;
 
 type DatesResp = { ok: boolean; dates: string[] };
 
@@ -46,6 +48,7 @@ type HRListResp = { ok: boolean; items: HRListItem[] };
 export default function HRConsolePage() {
   // креды HR
   const [org, setOrg] = useState('');
+  const [orgName, setOrgName] = useState<string>('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
 
@@ -65,8 +68,30 @@ export default function HRConsolePage() {
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
-    setOrg(o); setEmployeeID(e); setToken(t);
+    setOrg(o);
+    setEmployeeID(e);
+    setToken(t);
   }, []);
+
+  // подгружаем название организации (с фолбэком на org)
+  useEffect(() => {
+    if (!org) {
+      setOrgName('');
+      return;
+    }
+    (async () => {
+      try {
+        const u = new URL('/api/org_info', window.location.origin);
+        u.searchParams.set('org', org);
+        const js = await fetchJSON<{ ok?: boolean; name?: string; title?: string; displayName?: string }>(
+          u.toString(),
+        );
+        setOrgName(js?.name || js?.title || js?.displayName || org);
+      } catch {
+        setOrgName(org);
+      }
+    })();
+  }, [org]);
 
   // загрузка дат (после установки org)
   useEffect(() => {
@@ -87,9 +112,13 @@ export default function HRConsolePage() {
 
   // загрузка сотрудников (кнопкой)
   async function loadEmployees() {
-    if (!org || !employeeID || !token) { setErr('Укажите org, employeeID и token'); return; }
+    if (!org || !employeeID || !token) {
+      setErr('Укажите org, employeeID и token');
+      return;
+    }
     try {
-      setLoading(true); setErr('');
+      setLoading(true);
+      setErr('');
       const u = new URL('/api/hr_employees', window.location.origin);
       u.searchParams.set('org', org);
       u.searchParams.set('employeeID', employeeID);
@@ -104,7 +133,9 @@ export default function HRConsolePage() {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
 
   // загрузка статуса заказов по выбранной дате (одним запросом list)
@@ -114,7 +145,7 @@ export default function HRConsolePage() {
       try {
         setErr('');
         const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode','list');
+        u.searchParams.set('mode', 'list');
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
@@ -124,11 +155,15 @@ export default function HRConsolePage() {
         const map: Record<string, SingleSummary> = {};
         // маппим по имени; если имена не уникальны — лучше перейти на batched / single по id
         for (const it of js.items || []) {
-          const emp = rows.find(r => r.name === it.fullName);
+          const emp = rows.find((r) => r.name === it.fullName);
           if (emp) {
             map[emp.id] = {
-              fullName: it.fullName, date: it.date,
-              mealBox: it.mealBox, extra1: it.extra1, extra2: it.extra2, orderId: it.orderId
+              fullName: it.fullName,
+              date: it.date,
+              mealBox: it.mealBox,
+              extra1: it.extra1,
+              extra2: it.extra2,
+              orderId: it.orderId,
             };
           }
         }
@@ -142,83 +177,100 @@ export default function HRConsolePage() {
 
   // действия HR
   function openQuizFor(emp: HREmployee) {
-  const u = new URL('/order/quiz', window.location.origin);
-  u.searchParams.set('date', date);
-  u.searchParams.set('step', '1');
+    const u = new URL('/order/quiz', window.location.origin);
+    u.searchParams.set('date', date);
+    u.searchParams.set('step', '1');
 
-  // HR-креды (именно HR-id/token, потому что он действует "за сотрудника")
-  u.searchParams.set('employeeID', employeeID);
-  u.searchParams.set('org', org);
-  u.searchParams.set('token', token);
+    // HR-креды (именно HR-id/token, потому что он действует "за сотрудника")
+    u.searchParams.set('employeeID', employeeID);
+    u.searchParams.set('org', org);
+    u.searchParams.set('token', token);
 
-  // таргет-сотрудник
-  u.searchParams.set('forEmployeeID', emp.id);
+    // таргет-сотрудник
+    u.searchParams.set('forEmployeeID', emp.id);
 
-  // если у сотрудника на выбранную дату уже есть заказ — добавляем orderId
-  const sum = orderByEmp[emp.id];
-  if (sum?.orderId) {
-    u.searchParams.set('orderId', sum.orderId);
+    // если у сотрудника на выбранную дату уже есть заказ — добавляем orderId
+    const sum = orderByEmp[emp.id];
+    if (sum?.orderId) {
+      u.searchParams.set('orderId', sum.orderId);
+    }
+
+    // чтобы после подтверждения вернуться в консоль
+    u.searchParams.set('back', '/hr/console');
+
+    window.location.href = u.toString();
   }
-
-  // чтобы после подтверждения вернуться в консоль
-  u.searchParams.set('back', '/hr/console');
-
-  window.location.href = u.toString();
-}
 
   async function cancelOrder(emp: HREmployee) {
     const s = orderByEmp[emp.id];
     if (!s?.orderId) return;
     if (!confirm(`Отменить заказ сотрудника «${emp.name}» на ${fmtDayLabel(date)}?`)) return;
     try {
-      setLoading(true); setErr('');
+      setLoading(true);
+      setErr('');
       const js = await fetchJSON<{ ok: boolean; error?: string }>('/api/order_cancel', {
         method: 'POST',
-        headers: { 'Content-Type':'application/json' },
-        body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'hr_cancel' })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'hr_cancel' }),
       });
       if (!js.ok) throw new Error(js.error || 'Не удалось отменить заказ');
       // локально очистим состояние
-      setOrderByEmp(m => ({ ...m, [emp.id]: null }));
+      setOrderByEmp((m) => ({ ...m, [emp.id]: null }));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
 
   function fmtDayLabel(d: string) {
     if (!d) return '';
     const dt = new Date(`${d}T00:00:00`);
     const s = dt.toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' });
-    return s.replace(/^[а-яё]/, ch => ch.toUpperCase());
+    return s.replace(/^[а-яё]/, (ch) => ch.toUpperCase());
   }
 
-  const sorted = useMemo(
-    () => [...rows].sort((a,b)=> (a.name||'').localeCompare(b.name||'', 'ru')),
-    [rows]
-  );
+  const sorted = useMemo(() => [...rows].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ru')), [rows]);
 
   return (
     <main>
       <Panel title="HR-консоль">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Org"><Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" /></Field>
-          <Field label="Ваш Employee ID"><Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." /></Field>
-          <Field label="Token"><Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" /></Field>
+        {/* Организация — название + ID */}
+        <div className="flex flex-col gap-1 mb-3">
+          <div className="text-sm text-white/60">ОРГАНИЗАЦИЯ</div>
+          <div className="text-lg font-semibold">{orgName || '—'}</div>
+          <div className="text-xs text-white/40">ID: {org || '—'}</div>
+        </div>
+
+        {/* Доступы HR (пока оставляем видимыми — пригодится для отладки) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="Ваш Employee ID">
+            <Input value={employeeID} onChange={(e) => setEmployeeID(e.target.value)} placeholder="rec..." />
+          </Field>
+          <Field label="Token">
+            <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="token" />
+          </Field>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Button onClick={loadEmployees} disabled={loading}>{loading ? 'Загрузка…' : 'Загрузить сотрудников'}</Button>
+          <Button onClick={loadEmployees} disabled={loading}>
+            {loading ? 'Загрузка…' : 'Загрузить сотрудников'}
+          </Button>
 
           {/* выбор даты */}
           <div className="flex items-center gap-2">
             <span className="text-white/70 text-sm">Дата:</span>
             <select
               value={date}
-              onChange={e=>setDate(e.target.value)}
-              className="bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-sm"
+              onChange={(e) => setDate(e.target.value)}
+              className="h-10 rounded-lg px-3 bg-neutral-800 text-white border border-white/10"
             >
-              {dates.map(d => <option key={d} value={d}>{fmtDayLabel(d)}</option>)}
+              {dates.map((d) => (
+                <option key={d} value={d} className="bg-neutral-800 text-white">
+                  {fmtDayLabel(d)}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -241,7 +293,7 @@ export default function HRConsolePage() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map(emp => {
+                {sorted.map((emp) => {
                   const sum = orderByEmp[emp.id];
                   const hasOrder = Boolean(sum);
                   return (
@@ -252,26 +304,38 @@ export default function HRConsolePage() {
                       <td className="py-2 pr-4">
                         {emp.hasToken && emp.personalUrl ? (
                           <CopyLink url={emp.personalUrl} />
-                        ) : <span className="text-white/50">нет</span>}
+                        ) : (
+                          <span className="text-white/50">нет</span>
+                        )}
                       </td>
                       <td className="py-2 pr-4">
                         {hasOrder ? (
                           <div className="text-white/80">
-                            <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
-                            <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
-                            <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
+                            <div>
+                              <span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}
+                            </div>
+                            <div>
+                              <span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}
+                            </div>
+                            <div>
+                              <span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}
+                            </div>
                           </div>
-                        ) : <span className="text-white/50">—</span>}
+                        ) : (
+                          <span className="text-white/50">—</span>
+                        )}
                       </td>
                       <td className="py-2 pr-0">
                         <div className="flex flex-wrap gap-2">
                           {hasOrder ? (
                             <>
-                              <Button onClick={()=>openQuizFor(emp)}>Изменить</Button>
-                              <Button variant="danger" onClick={()=>cancelOrder(emp)}>Отменить</Button>
+                              <Button onClick={() => openQuizFor(emp)}>Изменить</Button>
+                              <Button variant="danger" onClick={() => cancelOrder(emp)}>
+                                Отменить
+                              </Button>
                             </>
                           ) : (
-                            <Button onClick={()=>openQuizFor(emp)}>Оформить</Button>
+                            <Button onClick={() => openQuizFor(emp)}>Оформить</Button>
                           )}
                         </div>
                       </td>
@@ -291,7 +355,11 @@ function CopyLink({ url }: { url: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
-      onClick={async ()=>{ await navigator.clipboard.writeText(url); setDone(true); setTimeout(()=>setDone(false), 1000); }}
+      onClick={async () => {
+        await navigator.clipboard.writeText(url);
+        setDone(true);
+        setTimeout(() => setDone(false), 1000);
+      }}
       className="text-xs inline-flex items-center px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20"
       title={url}
     >
