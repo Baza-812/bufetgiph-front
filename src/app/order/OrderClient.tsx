@@ -1,7 +1,7 @@
 // src/app/order/OrderClient.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
@@ -35,16 +35,13 @@ export default function OrderClient() {
   const [selected, setSelected] = useState<string | null>(null); // для модалки
   const [error, setError] = useState('');
 
-  // —————————————————————————————————————————————
-  // 1) забираем креды из query/localStorage (один раз, строго на клиенте)
+  // 1) читаем креды из query/localStorage
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
-
     setOrg(o); setEmployeeID(e); setToken(t);
-
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
       localStorage.setItem('baza.employeeID', e);
@@ -52,8 +49,7 @@ export default function OrderClient() {
     }
   }, []);
 
-  // —————————————————————————————————————————————
-  // 2) грузим опубликованные даты (как только известна org)
+  // 2) грузим опубликованные даты для org
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -69,13 +65,9 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // —————————————————————————————————————————————
-  // занятость по всем датам
-useEffect(() => {
-  (async () => {
+  // 3) единый «пересчитать занятость» — используем /api/busy
+  const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
-    // СТАРОЕ: цикл по датам и /api/hr_orders?mode=single
-    // НОВОЕ: один запрос на /api/busy
     try {
       const qs = new URLSearchParams({
         employeeID,
@@ -84,31 +76,34 @@ useEffect(() => {
         dates: dates.join(','),
       });
       const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
-      const map: Record<string, { ok: boolean; summary: null } | { ok: true; summary: { orderId: string } }> = {};
+
+      // формируем map «ожидаемого» формата (summary != null -> занято)
+      const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        // нам для подсветки достаточно true/false; summary можно держать null
-        map[d] = r.busy[d] ? { ok: true, summary: { orderId: '1' } as any } : { ok: true, summary: null };
+        map[d] = r.busy[d]
+          ? { ok: true, summary: { fullName: '', date: d, mealBox: '', extra1: '', extra2: '', orderId: 'busy' } }
+          : { ok: true, summary: null };
       }
       setBusy(map);
     } catch {
-      const map: Record<string, any> = {};
+      const map: Record<string, SingleResp> = {};
       for (const d of dates) map[d] = { ok: false, summary: null };
       setBusy(map);
     }
-  })();
-}, [dates, employeeID, org, token]);
+  }, [dates, employeeID, org, token]);
 
-  // также обновляем при возвращении на вкладку (после квиза)
+  // первичная загрузка занятости и при смене зависимостей
+  useEffect(() => { reloadBusy(); }, [reloadBusy]);
+
+  // обновлять при возврате на вкладку
   useEffect(() => {
     const onFocus = () => { reloadBusy(); };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dates, employeeID, org, token]);
+  }, [reloadBusy]);
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
-  // —————————————————————————————————————————————
   // 4) клик по дате
   async function handlePickDate(d: string) {
     try {
@@ -178,7 +173,7 @@ useEffect(() => {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map(d => {
-            const has = Boolean(busy[d]?.summary); // ← СЕРОЕ если заказ уже есть
+            const has = Boolean(busy[d]?.summary); // СЕРОЕ если занято (summary != null)
             const label = fmtDayLabel(d);
             return (
               <Button
@@ -244,7 +239,7 @@ function DateModal({
         body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' })
       });
       onClose();
-      onChanged();
+      onChanged(); // ← обновим занятость после отмены
       alert('Заказ отменён.');
     } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
