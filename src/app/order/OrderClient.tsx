@@ -35,16 +35,13 @@ export default function OrderClient() {
   const [selected, setSelected] = useState<string | null>(null); // для модалки
   const [error, setError] = useState('');
 
-  // —————————————————————————————————————————————
-  // 1) забираем креды из query/localStorage (один раз, строго на клиенте)
+  // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
-
     setOrg(o); setEmployeeID(e); setToken(t);
-
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
       localStorage.setItem('baza.employeeID', e);
@@ -52,8 +49,7 @@ export default function OrderClient() {
     }
   }, []);
 
-  // —————————————————————————————————————————————
-  // 2) грузим опубликованные даты (как только известна org)
+  // 2) опубликованные даты
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -69,37 +65,21 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // —————————————————————————————————————————————
-  // 3) единый «пересчитать занятость» — используем /api/busy
+  // Функция перезагрузки «занятости» одним запросом /api/busy
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
     try {
       const qs = new URLSearchParams({
-        employeeID,
-        org,
-        token,
+        employeeID, org, token,
         dates: dates.join(','),
       });
       const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
-
-      // формируем map строго типа Record<string, SingleResp>
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        if (r.busy[d]) {
-          map[d] = {
-            ok: true,
-            summary: {
-              fullName: '',
-              date: d,
-              mealBox: '',
-              extra1: '',
-              extra2: '',
-              orderId: 'busy', // заглушка для факта занятости
-            },
-          };
-        } else {
-          map[d] = { ok: true, summary: null };
-        }
+        // помечаем «занято» минимальной заглушкой summary (orderId: '__has__')
+        map[d] = r.busy[d]
+          ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
+          : { ok: true, summary: null };
       }
       setBusy(map);
     } catch {
@@ -109,12 +89,10 @@ export default function OrderClient() {
     }
   }, [dates, employeeID, org, token]);
 
-  // первичная загрузка занятости
-  useEffect(() => {
-    reloadBusy();
-  }, [reloadBusy]);
+  // первичная загрузка busy
+  useEffect(() => { reloadBusy(); }, [reloadBusy]);
 
-  // также обновляем при возвращении на вкладку (после квиза)
+  // обновлять при возвращении на вкладку (после квиза)
   useEffect(() => {
     const onFocus = () => { reloadBusy(); };
     window.addEventListener('focus', onFocus);
@@ -123,34 +101,11 @@ export default function OrderClient() {
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
-  // —————————————————————————————————————————————
-  // 4) клик по дате
+  // 4) клик по дате: теперь опираемся на локальный busy
   async function handlePickDate(d: string) {
-    try {
-      const u = new URL('/api/hr_orders', window.location.origin);
-      u.searchParams.set('mode', 'single');
-      u.searchParams.set('employeeID', employeeID);
-      u.searchParams.set('org', org);
-      u.searchParams.set('token', token);
-      u.searchParams.set('date', d);
-      const r = await fetchJSON<SingleResp>(u.toString());
-
-      if (!r?.summary?.orderId) {
-        // свободно — сразу в квиз
-        const q = new URL('/order/quiz', window.location.origin);
-        q.searchParams.set('date', d);
-        q.searchParams.set('step', '1');
-        q.searchParams.set('org', org);
-        q.searchParams.set('employeeID', employeeID);
-        q.searchParams.set('token', token);
-        router.push(q.toString());
-        return;
-      }
-
-      // заказ есть — модалка
-      setSelected(d);
-    } catch {
-      // при ошибке проверки всё равно пускаем в квиз
+    const isBusy = Boolean(busy[d]?.summary);
+    if (!isBusy) {
+      // свободно — сразу в квиз
       const q = new URL('/order/quiz', window.location.origin);
       q.searchParams.set('date', d);
       q.searchParams.set('step', '1');
@@ -158,7 +113,10 @@ export default function OrderClient() {
       q.searchParams.set('employeeID', employeeID);
       q.searchParams.set('token', token);
       router.push(q.toString());
+      return;
     }
+    // занято — открываем модалку (детали подгрузим внутри модалки)
+    setSelected(d);
   }
 
   return (
@@ -193,7 +151,7 @@ export default function OrderClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map(d => {
-            const has = Boolean(busy[d]?.summary); // ← СЕРОЕ если заказ уже есть
+            const has = Boolean(busy[d]?.summary); // СЕРОЕ если заказ уже есть
             const label = fmtDayLabel(d);
             return (
               <Button
@@ -235,7 +193,7 @@ export default function OrderClient() {
   );
 }
 
-/* ——— Модалка: состав + действия ——— */
+/* ——— Модалка: состав + действия — дозагружаем summary при необходимости ——— */
 function DateModal({
   iso, employeeID, org, token, info, onClose, onChanged,
 }: {
@@ -243,30 +201,51 @@ function DateModal({
   employeeID: string; org: string; token: string;
   info?: SingleResp; onClose: ()=>void; onChanged: ()=>void;
 }) {
-  const has = Boolean(info?.summary);
-  const s   = info?.summary;
-
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
+  const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
+
+  // если пришла «заглушка» (orderId='__has__') или нет деталей — дозагружаем
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      const needFetch = !info?.summary || info.summary.orderId === '__has__';
+      if (!needFetch) { setSum(info!.summary); return; }
+      try {
+        const u = new URL('/api/hr_orders', window.location.origin);
+        u.searchParams.set('mode','single');
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('org', org);
+        u.searchParams.set('token', token);
+        u.searchParams.set('date', iso);
+        const r = await fetchJSON<SingleResp>(u.toString());
+        if (!ignore) setSum(r?.summary || null);
+      } catch (e) {
+        if (!ignore) setSum(null);
+      }
+    })();
+    return () => { ignore = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [iso, employeeID, org, token]);
 
   async function cancelOrder() {
-    if (!s?.orderId) return;
+    if (!sum?.orderId) return;
     try {
       setWorking(true); setErr('');
       await fetchJSON('/api/order_cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' })
+        body: JSON.stringify({ employeeID, org, token, orderId: sum.orderId, reason: 'user_cancel' })
       });
       onClose();
-      onChanged();
+      onChanged(); // обновим «серость»
       alert('Заказ отменён.');
     } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setWorking(false); }
   }
 
-  if (!has) return null;
+  if (!sum?.orderId) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
@@ -279,10 +258,10 @@ function DateModal({
         <div className="space-y-2 text-sm">
           <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
           <div className="rounded-xl bg-white/5 border border-white/10 p-3">
-            <div><span className="text-white/60">Сотрудник:</span> {s?.fullName || '—'}</div>
-            <div><span className="text-white/60">Meal Box:</span> {s?.mealBox || '—'}</div>
-            <div><span className="text-white/60">Экстра 1:</span> {s?.extra1 || '—'}</div>
-            <div><span className="text-white/60">Экстра 2:</span> {s?.extra2 || '—'}</div>
+            <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
+            <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
+            <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
+            <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
           </div>
           {err && <div className="text-red-400">{err}</div>}
           <div className="flex gap-3 pt-2">
@@ -296,6 +275,7 @@ function DateModal({
                 u.searchParams.set('org', org);
                 u.searchParams.set('employeeID', employeeID);
                 u.searchParams.set('token', token);
+                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
                 window.location.href = u.toString();
               }}
             >
