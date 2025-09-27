@@ -8,22 +8,17 @@ import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, fmtDayLabel } from '@/lib/api';
 
-type Summary = {
-  fullName: string;
-  date: string;
-  mealBox: string;
-  extra1: string;
-  extra2: string;
-  orderId: string;
-} | null;
-
 type SingleResp = {
   ok: boolean;
-  summary: Summary;
+  summary: null | {
+    fullName: string;
+    date: string;
+    mealBox: string;
+    extra1: string;
+    extra2: string;
+    orderId: string;
+  };
 };
-
-type BusyCell = { exists: boolean; orderId?: string };
-type BusyAPIResp = { ok: boolean; busy: Record<string, BusyCell> };
 
 export default function OrderClient() {
   const router = useRouter();
@@ -72,7 +67,7 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // 3) Перезагрузка «занятости» одним запросом /api/busy
+  // Перезагрузка «занятости» одним запросом /api/busy
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
     setBusyReady(false);
@@ -81,30 +76,46 @@ export default function OrderClient() {
         employeeID, org, token,
         dates: dates.join(','),
       });
-      const r = await fetchJSON<BusyAPIResp>(`/api/busy?${qs.toString()}`);
+
+      // Ответ может быть двух типов:
+      // 1) { busy: { "YYYY-MM-DD": true/false } }
+      // 2) { busy: { "YYYY-MM-DD": { exists: boolean, orderId?: string } } }
+      const r = await fetchJSON<{ ok: boolean; busy: Record<string, unknown> }>(`/api/busy?${qs.toString()}`);
 
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        const cell = r.busy[d];
-        if (cell?.exists) {
+        const raw = (r.busy && (r.busy as any)[d]) ?? (r.busy && (r.busy as any)[d.trim()]);
+        let exists = false;
+        let orderId: string | undefined;
+
+        if (typeof raw === 'boolean') {
+          exists = raw;
+        } else if (raw && typeof raw === 'object') {
+          const obj = raw as { exists?: unknown; orderId?: unknown };
+          exists = Boolean(obj.exists);
+          if (typeof obj.orderId === 'string' && obj.orderId) orderId = obj.orderId;
+        }
+
+        if (exists) {
           map[d] = {
             ok: true,
             summary: {
-              orderId: cell.orderId || '__has__', // лучше реальный id, но '__has__' тоже сработает как индикатор
+              orderId: orderId || '__has__', // если сервер не дал id — ставим маркер
               fullName: '',
               date: d,
               mealBox: '',
               extra1: '',
               extra2: '',
-            } as any
+            } as any,
           };
         } else {
           map[d] = { ok: true, summary: null };
         }
       }
+
       setBusy(map);
     } catch {
-      // на ошибке считаем всё свободным (не блокируем пользователя)
+      // На ошибке — считаем всё свободным (не блокируем пользователя)
       const map: Record<string, SingleResp> = {};
       for (const d of dates) map[d] = { ok: true, summary: null };
       setBusy(map);
@@ -263,7 +274,7 @@ function DateModal({
 }) {
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
-  const [sum, setSum] = useState<Summary>(info?.summary || null);
+  const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
   const [loading, setLoading] = useState(false);
 
   // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
@@ -271,7 +282,7 @@ function DateModal({
     let ignore = false;
 
     (async () => {
-      // 1) если в info.summary уже есть нормальный orderId — используем его
+      // 1) если в info.summary уже есть нормальный orderId — показываем
       if (info?.summary && info.summary.orderId && info.summary.orderId !== '__has__') {
         setSum(info.summary);
         return;
@@ -282,13 +293,13 @@ function DateModal({
         // 2) если из /api/busy пришёл orderId — грузим сводку по ID
         const orderIdFromBusy =
           info && (info as any).summary?.orderId && (info as any).summary.orderId !== '__has__'
-            ? (info as any).summary.orderId
+            ? (info as any).summary.orderId as string
             : undefined;
 
         if (orderIdFromBusy) {
           const u = new URL('/api/order_summary', window.location.origin);
           u.searchParams.set('orderId', orderIdFromBusy);
-          const r = await fetchJSON<{ ok:boolean; summary: Summary }>(u.toString());
+          const r = await fetchJSON<{ ok:boolean; summary: SingleResp['summary'] }>(u.toString());
           if (!ignore) setSum(r?.summary || null);
           return;
         }
