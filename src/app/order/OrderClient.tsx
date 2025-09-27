@@ -31,7 +31,7 @@ export default function OrderClient() {
   // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
-  const [busyReady, setBusyReady] = useState(false); // готовность статуса занятости/серости
+  const [busyReady, setBusyReady] = useState(false); // ← готовность статуса занятости/серости
 
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null); // для модалки
@@ -76,48 +76,17 @@ export default function OrderClient() {
         employeeID, org, token,
         dates: dates.join(','),
       });
-
-      // Ответ может быть двух типов:
-      // 1) { busy: { "YYYY-MM-DD": true/false } }
-      // 2) { busy: { "YYYY-MM-DD": { exists: boolean, orderId?: string } } }
-      const r = await fetchJSON<{ ok: boolean; busy: Record<string, unknown> }>(`/api/busy?${qs.toString()}`);
-
+      const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        const raw = (r.busy && (r.busy as any)[d]) ?? (r.busy && (r.busy as any)[d.trim()]);
-        let exists = false;
-        let orderId: string | undefined;
-
-        if (typeof raw === 'boolean') {
-          exists = raw;
-        } else if (raw && typeof raw === 'object') {
-          const obj = raw as { exists?: unknown; orderId?: unknown };
-          exists = Boolean(obj.exists);
-          if (typeof obj.orderId === 'string' && obj.orderId) orderId = obj.orderId;
-        }
-
-        if (exists) {
-          map[d] = {
-            ok: true,
-            summary: {
-              orderId: orderId || '__has__', // если сервер не дал id — ставим маркер
-              fullName: '',
-              date: d,
-              mealBox: '',
-              extra1: '',
-              extra2: '',
-            } as any,
-          };
-        } else {
-          map[d] = { ok: true, summary: null };
-        }
+        map[d] = r.busy[d]
+          ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
+          : { ok: true, summary: null };
       }
-
       setBusy(map);
     } catch {
-      // На ошибке — считаем всё свободным (не блокируем пользователя)
       const map: Record<string, SingleResp> = {};
-      for (const d of dates) map[d] = { ok: true, summary: null };
+      for (const d of dates) map[d] = { ok: false, summary: null };
       setBusy(map);
     } finally {
       setBusyReady(true);
@@ -229,7 +198,7 @@ export default function OrderClient() {
                 onClick={() => handlePickDate(d)}
                 className="w-full"
                 variant={has ? 'ghost' : 'primary'}
-                disabled={!busyReady} // до загрузки «серости» клики блокируем
+                disabled={!busyReady} // ← до загрузки «серости» клики блокируем
               >
                 {label}
               </Button>
@@ -280,31 +249,11 @@ function DateModal({
   // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
   useEffect(() => {
     let ignore = false;
-
     (async () => {
-      // 1) если в info.summary уже есть нормальный orderId — показываем
-      if (info?.summary && info.summary.orderId && info.summary.orderId !== '__has__') {
-        setSum(info.summary);
-        return;
-      }
-
-      setLoading(true); setErr('');
+      const needFetch = !info?.summary || info.summary.orderId === '__has__';
+      if (!needFetch) { setSum(info!.summary); return; }
       try {
-        // 2) если из /api/busy пришёл orderId — грузим сводку по ID
-        const orderIdFromBusy =
-          info && (info as any).summary?.orderId && (info as any).summary.orderId !== '__has__'
-            ? (info as any).summary.orderId as string
-            : undefined;
-
-        if (orderIdFromBusy) {
-          const u = new URL('/api/order_summary', window.location.origin);
-          u.searchParams.set('orderId', orderIdFromBusy);
-          const r = await fetchJSON<{ ok:boolean; summary: SingleResp['summary'] }>(u.toString());
-          if (!ignore) setSum(r?.summary || null);
-          return;
-        }
-
-        // 3) иначе — старый путь: искать по дате/кредам
+        setLoading(true); setErr('');
         const u = new URL('/api/hr_orders', window.location.origin);
         u.searchParams.set('mode','single');
         u.searchParams.set('employeeID', employeeID);
@@ -319,7 +268,6 @@ function DateModal({
         if (!ignore) setLoading(false);
       }
     })();
-
     return () => { ignore = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iso, employeeID, org, token]);
