@@ -70,31 +70,33 @@ export default function OrderClient() {
   }, [org]);
 
   // —————————————————————————————————————————————
-  // 3) по каждой дате проверяем — есть ли заказ (для цвета кнопки/модалки)
-  const reloadBusy = async () => {
+  // занятость по всем датам
+useEffect(() => {
+  (async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
-    const out: Record<string, SingleResp> = {};
-    for (const d of dates) {
-      try {
-        const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode', 'single');
-        u.searchParams.set('employeeID', employeeID);
-        u.searchParams.set('org', org);
-        u.searchParams.set('token', token);
-        u.searchParams.set('date', d);
-        const r = await fetchJSON<SingleResp>(u.toString());
-        out[d] = r;
-      } catch {
-        out[d] = { ok: false, summary: null };
+    // СТАРОЕ: цикл по датам и /api/hr_orders?mode=single
+    // НОВОЕ: один запрос на /api/busy
+    try {
+      const qs = new URLSearchParams({
+        employeeID,
+        org,
+        token,
+        dates: dates.join(','),
+      });
+      const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
+      const map: Record<string, { ok: boolean; summary: null } | { ok: true; summary: { orderId: string } }> = {};
+      for (const d of dates) {
+        // нам для подсветки достаточно true/false; summary можно держать null
+        map[d] = r.busy[d] ? { ok: true, summary: { orderId: '1' } as any } : { ok: true, summary: null };
       }
+      setBusy(map);
+    } catch {
+      const map: Record<string, any> = {};
+      for (const d of dates) map[d] = { ok: false, summary: null };
+      setBusy(map);
     }
-    setBusy(out);
-  };
-
-  useEffect(() => {
-    reloadBusy();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dates, employeeID, org, token]);
+  })();
+}, [dates, employeeID, org, token]);
 
   // также обновляем при возвращении на вкладку (после квиза)
   useEffect(() => {
