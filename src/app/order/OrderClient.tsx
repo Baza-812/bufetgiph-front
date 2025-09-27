@@ -8,17 +8,22 @@ import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, fmtDayLabel } from '@/lib/api';
 
+type Summary = {
+  fullName: string;
+  date: string;
+  mealBox: string;
+  extra1: string;
+  extra2: string;
+  orderId: string;
+} | null;
+
 type SingleResp = {
   ok: boolean;
-  summary: null | {
-    fullName: string;
-    date: string;
-    mealBox: string;
-    extra1: string;
-    extra2: string;
-    orderId: string;
-  };
+  summary: Summary;
 };
+
+type BusyCell = { exists: boolean; orderId?: string };
+type BusyAPIResp = { ok: boolean; busy: Record<string, BusyCell> };
 
 export default function OrderClient() {
   const router = useRouter();
@@ -31,7 +36,7 @@ export default function OrderClient() {
   // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
-  const [busyReady, setBusyReady] = useState(false); // ← готовность статуса занятости/серости
+  const [busyReady, setBusyReady] = useState(false); // готовность статуса занятости/серости
 
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null); // для модалки
@@ -67,7 +72,7 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // Перезагрузка «занятости» одним запросом /api/busy
+  // 3) Перезагрузка «занятости» одним запросом /api/busy
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
     setBusyReady(false);
@@ -76,35 +81,33 @@ export default function OrderClient() {
         employeeID, org, token,
         dates: dates.join(','),
       });
-      const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
+      const r = await fetchJSON<BusyAPIResp>(`/api/busy?${qs.toString()}`);
+
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        map[d] = r.busy[d]
-          ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
-          : { ok: true, summary: null };
+        const cell = r.busy[d];
+        if (cell?.exists) {
+          map[d] = {
+            ok: true,
+            summary: {
+              orderId: cell.orderId || '__has__', // лучше реальный id, но '__has__' тоже сработает как индикатор
+              fullName: '',
+              date: d,
+              mealBox: '',
+              extra1: '',
+              extra2: '',
+            } as any
+          };
+        } else {
+          map[d] = { ok: true, summary: null };
+        }
       }
       setBusy(map);
     } catch {
+      // на ошибке считаем всё свободным (не блокируем пользователя)
       const map: Record<string, SingleResp> = {};
-for (const d of dates) {
-  const cell = r.busy[d]; // теперь это { exists: boolean, orderId?: string }
-  if (cell?.exists) {
-    map[d] = {
-      ok: true,
-      summary: {
-        orderId: cell.orderId || '__has__', // лучше реальный id
-        fullName: '',
-        date: d,
-        mealBox: '',
-        extra1: '',
-        extra2: '',
-      } as any
-    };
-  } else {
-    map[d] = { ok: true, summary: null };
-  }
-}
-setBusy(map);
+      for (const d of dates) map[d] = { ok: true, summary: null };
+      setBusy(map);
     } finally {
       setBusyReady(true);
     }
@@ -215,7 +218,7 @@ setBusy(map);
                 onClick={() => handlePickDate(d)}
                 className="w-full"
                 variant={has ? 'ghost' : 'primary'}
-                disabled={!busyReady} // ← до загрузки «серости» клики блокируем
+                disabled={!busyReady} // до загрузки «серости» клики блокируем
               >
                 {label}
               </Button>
@@ -260,15 +263,15 @@ function DateModal({
 }) {
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
-  const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
+  const [sum, setSum] = useState<Summary>(info?.summary || null);
   const [loading, setLoading] = useState(false);
 
   // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
-    useEffect(() => {
+  useEffect(() => {
     let ignore = false;
 
     (async () => {
-      // 1) если в info.summary уже есть нормальный orderId — показываем
+      // 1) если в info.summary уже есть нормальный orderId — используем его
       if (info?.summary && info.summary.orderId && info.summary.orderId !== '__has__') {
         setSum(info.summary);
         return;
@@ -277,14 +280,15 @@ function DateModal({
       setLoading(true); setErr('');
       try {
         // 2) если из /api/busy пришёл orderId — грузим сводку по ID
-        const orderIdFromBusy = info && (info as any).summary?.orderId && (info as any).summary.orderId !== '__has__'
-          ? (info as any).summary.orderId
-          : undefined;
+        const orderIdFromBusy =
+          info && (info as any).summary?.orderId && (info as any).summary.orderId !== '__has__'
+            ? (info as any).summary.orderId
+            : undefined;
 
         if (orderIdFromBusy) {
           const u = new URL('/api/order_summary', window.location.origin);
           u.searchParams.set('orderId', orderIdFromBusy);
-          const r = await fetchJSON<{ ok:boolean; summary: SingleResp['summary'] }>(u.toString());
+          const r = await fetchJSON<{ ok:boolean; summary: Summary }>(u.toString());
           if (!ignore) setSum(r?.summary || null);
           return;
         }
@@ -308,7 +312,6 @@ function DateModal({
     return () => { ignore = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iso, employeeID, org, token]);
-
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
