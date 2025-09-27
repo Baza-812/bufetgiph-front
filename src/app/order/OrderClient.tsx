@@ -31,6 +31,8 @@ export default function OrderClient() {
   // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
+  const [busyReady, setBusyReady] = useState(false); // ← готовность статуса занятости/серости
+
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null); // для модалки
   const [error, setError] = useState('');
@@ -65,9 +67,10 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // Функция перезагрузки «занятости» одним запросом /api/busy
+  // Перезагрузка «занятости» одним запросом /api/busy
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
+    setBusyReady(false);
     try {
       const qs = new URLSearchParams({
         employeeID, org, token,
@@ -76,7 +79,6 @@ export default function OrderClient() {
       const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        // помечаем «занято» минимальной заглушкой summary (orderId: '__has__')
         map[d] = r.busy[d]
           ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
           : { ok: true, summary: null };
@@ -86,6 +88,8 @@ export default function OrderClient() {
       const map: Record<string, SingleResp> = {};
       for (const d of dates) map[d] = { ok: false, summary: null };
       setBusy(map);
+    } finally {
+      setBusyReady(true);
     }
   }, [dates, employeeID, org, token]);
 
@@ -101,11 +105,47 @@ export default function OrderClient() {
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
-  // 4) клик по дате: теперь опираемся на локальный busy
+  // 4) клик по дате
   async function handlePickDate(d: string) {
+    // Если занятость ещё не подгрузилась — проверим точечно, чтобы не улететь в квиз по ошибке
+    if (!busyReady) {
+      try {
+        const u = new URL('/api/hr_orders', window.location.origin);
+        u.searchParams.set('mode', 'single');
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('org', org);
+        u.searchParams.set('token', token);
+        u.searchParams.set('date', d);
+        const r = await fetchJSON<SingleResp>(u.toString());
+        if (r?.summary?.orderId) {
+          setSelected(d); // есть заказ — модалка
+          return;
+        }
+        // свободно — квиз
+        const q = new URL('/order/quiz', window.location.origin);
+        q.searchParams.set('date', d);
+        q.searchParams.set('step', '1');
+        q.searchParams.set('org', org);
+        q.searchParams.set('employeeID', employeeID);
+        q.searchParams.set('token', token);
+        router.push(q.toString());
+        return;
+      } catch {
+        // на ошибке — пускаем в квиз, чтобы не стопорить пользователя
+        const q = new URL('/order/quiz', window.location.origin);
+        q.searchParams.set('date', d);
+        q.searchParams.set('step', '1');
+        q.searchParams.set('org', org);
+        q.searchParams.set('employeeID', employeeID);
+        q.searchParams.set('token', token);
+        router.push(q.toString());
+        return;
+      }
+    }
+
+    // Когда занятость известна — решаем локально
     const isBusy = Boolean(busy[d]?.summary);
     if (!isBusy) {
-      // свободно — сразу в квиз
       const q = new URL('/order/quiz', window.location.origin);
       q.searchParams.set('date', d);
       q.searchParams.set('step', '1');
@@ -115,8 +155,7 @@ export default function OrderClient() {
       router.push(q.toString());
       return;
     }
-    // занято — открываем модалку (детали подгрузим внутри модалки)
-    setSelected(d);
+    setSelected(d); // занято — модалка
   }
 
   return (
@@ -159,6 +198,7 @@ export default function OrderClient() {
                 onClick={() => handlePickDate(d)}
                 className="w-full"
                 variant={has ? 'ghost' : 'primary'}
+                disabled={!busyReady} // ← до загрузки «серости» клики блокируем
               >
                 {label}
               </Button>
@@ -177,7 +217,7 @@ export default function OrderClient() {
         </div>
       </Panel>
 
-      {/* Модалка со составом — показываем только когда заказ есть */}
+      {/* Модалка со составом — показываем только когда выбран день */}
       {selected && (
         <DateModal
           iso={selected}
@@ -193,7 +233,7 @@ export default function OrderClient() {
   );
 }
 
-/* ——— Модалка: состав + действия — дозагружаем summary при необходимости ——— */
+/* ——— Модалка: состав + действия — всегда остаётся открытой; показывает лоадер, пока тянем детали ——— */
 function DateModal({
   iso, employeeID, org, token, info, onClose, onChanged,
 }: {
@@ -204,14 +244,16 @@ function DateModal({
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
   const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
+  const [loading, setLoading] = useState(false);
 
-  // если пришла «заглушка» (orderId='__has__') или нет деталей — дозагружаем
+  // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
   useEffect(() => {
     let ignore = false;
     (async () => {
       const needFetch = !info?.summary || info.summary.orderId === '__has__';
       if (!needFetch) { setSum(info!.summary); return; }
       try {
+        setLoading(true); setErr('');
         const u = new URL('/api/hr_orders', window.location.origin);
         u.searchParams.set('mode','single');
         u.searchParams.set('employeeID', employeeID);
@@ -221,7 +263,9 @@ function DateModal({
         const r = await fetchJSON<SingleResp>(u.toString());
         if (!ignore) setSum(r?.summary || null);
       } catch (e) {
-        if (!ignore) setSum(null);
+        if (!ignore) setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!ignore) setLoading(false);
       }
     })();
     return () => { ignore = true; };
@@ -245,8 +289,6 @@ function DateModal({
     } finally { setWorking(false); }
   }
 
-  if (!sum?.orderId) return null;
-
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
       <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-4">
@@ -256,14 +298,28 @@ function DateModal({
         </div>
 
         <div className="space-y-2 text-sm">
-          <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
-          <div className="rounded-xl bg-white/5 border border-white/10 p-3">
-            <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
-            <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
-            <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
-            <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
-          </div>
+          {loading && <div className="text-white/60">Загрузка данных заказа…</div>}
+
+          {!loading && sum?.orderId && (
+            <>
+              <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
+              <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+                <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
+                <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
+                <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
+                <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
+              </div>
+            </>
+          )}
+
+          {!loading && !sum?.orderId && (
+            <div className="text-white/70">
+              Не удалось получить состав заказа. Вы можете перейти к изменению.
+            </div>
+          )}
+
           {err && <div className="text-red-400">{err}</div>}
+
           <div className="flex gap-3 pt-2">
             <Button onClick={onClose}>ОК</Button>
             <Button
@@ -281,7 +337,7 @@ function DateModal({
             >
               Изменить
             </Button>
-            <Button onClick={cancelOrder} variant="danger" disabled={working}>
+            <Button onClick={cancelOrder} variant="danger" disabled={working || !sum?.orderId}>
               {working ? 'Отмена…' : 'Отменить'}
             </Button>
           </div>
