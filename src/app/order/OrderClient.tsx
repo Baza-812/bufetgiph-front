@@ -247,13 +247,32 @@ function DateModal({
   const [loading, setLoading] = useState(false);
 
   // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
-  useEffect(() => {
+    useEffect(() => {
     let ignore = false;
+
     (async () => {
-      const needFetch = !info?.summary || info.summary.orderId === '__has__';
-      if (!needFetch) { setSum(info!.summary); return; }
+      // 1) если в info.summary уже есть нормальный orderId — показываем
+      if (info?.summary && info.summary.orderId && info.summary.orderId !== '__has__') {
+        setSum(info.summary);
+        return;
+      }
+
+      setLoading(true); setErr('');
       try {
-        setLoading(true); setErr('');
+        // 2) если из /api/busy пришёл orderId — грузим сводку по ID
+        const orderIdFromBusy = info && (info as any).summary?.orderId && (info as any).summary.orderId !== '__has__'
+          ? (info as any).summary.orderId
+          : undefined;
+
+        if (orderIdFromBusy) {
+          const u = new URL('/api/order_summary', window.location.origin);
+          u.searchParams.set('orderId', orderIdFromBusy);
+          const r = await fetchJSON<{ ok:boolean; summary: SingleResp['summary'] }>(u.toString());
+          if (!ignore) setSum(r?.summary || null);
+          return;
+        }
+
+        // 3) иначе — старый путь: искать по дате/кредам
         const u = new URL('/api/hr_orders', window.location.origin);
         u.searchParams.set('mode','single');
         u.searchParams.set('employeeID', employeeID);
@@ -268,9 +287,11 @@ function DateModal({
         if (!ignore) setLoading(false);
       }
     })();
+
     return () => { ignore = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iso, employeeID, org, token]);
+
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
