@@ -86,8 +86,25 @@ export default function OrderClient() {
       setBusy(map);
     } catch {
       const map: Record<string, SingleResp> = {};
-      for (const d of dates) map[d] = { ok: false, summary: null };
-      setBusy(map);
+for (const d of dates) {
+  const cell = r.busy[d]; // теперь это { exists: boolean, orderId?: string }
+  if (cell?.exists) {
+    map[d] = {
+      ok: true,
+      summary: {
+        orderId: cell.orderId || '__has__', // лучше реальный id
+        fullName: '',
+        date: d,
+        mealBox: '',
+        extra1: '',
+        extra2: '',
+      } as any
+    };
+  } else {
+    map[d] = { ok: true, summary: null };
+  }
+}
+setBusy(map);
     } finally {
       setBusyReady(true);
     }
