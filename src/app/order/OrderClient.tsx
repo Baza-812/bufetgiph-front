@@ -35,13 +35,16 @@ export default function OrderClient() {
   const [selected, setSelected] = useState<string | null>(null); // для модалки
   const [error, setError] = useState('');
 
-  // 1) читаем креды из query/localStorage
+  // —————————————————————————————————————————————
+  // 1) забираем креды из query/localStorage (один раз, строго на клиенте)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
+
     setOrg(o); setEmployeeID(e); setToken(t);
+
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
       localStorage.setItem('baza.employeeID', e);
@@ -49,7 +52,8 @@ export default function OrderClient() {
     }
   }, []);
 
-  // 2) грузим опубликованные даты для org
+  // —————————————————————————————————————————————
+  // 2) грузим опубликованные даты (как только известна org)
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -65,6 +69,7 @@ export default function OrderClient() {
     })();
   }, [org]);
 
+  // —————————————————————————————————————————————
   // 3) единый «пересчитать занятость» — используем /api/busy
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
@@ -77,12 +82,24 @@ export default function OrderClient() {
       });
       const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
 
-      // формируем map «ожидаемого» формата (summary != null -> занято)
+      // формируем map строго типа Record<string, SingleResp>
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        map[d] = r.busy[d]
-          ? { ok: true, summary: { fullName: '', date: d, mealBox: '', extra1: '', extra2: '', orderId: 'busy' } }
-          : { ok: true, summary: null };
+        if (r.busy[d]) {
+          map[d] = {
+            ok: true,
+            summary: {
+              fullName: '',
+              date: d,
+              mealBox: '',
+              extra1: '',
+              extra2: '',
+              orderId: 'busy', // заглушка для факта занятости
+            },
+          };
+        } else {
+          map[d] = { ok: true, summary: null };
+        }
       }
       setBusy(map);
     } catch {
@@ -92,10 +109,12 @@ export default function OrderClient() {
     }
   }, [dates, employeeID, org, token]);
 
-  // первичная загрузка занятости и при смене зависимостей
-  useEffect(() => { reloadBusy(); }, [reloadBusy]);
+  // первичная загрузка занятости
+  useEffect(() => {
+    reloadBusy();
+  }, [reloadBusy]);
 
-  // обновлять при возврате на вкладку
+  // также обновляем при возвращении на вкладку (после квиза)
   useEffect(() => {
     const onFocus = () => { reloadBusy(); };
     window.addEventListener('focus', onFocus);
@@ -104,6 +123,7 @@ export default function OrderClient() {
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
+  // —————————————————————————————————————————————
   // 4) клик по дате
   async function handlePickDate(d: string) {
     try {
@@ -173,7 +193,7 @@ export default function OrderClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map(d => {
-            const has = Boolean(busy[d]?.summary); // СЕРОЕ если занято (summary != null)
+            const has = Boolean(busy[d]?.summary); // ← СЕРОЕ если заказ уже есть
             const label = fmtDayLabel(d);
             return (
               <Button
@@ -239,7 +259,7 @@ function DateModal({
         body: JSON.stringify({ employeeID, org, token, orderId: s.orderId, reason: 'user_cancel' })
       });
       onClose();
-      onChanged(); // ← обновим занятость после отмены
+      onChanged();
       alert('Заказ отменён.');
     } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
