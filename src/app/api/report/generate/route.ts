@@ -3,6 +3,8 @@ import { base, TBL, selectAll } from '@/lib/airtable';
 import { kitchenDailyHTML } from '@/lib/templates/kitchenDaily';
 import { renderPdfFromHtml } from '@/lib/pdf';
 import { put } from '@vercel/blob';
+import Airtable from 'airtable';
+
 
 // NB: этот хэндлер работает в Node runtime (для puppeteer)
 export const runtime = 'nodejs';
@@ -75,19 +77,24 @@ const blob = await put(`reports/${filename}`, buf, {
       `Если нужны корректировки — напишите в ответ.`,
     ].join('\n');
 
-    const rep = await base(TBL.REPORTS).create({
-      'ReportType': [reportTypeId],
-      'Recipient': [recipientId],
-      'OrgsCovered': [orgId],
-      'ReportDate': dateISO,
-      'Status': 'ready',
-      'SubjectFinal': subj,
-      'BodyFinal': body,
-      'File': [{ url: blob.url, filename }],
-    } as any);
+    const created = await base(TBL.REPORTS).create([
+  {
+    'ReportType': [reportTypeId],
+    'Recipient': [recipientId],
+    'OrgsCovered': [orgId],
+    'ReportDate': dateISO,
+    'Status': 'ready',
+    'SubjectFinal': subj,
+    'BodyFinal': body,
+    'File': [{ url: blob.url, filename }],
+  } as any,
+]);
 
-    results.push({ reportId: rep.getId(), url: blob.url, orgId, orgName });
+// Явно приводим к массиву Record'ов и берём первый
+const rep = created as unknown as Airtable.Record<Airtable.FieldSet>[];
+const reportId = rep[0].getId();
 
+results.push({ reportId, url: blob.url, orgId, orgName });
   }
 
   return NextResponse.json({ ok:true, date:dateISO, results });
