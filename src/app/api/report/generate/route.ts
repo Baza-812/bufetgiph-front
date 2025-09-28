@@ -15,90 +15,100 @@ type Body = {
 };
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as Body;
-  const recipientId = body.recipientId?.trim();
-  if (!recipientId) {
-    return NextResponse.json({ ok:false, error:'recipientId required' }, { status:400 });
-  }
-  const dateISO = body.date || nextDayISO();
+  try {
+    const { recipientId, date } = (await req.json()) as { recipientId?: string; date?: string };
+    if (!recipientId) {
+      return NextResponse.json({ ok: false, error: "recipientId required" }, { status: 400 });
+    }
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json({ ok: false, error: "Missing BLOB_READ_WRITE_TOKEN env" }, { status: 500 });
+    }
 
-  // 1) тянем настройки получателя и тип отчёта
-  const rec = await base(TBL.REPORT_RECIPIENTS).find(recipientId);
-  const reportTypeId = (rec.get('ReportType') as any[] | undefined)?.[0];
-  if (!reportTypeId) return NextResponse.json({ ok:false, error:'ReportType not linked' }, { status:400 });
+    const dateISO = date || nextDayISO();
 
-  const reportType = await base(TBL.REPORT_TYPES).find(reportTypeId);
-  const slug = String(reportType.get('Slug') || 'kitchen_daily');
-
-  // список организаций (если пусто — все)
-  let orgIds = (rec.get('OrgsIncluded') as any[] | undefined) || [];
-  if (!orgIds.length) {
-    const allOrgs = await selectAll(TBL.ORGS, { fields: ['Name'] });
-    orgIds = allOrgs.map(r => r.id);
-  }
-
-  // 2) по каждой организации — собрать данные → PDF → сохранить в Blob → создать запись в Reports
-  const results: any[] = [];
-  for (const orgId of orgIds) {
-    const org = await base(TBL.ORGS).find(orgId);
-    const orgName = String(org.get('Name') || 'Организация');
-
-    const { rows, counters } = await collectKitchenData(orgId, dateISO);
-
-    // HTML → PDF
-    const html = kitchenDailyHTML({
-      orgName,
-      dateLabel: toRu(dateISO),
-      rows,
-      counters,
+    // 1) получатель
+    const rr = await base(TBL.REPORT_RECIPIENTS).find(recipientId).catch((e) => {
+      throw new Error(`ReportRecipient not found by id=${recipientId}: ${String(e)}`);
     });
-    const pdf = await renderPdfFromHtml(html);
 
-    // upload to Vercel Blob (public)
-    const filename = `${safe(orgName)}_${dateISO}_${slug}.pdf`.replace(/\s+/g,'_');
-    const buf = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf); // Uint8Array -> Buffer
+    const reportTypeId = (rr.get("ReportType") as any[] | undefined)?.[0];
+    if (!reportTypeId) throw new Error("ReportType not linked in ReportRecipients");
 
-const blob = await put(`reports/${filename}`, buf, {
-  access: 'public',
-  addRandomSuffix: false,
-  contentType: 'application/pdf',
-  token: process.env.BLOB_READ_WRITE_TOKEN!,
-});
+    const rtype = await base(TBL.REPORT_TYPES).find(reportTypeId);
+    const slug = String(rtype.get("Slug") || "kitchen_daily");
 
-    // Создаём запись Reports со вложением + final subject/body
-    const subj = `Заказы на ${toRu(dateISO)} — ${orgName}`;
-    const body = [
-      `Добрый день!`,
-      ``,
-      `Во вложении отчёт по заказам на ${toRu(dateISO)} для ${orgName}.`,
-      `• Таблица 1 — сотрудники и их заказы`,
-      `• Таблица 2 — агрегаты по блюдам (салаты, супы, блинчики/запеканки, милбоксы, выпечка, фрукты/напитки).`,
-      ``,
-      `Если нужны корректировки — напишите в ответ.`,
-    ].join('\n');
+    // OrgsIncluded (если пусто — все)
+    let orgIds = (rr.get("OrgsIncluded") as any[] | undefined) || [];
+    if (!orgIds.length) {
+      const all = await selectAll(TBL.ORGS, { fields: ["Name"] });
+      orgIds = all.map((r) => r.getId());
+    }
 
-    const created = await base(TBL.REPORTS).create([
-  {
-    'ReportType': [reportTypeId],
-    'Recipient': [recipientId],
-    'OrgsCovered': [orgId],
-    'ReportDate': dateISO,
-    'Status': 'ready',
-    'SubjectFinal': subj,
-    'BodyFinal': body,
-    'File': [{ url: blob.url, filename }],
-  } as any,
-]);
+    const results: any[] = [];
+    for (const orgId of orgIds) {
+      const org = await base(TBL.ORGS).find(orgId);
+      const orgName = String(org.get("Name") || "Организация");
 
-// Явно приводим к массиву Record'ов и берём первый
-const rep = created as unknown as Airtable.Record<Airtable.FieldSet>[];
-const reportId = rep[0].getId();
+      // собрать данные
+      const { rows, counters } = await collectKitchenData(orgId, dateISO);
 
-results.push({ reportId, url: blob.url, orgId, orgName });
+      // HTML -> PDF
+      const html = kitchenDailyHTML({ orgName, dateLabel: toRu(dateISO), rows, counters });
+      const pdf = await renderPdfFromHtml(html);
+
+      // upload в Blob
+      const filename = `${safe(orgName)}_${dateISO}_${slug}.pdf`.replace(/\s+/g, "_");
+      const buf = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf);
+      const blob = await put(`reports/${filename}`, buf, {
+        access: "public",
+        addRandomSuffix: false,
+        contentType: "application/pdf",
+        token: process.env.BLOB_READ_WRITE_TOKEN!,
+      });
+
+      // запись в Reports
+      const subj = `Заказы на ${toRu(dateISO)} — ${orgName}`;
+      const body = [
+        `Добрый день!`,
+        ``,
+        `Во вложении отчёт по заказам на ${toRu(dateISO)} для ${orgName}.`,
+        `• Таблица 1 — сотрудники и их заказы`,
+        `• Таблица 2 — агрегаты по блюдам (салаты, супы, блинчики/запеканки, милбоксы, выпечка, фрукты/напитки).`,
+        ``,
+        `Если нужны корректировки — напишите в ответ.`,
+      ].join("\n");
+
+      const created = await base(TBL.REPORTS).create([
+        {
+          ReportType: [reportTypeId],
+          Recipient: [recipientId],
+          OrgsCovered: [orgId],
+          ReportDate: dateISO,
+          Status: "ready",
+          SubjectFinal: subj,
+          BodyFinal: body,
+          File: [{ url: blob.url, filename }],
+        } as any,
+      ]);
+
+      // created имеет тип Records<FieldSet>, забираем первый
+      const first = (created as any[])[0];
+      const reportId =
+        typeof first?.getId === "function" ? first.getId() : (first?.id as string | undefined) || "unknown";
+
+      results.push({ reportId, url: blob.url, orgId, orgName, rows: rows.length });
+    }
+
+    return NextResponse.json({ ok: true, date: dateISO, results });
+  } catch (e: any) {
+    console.error("report/generate error:", e);
+    return NextResponse.json(
+      { ok: false, error: String(e?.message || e), stack: e?.stack },
+      { status: 500 }
+    );
   }
-
-  return NextResponse.json({ ok:true, date:dateISO, results });
 }
+
 
 /** Сбор данных для отчёта кухни */
 async function collectKitchenData(orgId: string, dateISO: string) {
