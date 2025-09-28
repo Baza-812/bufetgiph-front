@@ -1,0 +1,24 @@
+{
+  "functions": {
+    // App Router (src/app/...) — включаем бинарники chromium
+    "app/api/**/route.js": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    "app/api/**/route.mjs": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    "app/api/**/route.ts": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    // На случай если исходники лежат в src/
+    "src/app/api/**/route.js": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    "src/app/api/**/route.mjs": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    },
+    "src/app/api/**/route.ts": {
+      "includeFiles": "node_modules/@sparticuz/chromium/**"
+    }
+  }
+}
