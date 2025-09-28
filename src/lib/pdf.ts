@@ -1,5 +1,9 @@
 // src/lib/pdf.ts
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
+
+// Кириллические TTF (можешь потом положить в /public/fonts и читать локально)
+const FONT_REGULAR_URL = 'https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans.ttf';
+const FONT_BOLD_URL    = 'https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSans-Bold.ttf';
 
 type EmployeeRow = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
 type Counters = {
@@ -11,7 +15,18 @@ type Counters = {
   fruitdrink: [string, number][];
 };
 
-const A4 = { w: 595.28, h: 841.89 }; // points
+const A4 = { w: 595.28, h: 841.89 }; // pt
+
+// простая мемоизация шрифтов, чтоб не качать каждый раз
+let cachedRegular: Uint8Array | null = null;
+let cachedBold: Uint8Array | null = null;
+async function loadFont(url: string): Promise<Uint8Array> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Font fetch failed: ${url} → ${res.status}`);
+  const ab = await res.arrayBuffer();
+  return new Uint8Array(ab);
+}
+
 export async function renderKitchenDailyPDF(input: {
   orgName: string;
   dateLabel: string;
@@ -20,11 +35,15 @@ export async function renderKitchenDailyPDF(input: {
 }): Promise<Buffer> {
   const { orgName, dateLabel, rows, counters } = input;
 
+  if (!cachedRegular) cachedRegular = await loadFont(FONT_REGULAR_URL);
+  if (!cachedBold) cachedBold = await loadFont(FONT_BOLD_URL);
+
   const doc = await PDFDocument.create();
   const page = doc.addPage([A4.w, A4.h]);
 
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  // Встраиваем кириллические шрифты
+  const font = await doc.embedFont(cachedRegular, { subset: true });
+  const fontBold = await doc.embedFont(cachedBold, { subset: true });
 
   let xMargin = 40;
   let y = A4.h - 50;
@@ -39,51 +58,42 @@ export async function renderKitchenDailyPDF(input: {
   y -= 18;
 
   // Таблица 1 — колонки
+  const totalW = A4.w - 2 * xMargin;
   const col = {
-    name: { x: xMargin, w: 0.36 * (A4.w - 2 * xMargin) },
-    mb:   { x: 0, w: 0.32 * (A4.w - 2 * xMargin) },
-    x1:   { x: 0, w: 0.16 * (A4.w - 2 * xMargin) },
-    x2:   { x: 0, w: 0.16 * (A4.w - 2 * xMargin) },
+    name: { x: xMargin,             w: 0.36 * totalW },
+    mb:   { x: xMargin + 0.36*totalW + 8, w: 0.32 * totalW },
+    x1:   { x: xMargin + 0.68*totalW + 16, w: 0.16 * totalW },
+    x2:   { x: xMargin + 0.84*totalW + 24, w: 0.16 * totalW },
   };
-  col.mb.x = col.name.x + col.name.w + 8;
-  col.x1.x = col.mb.x + col.mb.w + 8;
-  col.x2.x = col.x1.x + col.x1.w + 8;
-
   const lineH = 16;
   const headerH = 18;
-  const drawHeader = (p: typeof page) => {
-    p.drawRectangle({ x: xMargin-4, y: y - headerH + 4, width: (A4.w - 2*xMargin)+8, height: headerH, color: rgb(0.98,0.98,0.98) });
-    p.drawText('Полное имя', { x: col.name.x, y: y, size: 11, font: fontBold, color: rgb(0.1,0.1,0.1) });
-    p.drawText('Meal box',   { x: col.mb.x,   y: y, size: 11, font: fontBold });
-    p.drawText('Extra 1',    { x: col.x1.x,   y: y, size: 11, font: fontBold });
-    p.drawText('Extra 2',    { x: col.x2.x,   y: y, size: 11, font: fontBold });
+
+  const drawHeader = (p = page) => {
+    p.drawRectangle({ x: xMargin-4, y: y - headerH + 4, width: totalW + 8, height: headerH, color: rgb(0.98,0.98,0.98) });
+    p.drawText('Полное имя', { x: col.name.x, y, size: 11, font: fontBold, color: rgb(0.1,0.1,0.1) });
+    p.drawText('Meal box',   { x: col.mb.x,   y, size: 11, font: fontBold });
+    p.drawText('Extra 1',    { x: col.x1.x,   y, size: 11, font: fontBold });
+    p.drawText('Extra 2',    { x: col.x2.x,   y, size: 11, font: fontBold });
     y -= headerH;
-    p.drawLine({ start: {x:xMargin-4, y:y+3}, end: {x:A4.w-xMargin+4, y:y+3}, thickness: 0.7, color: rgb(0.91,0.91,0.92) });
+    p.drawLine({ start: {x:xMargin-4, y:y+3}, end: {x:xMargin-4 + totalW + 8, y:y+3}, thickness: 0.7, color: rgb(0.91,0.91,0.92) });
   };
 
-  const addPage = () => {
-    const p = doc.addPage([A4.w, A4.h]);
-    y = A4.h - 50;
-    return p;
-  };
+  const addPage = () => { const p = doc.addPage([A4.w, A4.h]); y = A4.h - 50; return p; };
 
   let p = page;
   drawHeader(p);
 
   const drawRow = (r: EmployeeRow) => {
-    p.drawText(cut(r.fullName, font, 10.5, col.name.w), { x: col.name.x, y: y, size: 10.5, font });
-    p.drawText(cut(r.mealBox||'', font, 10.5, col.mb.w), { x: col.mb.x, y: y, size: 10.5, font });
-    p.drawText(cut(r.extra1||'', font, 10.5, col.x1.w), { x: col.x1.x, y: y, size: 10.5, font });
-    p.drawText(cut(r.extra2||'', font, 10.5, col.x2.w), { x: col.x2.x, y: y, size: 10.5, font });
+    p.drawText(cut(r.fullName, font, 10.5, col.name.w), { x: col.name.x, y, size: 10.5, font });
+    p.drawText(cut(r.mealBox||'', font, 10.5, col.mb.w), { x: col.mb.x, y, size: 10.5, font });
+    p.drawText(cut(r.extra1||'', font, 10.5, col.x1.w), { x: col.x1.x, y, size: 10.5, font });
+    p.drawText(cut(r.extra2||'', font, 10.5, col.x2.w), { x: col.x2.x, y, size: 10.5, font });
     y -= lineH;
-    p.drawLine({ start: {x:xMargin-4, y:y+3}, end: {x:A4.w-xMargin+4, y:y+3}, thickness: 0.5, color: rgb(0.91,0.91,0.92) });
+    p.drawLine({ start: {x:xMargin-4, y:y+3}, end: {x:xMargin-4 + totalW + 8, y:y+3}, thickness: 0.5, color: rgb(0.91,0.91,0.92) });
   };
 
   for (const r of rows) {
-    if (y < 200) { // оставим место для агрегатов/переноса
-      p = addPage();
-      drawHeader(p);
-    }
+    if (y < 200) { p = addPage(); drawHeader(p); }
     drawRow(r);
   }
 
@@ -92,8 +102,8 @@ export async function renderKitchenDailyPDF(input: {
   y -= 8;
 
   // Таблица 2 — два столбца блоков
-  const leftX = xMargin, rightX = xMargin + (A4.w - 2*xMargin)/2 + 8;
-  const colW = (A4.w - 2*xMargin)/2 - 8;
+  const leftX = xMargin, rightX = xMargin + totalW/2 + 8;
+  const colW2 = totalW/2 - 8;
 
   const drawSection = (title: string, items: [string, number][], x: number) => {
     p.drawText(title.toUpperCase(), { x, y, size: 11.5, font: fontBold });
@@ -106,7 +116,7 @@ export async function renderKitchenDailyPDF(input: {
     for (const [name, qty] of items) {
       if (y < 60) { p = addPage(); }
       const line = `${name} — ${qty} шт`;
-      p.drawText(cut(line, font, 10.5, colW), { x, y, size: 10.5, font });
+      p.drawText(cut(line, font, 10.5, colW2), { x, y, size: 10.5, font });
       y -= 12;
     }
     y -= 6;
@@ -117,7 +127,7 @@ export async function renderKitchenDailyPDF(input: {
   drawSection('СУПЫ', counters.soups, leftX);
   drawSection('БЛИНЫ И ЗАПЕКАНКИ', counters.zap, leftX);
 
-  // Правая колонка (если места мало — новая страница)
+  // Правая колонка
   if (y < 120) { p = addPage(); }
   drawSection('ОСНОВНОЕ БЛЮДО И ГАРНИР', counters.mealboxes, rightX);
   drawSection('ВЫПЕЧКА', counters.pastry, rightX);
