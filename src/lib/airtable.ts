@@ -1,21 +1,11 @@
-// простая обёртка Airtable SDK + хелперы
 import Airtable from 'airtable';
 
-const {
-  AIRTABLE_API_KEY,
-  AIRTABLE_BASE_ID,
-  AIRTABLE_TBL_ORDERS,
-  AIRTABLE_TBL_ORDER_LINES,
-  AIRTABLE_TBL_MEAL_BOXES,
-  AIRTABLE_TBL_DISHES,
-  AIRTABLE_TBL_EMPLOYEES,
-  AIRTABLE_TBL_ORGS,
-  AIRTABLE_TBL_REPORT_TYPES,
-  AIRTABLE_TBL_REPORT_RECIPIENTS,
-  AIRTABLE_TBL_REPORTS,
-} = process.env as Record<string,string>;
+// ...envs как у тебя
 
 export const base = new Airtable({ apiKey: AIRTABLE_API_KEY }).base(AIRTABLE_BASE_ID!);
+
+// ✅ Главное исправление — ограничить generic через FieldSet
+export type ATRecord<T extends Airtable.FieldSet = Airtable.FieldSet> = Airtable.Record<T>;
 
 export const TBL = {
   ORDERS: AIRTABLE_TBL_ORDERS || 'Orders',
@@ -29,18 +19,22 @@ export const TBL = {
   REPORTS: AIRTABLE_TBL_REPORTS || 'Reports',
 };
 
-export type ATRecord<T=any> = Airtable.Record<T>;
-
-export async function selectAll(table: string, params: Airtable.SelectOptions<any>) {
-  const records: ATRecord[] = [];
-  await base(table).select(params).eachPage((page, fetchNext) => {
-    records.push(...page);
-    fetchNext();
-  });
+// Универсальный селект
+export async function selectAll<T extends Airtable.FieldSet = Airtable.FieldSet>(
+  table: string,
+  params: Airtable.SelectOptions<T>
+) {
+  const records: Airtable.Record<T>[] = [];
+  await base(table)
+    .select(params as any)
+    // типы sdk не идеальны — приводим к any
+    .eachPage((page: any[], fetchNextPage: () => void) => {
+      records.push(...(page as unknown as Airtable.Record<T>[]));
+      fetchNextPage();
+    });
   return records;
 }
 
-export function rid(rec: ATRecord | string) {
+export function rid(rec: Airtable.Record<any> | string) {
   return typeof rec === 'string' ? rec : rec.getId();
 }
-
