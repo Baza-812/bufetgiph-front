@@ -86,7 +86,8 @@ const blob = await put(`reports/${filename}`, buf, {
       'File': [{ url: blob.url, filename }],
     } as any);
 
-    results.push({ reportId: rep.id, url: blob.url, orgId, orgName });
+    results.push({ reportId: rep.getId(), url: blob.url, orgId, orgName });
+
   }
 
   return NextResponse.json({ ok:true, date:dateISO, results });
