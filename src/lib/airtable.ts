@@ -35,6 +35,6 @@ export async function selectAll<T extends Airtable.FieldSet = Airtable.FieldSet>
   return records;
 }
 
-export function rid(rec: Airtable.Record<any> | string) {
+export async function selectAll(table: string, params: any) {
   return typeof rec === 'string' ? rec : rec.getId();
 }
