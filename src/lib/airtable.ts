@@ -43,27 +43,16 @@ export const TBL = {
 } as const;
 
 // Хелпер для выборки всех записей (обходит пагинацию)
-export async function selectAll<T extends FieldSet = FieldSet>(
+// Хелпер: вытащить все записи таблицы с учётом пагинации (без типовых войн)
+export async function selectAll(
   table: string,
-  params: Partial<SelectOptions<T>> = {}
-): Promise<ATRecord<T>[]> {
-  const out: ATRecord<T>[] = [];
-  await new Promise<void>((resolve, reject) => {
-    base(table)
-      .select(params as any)
-      .eachPage(
-        (records: Airtable.Records<T>, fetchNextPage: (err?: any) => void) => {
-          records.forEach((r) => out.push(r as unknown as ATRecord<T>));
-          fetchNextPage();
-        },
-        (err?: any) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-  });
-  return out;
+  params: Partial<SelectOptions<FieldSet>> = {}
+): Promise<ATRecord[]> {
+  const records = await base(table).select(params as any).all();
+  // SDK даёт readonly-коллекцию, нам нужен обычный массив Record
+  return records as unknown as ATRecord[];
 }
+
 
 
 // Удобный геттер id
