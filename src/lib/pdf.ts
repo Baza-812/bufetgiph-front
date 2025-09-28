@@ -12,7 +12,6 @@ type Counters = {
 };
 
 const A4 = { w: 595.28, h: 841.89 }; // points
-
 export async function renderKitchenDailyPDF(input: {
   orgName: string;
   dateLabel: string;
