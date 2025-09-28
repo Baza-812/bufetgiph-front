@@ -14,6 +14,7 @@
     "react-dom": "18.3.1",
     "airtable": "latest",
     "puppeteer-core": "latest",
+    "@react-pdf/renderer": "3.4.4"
     "@sparticuz/chromium": "latest",
     "@vercel/blob": "latest"
   },
