@@ -1,5 +1,6 @@
 // src/lib/pdf.ts
 import { PDFDocument, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -15,7 +16,6 @@ type Counters = {
 
 const A4 = { w: 595.28, h: 841.89 }; // pt
 
-// кешируем, чтобы не читать файлы на каждый вызов
 let cachedRegular: Uint8Array | null = null;
 let cachedBold: Uint8Array | null = null;
 
@@ -37,6 +37,10 @@ export async function renderKitchenDailyPDF(input: {
   if (!cachedBold) cachedBold = await loadLocalFont('public/fonts/NotoSans-Bold.ttf');
 
   const doc = await PDFDocument.create();
+
+  // ВАЖНО: регистрируем fontkit перед embedFont
+  doc.registerFontkit(fontkit);
+
   const page = doc.addPage([A4.w, A4.h]);
 
   const font = await doc.embedFont(cachedRegular, { subset: true });
