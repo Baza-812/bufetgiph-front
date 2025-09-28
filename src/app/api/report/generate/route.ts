@@ -54,11 +54,12 @@ export async function POST(req: NextRequest) {
 
     // upload to Vercel Blob (public)
     const filename = `${safe(orgName)}_${dateISO}_${slug}.pdf`.replace(/\s+/g,'_');
-    const blob = await put(`reports/${filename}`, new Blob([pdf], { type:'application/pdf' }), {
-      access: 'public',
-      addRandomSuffix: false,
-      token: process.env.BLOB_READ_WRITE_TOKEN!,
-    });
+    const blob = await put(`reports/${filename}`, pdf, {
+  access: 'public',
+  addRandomSuffix: false,
+  contentType: 'application/pdf',
+  token: process.env.BLOB_READ_WRITE_TOKEN!,
+});
 
     // Создаём запись Reports со вложением + final subject/body
     const subj = `Заказы на ${toRu(dateISO)} — ${orgName}`;
