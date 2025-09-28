@@ -1,15 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // чтобы линт не ронял прод-сборку (по желанию)
+  // не валим билд из-за линта (опционально)
   eslint: { ignoreDuringBuilds: true },
 
-  // важно для puppeteer + chromium на Vercel
+  // важно для puppeteer + chromium на Vercel: не бандлить, грузить из node_modules на рантайме
   serverExternalPackages: ['@sparticuz/chromium', 'puppeteer-core'],
 
   async rewrites() {
+    // локальные маршруты (/api/report/generate) обрабатываются проектом,
+    // всё остальное — уходит как fallback на внешний API
     return {
-      // 1) Сначала Next попытается отдать локальные маршруты (/api/report/** и т.п.)
-      // 2) Всё, что не найдено локально, пойдёт как "fallback" на внешний API
       fallback: [
         {
           source: '/api/:path*',
