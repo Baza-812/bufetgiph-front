@@ -48,15 +48,23 @@ export async function selectAll<T extends FieldSet = FieldSet>(
   params: Partial<SelectOptions<T>> = {}
 ): Promise<ATRecord<T>[]> {
   const out: ATRecord<T>[] = [];
-  await base(table)
-    // типы sdk местами кривые — слегка ослабляем
-    .select(params as any)
-    .eachPage((page: any[], next: () => void) => {
-      out.push(...(page as unknown as ATRecord<T>[]));
-      next();
-    });
+  await new Promise<void>((resolve, reject) => {
+    base(table)
+      .select(params as any)
+      .eachPage(
+        (records: Airtable.Records<T>, fetchNextPage: (err?: any) => void) => {
+          records.forEach((r) => out.push(r as unknown as ATRecord<T>));
+          fetchNextPage();
+        },
+        (err?: any) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+  });
   return out;
 }
+
 
 // Удобный геттер id
 export function rid(rec: ATRecord | string) {
