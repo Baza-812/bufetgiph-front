@@ -54,7 +54,9 @@ export async function POST(req: NextRequest) {
 
     // upload to Vercel Blob (public)
     const filename = `${safe(orgName)}_${dateISO}_${slug}.pdf`.replace(/\s+/g,'_');
-    const blob = await put(`reports/${filename}`, pdf, {
+    const buf = Buffer.isBuffer(pdf) ? pdf : Buffer.from(pdf); // Uint8Array -> Buffer
+
+const blob = await put(`reports/${filename}`, buf, {
   access: 'public',
   addRandomSuffix: false,
   contentType: 'application/pdf',
