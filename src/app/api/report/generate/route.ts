@@ -118,9 +118,8 @@ if (debugLines) {
 
   // подтянем линии для всех этих заказов (перекрестная проверка)
   const orderIdsSet = new Set(orders.map(o => o.getId()));
-  const linesAll = await selectAll(TBL.ORDER_LINES, {
-    fields: ['Order', 'Item Name', 'Quantity', ...F_LINE_CATEGORY],
-  });
+  const linesAll = await selectAll(TBL.ORDER_LINES, {}); // без fields — забираем все
+
 
   // оставим только линии наших заказов
   const lines = linesAll.filter(l => {
@@ -436,16 +435,9 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
 
   // строки заказов — важное: включаем поле категории из линий
   const lines = lineIds.size
-    ? await selectAll(TBL.ORDER_LINES, {
-        fields: [
-          'Order',
-          'Item (Menu Item)',
-          'Item Name',
-          'Quantity',
-          'Category (from Dish)', // <- lookup из Dish.Category
-        ],
-      })
-    : [];
+  ? await selectAll(TBL.ORDER_LINES, {}) // без fields — забираем все
+  : [];
+
 
   const F_LINE_ORDER = ['Order', 'Parent Order'];
   const F_ITEM_LINK = ['Item (Menu Item)', 'Menu Item', 'Dish'];
