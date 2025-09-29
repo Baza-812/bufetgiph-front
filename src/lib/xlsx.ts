@@ -1,106 +1,116 @@
 // src/lib/xlsx.ts
 import ExcelJS from 'exceljs';
 
-type EmployeeRow = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
+type Row = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
 type Counters = {
-  salads: [string, number][];
-  soups: [string, number][];
-  zap: [string, number][];
-  mealboxes: [string, number][];
-  pastry: [string, number][];
-  fruitdrink: [string, number][];
+  salads: [string, number][],
+  soups: [string, number][],
+  zap: [string, number][],
+  mealboxes: [string, number][],
+  pastry: [string, number][],
+  fruitdrink: [string, number][],
 };
 
-export async function renderKitchenDailyXLSX(input: {
+export async function renderKitchenDailyXLSX(opts: {
   orgName: string;
-  dateLabel: string;  // ДД.ММ.ГГГГ
-  rows: EmployeeRow[];
+  dateLabel: string;
+  rows: Row[];
   counters: Counters;
-}): Promise<Buffer> {
-  const { orgName, dateLabel, rows, counters } = input;
+}): Promise<Uint8Array> {
+  const { orgName, dateLabel, rows, counters } = opts;
 
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Baza Orders';
   wb.created = new Date();
-  (wb as any).properties = { ...(wb as any).properties, title: `Заказы — ${orgName} — ${dateLabel}` };
 
   // ===== Лист 1: Сотрудники =====
   const ws = wb.addWorksheet('Сотрудники', {
-    views: [{ state: 'frozen', xSplit: 0, ySplit: 1 }],
+    views: [{ state: 'frozen', ySplit: 1 }],
+    properties: { tabColor: { argb: 'FF4F7CAC' } },
+    pageSetup: { fitToPage: true, fitToWidth: 1, orientation: 'portrait' },
   });
 
   ws.columns = [
-    { header: 'Полное имя', key: 'fullName', width: 34 },
-    { header: 'Meal box',   key: 'mealBox',  width: 28 },
-    { header: 'Extra 1',    key: 'extra1',   width: 24 },
-    { header: 'Extra 2',    key: 'extra2',   width: 24 },
+    { header: 'Полное имя', key: 'fullName', width: 32 },
+    { header: 'Meal Box',   key: 'mealBox',  width: 42 },
+    { header: 'Extra 1',    key: 'extra1',   width: 40 },
+    { header: 'Extra 2',    key: 'extra2',   width: 40 },
   ];
 
   // шапка
-  const header = ws.getRow(1);
-  header.height = 22;
-  header.font = { bold: true };
-  header.alignment = { vertical: 'middle' };
-  header.eachCell((cell) => {
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFA' } };
-    cell.border = {
-      top:    { style: 'thin', color: { argb: 'FFE7E7EA' } },
-      left:   { style: 'thin', color: { argb: 'FFE7E7EA' } },
-      bottom: { style: 'thin', color: { argb: 'FFE7E7EA' } },
-      right:  { style: 'thin', color: { argb: 'FFE7E7EA' } },
-    };
+  const title = `Заказы — ${orgName} — ${dateLabel}`;
+  ws.mergeCells(1,1,1,4);
+  ws.getCell(1,1).value = title;
+  ws.getCell(1,1).font = { bold: true, size: 14 };
+  ws.getCell(1,1).alignment = { vertical: 'middle', horizontal: 'left' };
+  ws.addRow([]); // пустая строка
+  // заголовки
+  const headerRow = ws.addRow(ws.columns.map(c => c.header as string));
+  headerRow.font = { bold: true };
+  headerRow.alignment = { vertical: 'middle' };
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F6' } };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFCCCCCC' } } };
   });
 
   // строки
-  rows.forEach((r) => ws.addRow(r));
-  // «зебра»
-  ws.eachRow((row, idx) => {
-    if (idx === 1) return;
-    if (idx % 2 === 0) {
-      row.eachCell((c) => (c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFCFCFD' } }));
-    }
-    row.eachCell((c) => {
-      c.border = { bottom: { style: 'hair', color: { argb: 'FFE7E7EA' } } };
-      c.alignment = { vertical: 'middle' };
+  for (const r of rows) {
+    ws.addRow({
+      fullName: r.fullName || '',
+      mealBox:  r.mealBox  || '',
+      extra1:   r.extra1   || '',
+      extra2:   r.extra2   || '',
     });
-  });
+  }
 
-  ws.autoFilter = { from: 'A1', to: 'D1' };
-  ws.getColumn('fullName').eachCell((cell, rowNumber) => {
-    if (rowNumber > 1) cell.alignment = { wrapText: false };
-  });
+  // автофильтр и формат
+  ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: 4 } };
+  ws.getColumn('fullName').alignment = { wrapText: true };
+  ws.getColumn('mealBox' ).alignment = { wrapText: true };
+  ws.getColumn('extra1'  ).alignment = { wrapText: true };
+  ws.getColumn('extra2'  ).alignment = { wrapText: true };
 
   // ===== Лист 2: Агрегаты =====
-  const ws2 = wb.addWorksheet('Агрегаты');
-  const titleRow = ws2.addRow([`${orgName} — ${dateLabel}`]);
-  titleRow.font = { bold: true, size: 14 };
-  titleRow.height = 20;
-  ws2.addRow([]);
+  const w2 = wb.addWorksheet('Агрегаты', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+    pageSetup: { fitToPage: true, fitToWidth: 1, orientation: 'portrait' },
+  });
 
-  const section = (name: string, items: [string, number][]) => {
-    const head = ws2.addRow([name]);
-    head.font = { bold: true };
-    if (items.length === 0) {
-      ws2.addRow(['—']);
-      ws2.addRow([]);
-      return;
+  const sections: Array<{ title: string; data: [string, number][] }> = [
+    { title: 'САЛАТЫ', data: counters.salads },
+    { title: 'СУПЫ', data: counters.soups },
+    { title: 'БЛИНЫ И ЗАПЕКАНКИ', data: counters.zap },
+    { title: 'MEAL BOX', data: counters.mealboxes },
+    { title: 'ВЫПЕЧКА', data: counters.pastry },
+    { title: 'ФРУКТЫ И НАПИТКИ', data: counters.fruitdrink },
+  ];
+
+  let rowPtr = 1;
+  for (const sec of sections) {
+    w2.mergeCells(rowPtr,1,rowPtr,3);
+    const c = w2.getCell(rowPtr,1);
+    c.value = sec.title;
+    c.font = { bold: true, size: 12 };
+    rowPtr++;
+
+    const hdr = w2.getRow(rowPtr);
+    hdr.getCell(1).value = 'Наименование';
+    hdr.getCell(2).value = 'Кол-во';
+    hdr.font = { bold: true };
+    rowPtr++;
+
+    for (const [name, cnt] of sec.data) {
+      w2.getCell(rowPtr,1).value = name;
+      w2.getCell(rowPtr,2).value = cnt;
+      rowPtr++;
     }
-    const tableHeader = ws2.addRow(['Блюдо', 'Кол-во']);
-    tableHeader.font = { bold: true };
-    items.forEach(([n, q]) => ws2.addRow([n, q]));
-    ws2.addRow([]);
-  };
+    rowPtr++; // пустая строка между секциями
+  }
 
-  section('САЛАТЫ', counters.salads);
-  section('СУПЫ', counters.soups);
-  section('БЛИНЫ И ЗАПЕКАНКИ', counters.zap);
-  section('ОСНОВНОЕ БЛЮДО И ГАРНИР', counters.mealboxes);
-  section('ВЫПЕЧКА', counters.pastry);
-  section('ФРУКТЫ И НАПИТКИ', counters.fruitdrink);
+  w2.getColumn(1).width = 50;
+  w2.getColumn(2).width = 12;
 
-  ws2.columns = [{ width: 50 }, { width: 12 }];
-
-  // ===== Буфер XLSX =====
-  const out = (await wb.xlsx.writeBuffer()) as unknown as ArrayBuffer | Buffer;
-  return Buffer.isBuffer(out) ? out : Buffer.from(out);
+  // ===== Генерация =====
+  const buf = await wb.xlsx.writeBuffer();
+  return new Uint8Array(buf as ArrayBufferLike);
 }
