@@ -108,15 +108,18 @@ export async function POST(req: NextRequest) {
       const created = await (base(TBL.REPORTS) as any).create([
         {
           fields: {
-            ReportType: [reportTypeId],
-            Recipient: [recipientId],
-            OrgsCovered: orgKey,            // <- текстовое поле, у тебя так и заведено
-            ReportDate: dateISO,
-            Status: 'ready',
-            SubjectFinal: subj,
-            BodyFinal: body,
-            File: [{ url: blob.url, filename }] as any[],
-          },
+  ReportType: [reportTypeId],          // linked → ок
+  Recipient: [recipientId],            // linked → ок
+  OrgsCovered: [orgId],                // ✅ linked expects array of rec IDs
+  // (опционально, если такое поле есть в Reports как Text):
+  OrgsCoveredKey: orgKey,              // 'org120' для удобства
+  ReportDate: dateISO,
+  Status: 'ready',
+  SubjectFinal: subj,
+  BodyFinal: body,
+  File: [{ url: blob.url, filename }] as any[],
+},
+
         },
       ]);
 
