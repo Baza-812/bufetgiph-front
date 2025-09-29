@@ -159,20 +159,23 @@ async function collectKitchenData(orgId: string, dateISO: string) {
     ((o.get('Order Lines') as any[]) || []).forEach((id) => lineIds.add(id));
   });
 
-  // Employees → имена
-  const employees = employeeIds.size
-    ? await selectAll(TBL.EMPLOYEES, {
-        fields: ['First Name', 'Last Name', 'Full Name'],
-        filterByFormula: `OR(${[...employeeIds].map((id) => `RECORD_ID()='${id}'`).join(',')})`,
-      })
-    : [];
-  const empName = new Map<string, string>();
-  employees.forEach((e) => {
-    const full =
-      (e.get('Full Name') as string) ||
-      `${e.get('Last Name') || ''} ${e.get('First Name') || ''}`.trim();
-    empName.set(e.getId(), full);
-  });
+  // Employees → имена (учитываем FullName и "Full Name")
+const employees = employeeIds.size
+  ? await selectAll(TBL.EMPLOYEES, {
+      fields: ['FullName', 'Full Name', 'First Name', 'Last Name'],
+      filterByFormula: `OR(${[...employeeIds].map((id) => `RECORD_ID()='${id}'`).join(',')})`,
+    })
+  : [];
+
+const empName = new Map<string, string>();
+employees.forEach((e) => {
+  const full =
+    (e.get('FullName') as string) ||
+    (e.get('Full Name') as string) ||
+    `${e.get('Last Name') || ''} ${e.get('First Name') || ''}`.trim();
+  empName.set(e.getId(), full || '—');
+});
+
 
   // Meal Boxes → подпись
   const mbs = mealBoxIds.size
