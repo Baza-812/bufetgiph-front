@@ -104,6 +104,7 @@ const F_LINE_CATEGORY = [
       });
     }
     const debugLines = req.nextUrl.searchParams.get('debug') === 'lines';
+    const debugRows = req.nextUrl.searchParams.get('debug') === 'rows';
 if (debugLines) {
   // возьмём первую организацию из resolved (или все — если хочешь)
   const { recId: orgId, orgName, orgKey } = orgsResolved[0];
@@ -195,6 +196,16 @@ if (debugLines) {
 
     for (const { recId: orgId, orgName, orgKey } of orgsResolved) {
       const { rows, counters } = await collectKitchenDataFromArrays(ordersAll, orgId, dateISO);
+      if (debugRows) {
+  return NextResponse.json({
+    ok: true,
+    mode: 'debug-rows',
+    date: dateISO,
+    org: { orgId, orgKey, orgName },
+    rowsPreview: rows.slice(0, 10),
+  });
+}
+
 
       const xlsxBuf = await renderKitchenDailyXLSX({
         orgName,
