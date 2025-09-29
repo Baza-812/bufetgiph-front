@@ -43,8 +43,9 @@ export async function renderKitchenDailyPDF(input: {
 
   const page = doc.addPage([A4.w, A4.h]);
 
-  const font = await doc.embedFont(cachedRegular, { subset: true });
-  const fontBold = await doc.embedFont(cachedBold, { subset: true });
+  const font = await doc.embedFont(cachedRegular, { subset: false });
+  const fontBold = await doc.embedFont(cachedBold, { subset: false });
+
 
   let xMargin = 40;
   let y = A4.h - 50;
