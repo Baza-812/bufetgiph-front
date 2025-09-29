@@ -22,7 +22,8 @@ export async function renderKitchenDailyXLSX(input: {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Baza Orders';
   wb.created = new Date();
-  wb.properties.title = `Заказы — ${orgName} — ${dateLabel}`;
+  (wb as any).properties = { ...(wb as any).properties, title: `Заказы — ${orgName} — ${dateLabel}` };
+
 
   // ===== Лист 1: Сотрудники =====
   const ws = wb.addWorksheet('Сотрудники', {
