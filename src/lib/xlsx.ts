@@ -25,50 +25,51 @@ export async function renderKitchenDailyXLSX(opts: {
 
   // ===== Лист 1: Сотрудники =====
   const ws = wb.addWorksheet('Сотрудники', {
-    views: [{ state: 'frozen', ySplit: 1 }],
+    views: [{ state: 'frozen', ySplit: 3 }],
     properties: { tabColor: { argb: 'FF4F7CAC' } },
     pageSetup: { fitToPage: true, fitToWidth: 1, orientation: 'portrait' },
   });
 
+  // Колонки только для ширины / автофильтра — писать будем МАССИВАМИ по индексам!
   ws.columns = [
-    { header: 'Полное имя', key: 'fullName', width: 32 },
-    { header: 'Meal Box',   key: 'mealBox',  width: 42 },
-    { header: 'Extra 1',    key: 'extra1',   width: 40 },
-    { header: 'Extra 2',    key: 'extra2',   width: 40 },
+    { header: 'Полное имя', key: 'c1', width: 32 },
+    { header: 'Meal Box',   key: 'c2', width: 42 },
+    { header: 'Extra 1',    key: 'c3', width: 40 },
+    { header: 'Extra 2',    key: 'c4', width: 40 },
   ];
 
-  // шапка
-  const title = `Заказы — ${orgName} — ${dateLabel}`;
+  // Заголовок
   ws.mergeCells(1,1,1,4);
-  ws.getCell(1,1).value = title;
+  ws.getCell(1,1).value = `Заказы — ${orgName} — ${dateLabel}`;
   ws.getCell(1,1).font = { bold: true, size: 14 };
   ws.getCell(1,1).alignment = { vertical: 'middle', horizontal: 'left' };
-  ws.addRow([]); // пустая строка
-  // заголовки
-  const headerRow = ws.addRow(ws.columns.map(c => c.header as string));
-  headerRow.font = { bold: true };
-  headerRow.alignment = { vertical: 'middle' };
-  headerRow.eachCell((cell) => {
+
+  // Пустая строка
+  ws.addRow(['', '', '', '']);
+
+  // Шапка таблицы
+  const hdr = ws.addRow(['Полное имя', 'Meal Box', 'Extra 1', 'Extra 2']);
+  hdr.font = { bold: true };
+  hdr.eachCell((cell) => {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F6' } };
     cell.border = { bottom: { style: 'thin', color: { argb: 'FFCCCCCC' } } };
   });
 
-  // строки
+  // Строки — МАССИВАМИ по индексам:
   for (const r of rows) {
-  ws.addRow([
-    r.fullName || '',
-    r.mealBox  || '',
-    r.extra1   || '',
-    r.extra2   || '',
-  ]);
-}
+    ws.addRow([
+      (r.fullName ?? '').toString(),
+      (r.mealBox  ?? '').toString(),
+      (r.extra1   ?? '').toString(),
+      (r.extra2   ?? '').toString(),
+    ]);
+  }
 
-  // автофильтр и формат
   ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: 4 } };
-  ws.getColumn('fullName').alignment = { wrapText: true };
-  ws.getColumn('mealBox' ).alignment = { wrapText: true };
-  ws.getColumn('extra1'  ).alignment = { wrapText: true };
-  ws.getColumn('extra2'  ).alignment = { wrapText: true };
+  ws.getColumn(1).alignment = { wrapText: true };
+  ws.getColumn(2).alignment = { wrapText: true };
+  ws.getColumn(3).alignment = { wrapText: true };
+  ws.getColumn(4).alignment = { wrapText: true };
 
   // ===== Лист 2: Агрегаты =====
   const w2 = wb.addWorksheet('Агрегаты', {
@@ -93,10 +94,10 @@ export async function renderKitchenDailyXLSX(opts: {
     c.font = { bold: true, size: 12 };
     rowPtr++;
 
-    const hdr = w2.getRow(rowPtr);
-    hdr.getCell(1).value = 'Наименование';
-    hdr.getCell(2).value = 'Кол-во';
-    hdr.font = { bold: true };
+    const hdr2 = w2.getRow(rowPtr);
+    hdr2.getCell(1).value = 'Наименование';
+    hdr2.getCell(2).value = 'Кол-во';
+    hdr2.font = { bold: true };
     rowPtr++;
 
     for (const [name, cnt] of sec.data) {
@@ -104,15 +105,29 @@ export async function renderKitchenDailyXLSX(opts: {
       w2.getCell(rowPtr,2).value = cnt;
       rowPtr++;
     }
-    rowPtr++; // пустая строка между секциями
+    rowPtr++;
   }
+  w2.getColumn(1).width = 50;
+  w2.getColumn(2).width = 12;
 
-  ws.getColumn(1).alignment = { wrapText: true };
-ws.getColumn(2).alignment = { wrapText: true };
-ws.getColumn(3).alignment = { wrapText: true };
-ws.getColumn(4).alignment = { wrapText: true };
+  // ===== Лист 3: RAW (для проверки того, что пришло в функцию)
+  const wr = wb.addWorksheet('RAW', { views: [{ state: 'frozen', ySplit: 1 }] });
+  wr.addRow(['fullName', 'mealBox', 'extra1', 'extra2']);
+  wr.getRow(1).font = { bold: true };
+  for (const r of rows.slice(0, 2000)) {
+    wr.addRow([
+      (r.fullName ?? '').toString(),
+      (r.mealBox  ?? '').toString(),
+      (r.extra1   ?? '').toString(),
+      (r.extra2   ?? '').toString(),
+    ]);
+  }
+  wr.getColumn(1).width = 32;
+  wr.getColumn(2).width = 42;
+  wr.getColumn(3).width = 40;
+  wr.getColumn(4).width = 40;
 
-  // ===== Генерация =====
+  // Генерация
   const buf = await wb.xlsx.writeBuffer();
   return new Uint8Array(buf as ArrayBufferLike);
 }
