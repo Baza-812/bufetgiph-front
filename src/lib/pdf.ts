@@ -138,28 +138,23 @@ export async function renderKitchenDailyPDF(input: {
 
   const pdfDoc = printer.createPdfKitDocument(docDefinition);
 
-    // Собираем PDF из stream 'data'/'end' (без Buffer.concat — чтобы TS не ругался)
+      // Собираем PDF из stream 'data'/'end' (игнорим тайпинги pdfkit/pdfmake)
   return await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
+    const chunks: any[] = [];
 
-    pdfDoc.on('data', (c: unknown) => {
-      chunks.push(Buffer.isBuffer(c as any) ? (c as Buffer) : Buffer.from(c as any));
+    (pdfDoc as any).on('data', (c: any) => {
+      chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
     });
 
-    pdfDoc.on('end', () => {
-      let total = 0;
-      for (const c of chunks) total += c.length;
-      const out = Buffer.allocUnsafe(total);
-      let offset = 0;
-      for (const c of chunks) {
-        c.copy(out, offset);
-        offset += c.length;
-      }
-      resolve(out);
+    (pdfDoc as any).on('end', () => {
+      // TS иногда ругается на Buffer.concat из-за Uint8Array типов — жёстко приводим
+      const out = (Buffer as any).concat(chunks);
+      resolve(out as Buffer);
     });
 
-    pdfDoc.on('error', reject);
-    pdfDoc.end();
+    (pdfDoc as any).on('error', reject);
+    (pdfDoc as any).end();
   });
+
 
 }
