@@ -1,24 +1,10 @@
 {
   "functions": {
-   
-    "app/api/**/route.js": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**"
-    },
-    "app/api/**/route.mjs": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**"
-    },
-    "app/api/**/route.ts": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**"
-    },
-    
-    "src/app/api/**/route.js": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**"
-    },
-    "src/app/api/**/route.mjs": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**"
-    },
-    "src/app/api/**/route.ts": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**"
-    }
+    "app/api/**/route.js":  { "includeFiles": ["node_modules/@foliojs-fork/fontkit/**"] },
+    "app/api/**/route.mjs": { "includeFiles": ["node_modules/@foliojs-fork/fontkit/**"] },
+    "app/api/**/route.ts":  { "includeFiles": ["node_modules/@foliojs-fork/fontkit/**"] },
+    "src/app/api/**/route.js":  { "includeFiles": ["node_modules/@foliojs-fork/fontkit/**"] },
+    "src/app/api/**/route.mjs": { "includeFiles": ["node_modules/@foliojs-fork/fontkit/**"] },
+    "src/app/api/**/route.ts":  { "includeFiles": ["node_modules/@foliojs-fork/fontkit/**"] }
   }
 }
