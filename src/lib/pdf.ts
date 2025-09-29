@@ -138,18 +138,24 @@ export async function renderKitchenDailyPDF(input: {
 
   const pdfDoc = printer.createPdfKitDocument(docDefinition);
 
-  // Сбор буфера без конфликтов типов
-    // Собираем PDF из stream 'data'/'end'
+    // Собираем PDF из stream 'data'/'end' (без Buffer.concat — чтобы TS не ругался)
   return await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
 
-    pdfDoc.on('data', (c: any) => {
-      // pdfkit в Node шлёт Buffer; на всякий случай приводим
-      chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+    pdfDoc.on('data', (c: unknown) => {
+      chunks.push(Buffer.isBuffer(c as any) ? (c as Buffer) : Buffer.from(c as any));
     });
 
     pdfDoc.on('end', () => {
-      resolve(Buffer.concat(chunks));
+      let total = 0;
+      for (const c of chunks) total += c.length;
+      const out = Buffer.allocUnsafe(total);
+      let offset = 0;
+      for (const c of chunks) {
+        c.copy(out, offset);
+        offset += c.length;
+      }
+      resolve(out);
     });
 
     pdfDoc.on('error', reject);
