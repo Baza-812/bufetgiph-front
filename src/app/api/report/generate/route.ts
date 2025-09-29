@@ -94,6 +94,82 @@ export async function POST(req: NextRequest) {
         diag,
       });
     }
+    const debugLines = req.nextUrl.searchParams.get('debug') === 'lines';
+if (debugLines) {
+  // возьмём первую организацию из resolved (или все — если хочешь)
+  const { recId: orgId, orgName, orgKey } = orgsResolved[0];
+
+  // фильтруем заказы по дате+организации
+  const F_ORDER_DATE = ['OrderDateISO', 'Order Date', 'Delivery Date', 'Date', 'Day'];
+  const F_ORG = ['Org', 'Organization', 'Organisation', 'Company'];
+  const orders = ordersAll.filter(
+    (o) => getLinks(o, F_ORG).includes(orgId) &&
+           hasDate(o, F_ORDER_DATE, dateISO)
+  );
+
+  // подтянем линии для всех этих заказов (перекрестная проверка)
+  const orderIdsSet = new Set(orders.map(o => o.getId()));
+  const linesAll = await selectAll(TBL.ORDER_LINES, {
+    fields: ['Order', 'Item Name', 'Quantity', ...F_LINE_CATEGORY],
+  });
+
+  // оставим только линии наших заказов
+  const lines = linesAll.filter(l => {
+    const ord = getLinks(l, ['Order','Parent Order'])[0];
+    return ord && orderIdsSet.has(ord);
+  });
+
+  // метрики
+  const byCat = new Map<string, number>();
+  for (const l of lines) {
+    const raw = (getStr(l, F_LINE_CATEGORY) || '').toLowerCase().trim();
+    byCat.set(raw || '(empty)', (byCat.get(raw || '(empty)') || 0) + 1);
+  }
+
+  // первые 3 заказа — покажем их строки, какие cat видим и что бы пошло в Extras
+  const orderLineMap = new Map<string, { name: string; qty: number; cat: string }[]>();
+  for (const l of lines) {
+    const ord = getLinks(l, ['Order','Parent Order'])[0];
+    if (!ord) continue;
+    const nameStr = (getStr(l, ['Item Name','Name','Title']) || '').trim();
+    const qty = getNum(l, ['Quantity','Qty','Count']) ?? 1;
+    const cat = (getStr(l, F_LINE_CATEGORY) || '').trim().toLowerCase();
+    if (!orderLineMap.has(ord)) orderLineMap.set(ord, []);
+    orderLineMap.get(ord)!.push({ name: nameStr, qty, cat });
+  }
+
+  const EXTRAS_SET = new Set([
+    'salad','soup','zapekanka','pastry','fruit','drink','fruits','drinks',
+    'салаты','салат','супы','суп','запеканка','запеканки','блины','блины и запеканки',
+    'выпечка','фрукты','напитки','фрукты и напитки'
+  ]);
+
+  const samples = orders.slice(0,3).map(o => {
+    const arr = orderLineMap.get(o.getId()) || [];
+    const extras = arr.filter(x => EXTRAS_SET.has(x.cat));
+    return {
+      orderId: o.getId(),
+      lines: arr,
+      extrasPicked: extras.map(x => ({name: x.name, cat: x.cat}))
+    };
+  });
+
+  // гистограмма категорий → массив
+  const catHistogram = [...byCat.entries()].map(([cat, count]) => ({ cat, count }))
+                     .sort((a,b) => b.count - a.count);
+
+  return NextResponse.json({
+    ok: true,
+    mode: 'debug-lines',
+    date: dateISO,
+    org: { orgId, orgKey, orgName },
+    ordersMatched: orders.length,
+    linesMatched: lines.length,
+    categoryHistogram: catHistogram,
+    samples
+  });
+}
+
 
     if (!process.env.BLOB_READ_WRITE_TOKEN) {
       return NextResponse.json({ ok: false, error: 'Missing BLOB_READ_WRITE_TOKEN env' }, { status: 500 });
