@@ -140,9 +140,14 @@ export async function renderKitchenDailyPDF(input: {
 
   // Сбор буфера без конфликтов типов
   return await new Promise<Buffer>((resolve, reject) => {
-    // у pdfkit есть удобный метод getBuffer; у него нет d.ts — игнорим тайпинги
-    // @ts-ignore
-    pdfDoc.getBuffer((b: Buffer) => resolve(b));
+    const chunks: Uint8Array[] = [];
+
+    pdfDoc.on('data', (c: Uint8Array) => chunks.push(c));
+    pdfDoc.on('end', () => {
+      // Превращаем Uint8Array[] в один Buffer
+      const buf = Buffer.concat(chunks.map(u => Buffer.from(u)));
+      resolve(buf);
+    });
     pdfDoc.on('error', reject);
     pdfDoc.end();
   });
