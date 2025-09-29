@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
+
+  // важно: не бандлить нативные пакеты PDF
+  serverExternalPackages: ['pdfmake', 'pdfkit', '@foliojs-fork/fontkit'],
+
   async rewrites() {
     return {
       fallback: [
@@ -12,5 +16,5 @@ const nextConfig = {
     };
   },
 };
-export default nextConfig;
 
+export default nextConfig;
