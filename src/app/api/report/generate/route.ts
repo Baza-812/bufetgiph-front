@@ -123,12 +123,13 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   const orders = await selectAll(TBL.ORDERS, {
     fields: ['Order Date', 'Employee', 'Org', 'Status', 'Meal Boxes', 'Order Lines'],
     filterByFormula: `
-      AND(
-        DATETIME_FORMAT({Order Date}, 'YYYY-MM-DD')='${dateISO}',
-        FIND('${orgId}', ARRAYJOIN({Org})),
-        OR({Status}="", {Status}!="Cancelled")
-      )
-    `.replace(/\s+/g, ' '),
+  AND(
+    DATETIME_FORMAT(SET_TIMEZONE({Order Date}, 'Europe/Bucharest'), 'YYYY-MM-DD')='${dateISO}',
+    FIND('${orgId}', ARRAYJOIN({Org})),
+    NOT({Status}='Cancelled')
+  )
+`.replace(/\s+/g,' ')
+,
   });
 
   const employeeIds = new Set<string>();
