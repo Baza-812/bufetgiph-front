@@ -119,32 +119,47 @@ results.push({ reportId, url: blob.url, orgId, orgName, rows: rows.length });
   }
 }
 
-/** Сбор данных для кухонного отчёта */
+/** Сбор данных для кухонного отчёта (исправлен фильтр по Org) */
 async function collectKitchenData(orgId: string, dateISO: string) {
-  // Orders на дату для org, исключая Cancelled
+  // 1) Тянем все заказы на дату (Europe/Bucharest), исключая Cancelled
   const orders = await selectAll(TBL.ORDERS, {
     fields: ['Order Date', 'Employee', 'Org', 'Status', 'Meal Boxes', 'Order Lines'],
     filterByFormula: `
-  AND(
-    DATETIME_FORMAT(SET_TIMEZONE({Order Date}, 'Europe/Bucharest'), 'YYYY-MM-DD')='${dateISO}',
-    FIND('${orgId}', ARRAYJOIN({Org})),
-    NOT({Status}='Cancelled')
-  )
-`.replace(/\s+/g,' ')
-,
+      AND(
+        DATETIME_FORMAT(SET_TIMEZONE({Order Date}, 'Europe/Bucharest'), 'YYYY-MM-DD')='${dateISO}',
+        OR({Status}='', NOT({Status}='Cancelled'))
+      )
+    `.replace(/\s+/g, ' '),
   });
 
+  // 2) Режем по организации — по ID линк-поля (API возвращает массив recID)
+  const ordersForOrg = orders.filter(o => {
+    const orgs = (o.get('Org') as any[]) || [];
+    return orgs.includes(orgId);
+  });
+
+  // Если пусто — сразу отдаём пустые структуры
+  if (ordersForOrg.length === 0) {
+    return {
+      rows: [],
+      counters: {
+        salads: [], soups: [], zap: [], mealboxes: [], pastry: [], fruitdrink: [],
+      },
+    };
+  }
+
+  // Собираем ID связанных сущностей
   const employeeIds = new Set<string>();
   const mealBoxIds = new Set<string>();
   const lineIds = new Set<string>();
 
-  orders.forEach((o) => {
+  ordersForOrg.forEach((o) => {
     ((o.get('Employee') as any[]) || []).forEach((id) => employeeIds.add(id));
     ((o.get('Meal Boxes') as any[]) || []).forEach((id) => mealBoxIds.add(id));
     ((o.get('Order Lines') as any[]) || []).forEach((id) => lineIds.add(id));
   });
 
-  // Employees → Full Name
+  // Employees → имена
   const employees = employeeIds.size
     ? await selectAll(TBL.EMPLOYEES, {
         fields: ['First Name', 'Last Name', 'Full Name'],
@@ -154,11 +169,12 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   const empName = new Map<string, string>();
   employees.forEach((e) => {
     const full =
-      (e.get('Full Name') as string) || `${e.get('Last Name') || ''} ${e.get('First Name') || ''}`.trim();
+      (e.get('Full Name') as string) ||
+      `${e.get('Last Name') || ''} ${e.get('First Name') || ''}`.trim();
     empName.set(e.getId(), full);
   });
 
-  // Meal Boxes → MB Label
+  // Meal Boxes → подпись
   const mbs = mealBoxIds.size
     ? await selectAll(TBL.MEAL_BOXES, {
         fields: ['Main Name', 'Side Name', 'MB Label'],
@@ -173,7 +189,7 @@ async function collectKitchenData(orgId: string, dateISO: string) {
     mbLabel.set(mb.getId(), label);
   });
 
-  // Order Lines → Item Name + Category
+  // Order Lines → блюда
   const lines = lineIds.size
     ? await selectAll(TBL.ORDER_LINES, {
         fields: ['Order', 'Item (Menu Item)', 'Item Name', 'Quantity'],
@@ -208,7 +224,7 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   }
 
   const orderMBMap = new Map<string, string[]>();
-  for (const o of orders) {
+  for (const o of ordersForOrg) {
     const arr = ((o.get('Meal Boxes') as any[]) || [])
       .map((id: string) => mbLabel.get(id) || '')
       .filter(Boolean);
@@ -218,7 +234,7 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   // Таблица 1
   type Row = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
   const rows: Row[] = [];
-  for (const o of orders) {
+  for (const o of ordersForOrg) {
     const fullName = empName.get(((o.get('Employee') as any[]) || [])[0]) || '—';
     const mbsArr = orderMBMap.get(o.getId()) || [''];
     const extrasAll = (orderLineMap.get(o.getId()) || []).filter((x) =>
@@ -272,6 +288,7 @@ async function collectKitchenData(orgId: string, dateISO: string) {
     },
   };
 }
+
 
 function nextDayISO() {
   const d = new Date();
