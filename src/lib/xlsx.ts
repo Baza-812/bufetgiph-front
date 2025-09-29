@@ -24,7 +24,6 @@ export async function renderKitchenDailyXLSX(input: {
   wb.created = new Date();
   (wb as any).properties = { ...(wb as any).properties, title: `Заказы — ${orgName} — ${dateLabel}` };
 
-
   // ===== Лист 1: Сотрудники =====
   const ws = wb.addWorksheet('Сотрудники', {
     views: [{ state: 'frozen', xSplit: 0, ySplit: 1 }],
