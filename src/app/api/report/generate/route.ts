@@ -141,18 +141,23 @@ function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
   return [];
 }
 
-/** Сравнить дату поля с ISO датой (Europe/Bucharest) */
-function sameDayBucharest(dateAny: any, dateISO: string): boolean {
-  if (!dateAny) return false;
-  const d = new Date(dateAny as any);
-  // Упростим смещение: UTC+3 (лето) / UTC+2 (зима) — для полной точности можно подключить tz-библиотеку.
-  // Здесь берём локальную дату по браузерной TZ сервера; если нужно строго — заменим на SET_TIMEZONE на стороне Airtable.
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const iso = `${y}-${m}-${day}`;
-  return iso === dateISO;
+function fieldDateISO(v: any): string | null {
+  if (!v) return null;
+  // строка "YYYY-MM-DD..." → берём первые 10
+  if (typeof v === 'string') {
+    const m = v.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+    // иное — пробуем распарсить Date
+    const d = new Date(v);
+    if (!isNaN(d as any)) return d.toISOString().slice(0, 10);
+    return null;
+  }
+  // Date/number → ISO-дату
+  const d = new Date(v as any);
+  if (!isNaN(d as any)) return d.toISOString().slice(0, 10);
+  return null;
 }
+
 
 /** Сбор данных для кухонного отчёта — без зависимости от точных имён полей */
 async function collectKitchenData(orgId: string, dateISO: string) {
@@ -168,24 +173,23 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   const F_LINES = ['Order Lines', 'Lines', 'Items'];
 
   // 2) Отбор по дате, статусу (!Cancelled) и организации (по recId)
-  const orders = ordersAll.filter((o) => {
+    const orders = ordersAll.filter((o) => {
     const status = (getStr(o, F_STATUS) || '').toLowerCase();
     if (status === 'cancelled' || status === 'canceled') return false;
 
     // дата
     let hasDate = false;
     for (const n of F_ORDER_DATE) {
-      if (sameDayBucharest(o.get(n), dateISO)) {
-        hasDate = true;
-        break;
-      }
+      const iso = fieldDateISO(o.get(n));
+      if (iso === dateISO) { hasDate = true; break; }
     }
     if (!hasDate) return false;
 
-    // организация
+    // организация (по ссылке)
     const orgLinks = getLinks(o, F_ORG);
     return orgLinks.includes(orgId);
   });
+
 
   if (orders.length === 0) {
     return {
