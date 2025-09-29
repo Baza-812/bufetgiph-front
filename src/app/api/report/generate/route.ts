@@ -1,4 +1,3 @@
-// src/app/api/report/generate/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import Airtable from 'airtable';
 import { put } from '@vercel/blob';
@@ -193,7 +192,7 @@ function makeOrgResolver(all: Airtable.Record<any>[]) {
     return {
       recId: rec.getId(),
       orgKey: (rec.get('OrgID') as string) || rec.getId(),
-      orgName: (r.get('Name') as string) || 'Организация',
+      orgName: (rec.get('Name') as string) || 'Организация',
     };
   };
 }
@@ -247,35 +246,10 @@ function hasDate(o: Airtable.Record<any>, dateFields: string[], dateISO: string)
   return false;
 }
 
-function toRu(iso: string) {
-  const [y, m, d] = iso.split('-');
-  return `${d}.${m}.${y}`;
-}
-function nextDayISO() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
-function safe(s: string) {
-  return s.replace(/[^\w.\-]+/g, '_');
-}
-function sampleOrders(recs: Airtable.Record<any>[]) {
-  return recs.slice(0, 5).map((r) => ({
-    id: r.getId(),
-    OrderDateISO: (r.get('OrderDateISO') as any) || null,
-    status: (r.get('Status') as any) || null,
-    orgIds: (r.get('Org') as any) || (r.get('Organization') as any) || [],
-  }));
-}
-
-/* ===== НОВОЕ: определяем экстры даже БЕЗ категорий ===== */
-
-function norm(s: string) {
-  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
-}
+/** Экстра или нет — поддерживаем твои имена категорий и русские аналоги */
 function isExtraCategory(catRaw: string | undefined) {
-  const cat = norm(catRaw || '');
-  if (!cat) return true; // если категории нет — считаем экстрой (пущай будет)
+  const cat = (catRaw || '').toLowerCase().trim();
+  if (!cat) return true; // если категории нет — считаем экстрой (чтобы не терять данные)
   const positives = new Set([
     'salad', 'soup', 'zapekanka', 'pastry', 'fruit', 'drink', 'fruits', 'drinks',
     'салаты', 'салат', 'супы', 'суп', 'запеканка', 'запеканки', 'блины', 'блины и запеканки',
@@ -288,6 +262,8 @@ function isExtraCategory(catRaw: string | undefined) {
   if (/(salad|soup|zapek|pastr|fruit|drink)/i.test(cat)) return true;
   return !/(meal\s*box|основное блюдо)/i.test(cat);
 }
+
+/* ===== сбор данных (работает и без линка на блюдо) ===== */
 
 async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], orgRecId: string, dateISO: string) {
   const F_ORDER_DATE = ['OrderDateISO', 'Order Date', 'Delivery Date', 'Date', 'Day'];
@@ -322,7 +298,7 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
     getLinks(o, F_LINES).forEach((id) => lineIds.add(id));
   }
 
-  // справочники: сотрудники
+  // справочники
   const employees = employeeIds.size
     ? await selectAll(TBL.EMPLOYEES, {
         fields: ['FullName', 'Email'],
@@ -332,19 +308,15 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   const empName = new Map<string, string>();
   employees.forEach((e) => empName.set(e.getId(), (e.get('FullName') as string) || (e.get('Email') as string) || '—'));
 
-  // справочники: милбоксы
   const mbs = mealBoxIds.size
     ? await selectAll(TBL.MEAL_BOXES, { fields: ['MB Label', 'Main Name', 'Side Name'] })
     : [];
   const mbLabel = new Map<string, string>();
-  const mbComponents = new Map<string, { main: string; side: string }>();
   mbs.forEach((mb) => {
-    const main = (mb.get('Main Name') as string) || '';
-    const side = (mb.get('Side Name') as string) || '';
     const label =
-      (mb.get('MB Label') as string) || `${main || ''} + ${side || ''}`.trim();
+      (mb.get('MB Label') as string) ||
+      `${(mb.get('Main Name') as string) || ''} + ${(mb.get('Side Name') as string) || ''}`.trim();
     mbLabel.set(mb.getId(), label || 'Meal box');
-    mbComponents.set(mb.getId(), { main, side });
   });
 
   // строки заказов
@@ -357,10 +329,14 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   const F_ITEM_NAME = ['Item Name', 'Name', 'Title'];
   const F_QTY = ['Quantity', 'Qty', 'Count'];
 
-  // справочник блюд (для категорий — если будут)
+  // справочник блюд (для определения категорий)
   const dishIds = new Set<string>();
   lines.forEach((l) => getLinks(l, F_ITEM_LINK).forEach((id) => dishIds.add(id)));
-  const dishes = await selectAll(TBL.DISHES, { fields: ['Category', 'Name'] }); // тянем все, чтобы матчить по имени
+  const dishes = dishIds.size
+    ? await selectAll(TBL.DISHES, { fields: ['Category', 'Name'] })
+    : await selectAll(TBL.DISHES, { fields: ['Category', 'Name'] }); // даже без id — вытянем "по имени"
+
+  // карты блюд по id и по имени (на случай отсутствия линка)
   const dishCatById = new Map<string, string>();
   const dishByName = new Map<string, { cat: string; name: string }>(); // key = name lower
   dishes.forEach((d) => {
@@ -368,7 +344,7 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
     const name = (d.get('Name') as string) || '';
     const cat = (d.get('Category') as string) || '';
     if (id) dishCatById.set(id, cat);
-    if (name) dishByName.set(norm(name), { cat, name });
+    if (name) dishByName.set(name.trim().toLowerCase(), { cat, name });
   });
 
   // группируем линии по заказу, определяем категорию: по id, иначе по названию
@@ -382,9 +358,11 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
     const qty = getNum(l, F_QTY) ?? 1;
 
     let cat = '';
-    if (itemId) cat = dishCatById.get(itemId) || '';
+    if (itemId) {
+      cat = dishCatById.get(itemId) || '';
+    }
     if (!cat && nameStr) {
-      const hit = dishByName.get(norm(nameStr));
+      const hit = dishByName.get(nameStr.toLowerCase());
       if (hit) cat = hit.cat || '';
     }
 
@@ -392,23 +370,11 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
     orderLineMap.get(orderRef)!.push({ name: nameStr, qty, cat });
   }
 
-  // карта милбоксов (подписи) и КОМПОНЕНТОВ милбоксов по заказу
+  // карта милбоксов по заказу
   const orderMBMap = new Map<string, string[]>();
-  const orderMBComponents = new Map<string, Set<string>>(); // normalized names
   for (const o of orders) {
-    const mbIds = getLinks(o, F_MEALBOXES);
-    const labels = mbIds.map((id) => mbLabel.get(id) || '').filter(Boolean);
-    orderMBMap.set(o.getId(), labels.length ? labels : ['']);
-
-    const compSet = new Set<string>();
-    for (const id of mbIds) {
-      const comp = mbComponents.get(id);
-      if (comp) {
-        if (comp.main) compSet.add(norm(comp.main));
-        if (comp.side) compSet.add(norm(comp.side));
-      }
-    }
-    orderMBComponents.set(o.getId(), compSet);
+    const arr = getLinks(o, F_MEALBOXES).map((id) => mbLabel.get(id) || '').filter(Boolean);
+    orderMBMap.set(o.getId(), arr.length ? arr : ['']);
   }
 
   // ——— Таблица 1 (сотрудники)
@@ -417,19 +383,7 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   for (const o of orders) {
     const fullName = empName.get(getLinks(o, F_EMP)[0]) || '—';
     const mbsArr = orderMBMap.get(o.getId()) || [''];
-    const compSet = orderMBComponents.get(o.getId()) || new Set<string>();
-
-    // экстры: все строки, КОТОРЫЕ НЕ РАВНЫ компонентам MB по названию
-    const allLines = orderLineMap.get(o.getId()) || [];
-    const extrasAll = allLines.filter((x) => {
-      const n = norm(x.name);
-      const looksLikeComponent = n && compSet.has(n);
-      if (looksLikeComponent) return false;
-      // если категория известна — доп. проверка
-      if (x.cat) return isExtraCategory(x.cat);
-      // иначе считаем экстрой (раз не компонент MB)
-      return true;
-    });
+    const extrasAll = (orderLineMap.get(o.getId()) || []).filter((x) => isExtraCategory(x.cat));
 
     for (const oneMB of mbsArr) {
       const r: Row = { fullName, mealBox: oneMB };
@@ -452,25 +406,17 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   for (const arr of orderMBMap.values())
     for (const label of arr) if (label) cMB.set(label, (cMB.get(label) || 0) + 1);
 
-  for (const [orderId, arr] of orderLineMap.entries()) {
-    const compSet = orderMBComponents.get(orderId) || new Set<string>();
+  for (const arr of orderLineMap.values()) {
     for (const l of arr) {
-      // пропускаем компоненты MB
-      if (compSet.has(norm(l.name))) continue;
-
       const add = (m: Map<string, number>, key: string, inc: number) =>
         m.set(key, (m.get(key) || 0) + inc);
-
-      const cat = norm(l.cat);
+      const cat = (l.cat || '').toLowerCase();
       if (cat === 'salad' || cat === 'салат' || cat === 'салаты') add(cSalad, l.name, l.qty);
       else if (cat === 'soup' || cat === 'суп' || cat === 'супы') add(cSoup, l.name, l.qty);
       else if (cat === 'zapekanka' || /запеканк|блин/i.test(cat)) add(cZap, l.name, l.qty);
       else if (cat === 'pastry' || /выпечк/i.test(cat)) add(cPastry, l.name, l.qty);
       else if (cat === 'fruit' || cat === 'fruits' || cat === 'drink' || cat === 'drinks' || /фрукт|напит/i.test(cat))
         add(cFD, l.name, l.qty);
-      else {
-        // если категории нет — отнесём к FRUIT/DRINK сводам не будем, но на листе «Сотрудники» оно уже попало как экстра
-      }
     }
   }
 
@@ -488,4 +434,25 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
       fruitdrink: toPairs(cFD),
     },
   };
+}
+
+function nextDayISO() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+function toRu(iso: string) {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+function safe(s: string) {
+  return s.replace(/[^\w.\-]+/g, '_');
+}
+function sampleOrders(recs: Airtable.Record<any>[]) {
+  return recs.slice(0, 5).map((r) => ({
+    id: r.getId(),
+    OrderDateISO: (r.get('OrderDateISO') as any) || null,
+    status: (r.get('Status') as any) || null,
+    orgIds: (r.get('Org') as any) || (r.get('Organization') as any) || [],
+  }));
 }
