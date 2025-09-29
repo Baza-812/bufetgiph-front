@@ -79,23 +79,28 @@ export async function POST(req: NextRequest) {
       ].join('\n');
 
       const created = await base(TBL.REPORTS).create([
-        {
-          ReportType: [reportTypeId],
-          Recipient: [recipientId],
-          OrgsCovered: [orgId],
-          ReportDate: dateISO,
-          Status: 'ready',
-          SubjectFinal: subj,
-          BodyFinal: body,
-          File: [{ url: blob.url, filename }],
-        } as any,
-      ]);
+  {
+    fields: {
+      ReportType: [reportTypeId],
+      Recipient: [recipientId],
+      OrgsCovered: [orgId],
+      ReportDate: dateISO,
+      Status: 'ready',
+      SubjectFinal: subj,
+      BodyFinal: body,
+      File: [{ url: blob.url, filename }],
+    },
+  },
+]);
 
-      const arr = created as unknown as Airtable.Record<Airtable.FieldSet>[];
-      const reportId =
-        arr && arr[0] && typeof arr[0].getId === 'function' ? arr[0].getId() : (arr as any)?.id || 'unknown';
+const arr = created as any[];
+const reportId =
+  arr && arr[0] && typeof arr[0].getId === 'function'
+    ? arr[0].getId()
+    : (arr[0]?.id as string | undefined) || 'unknown';
 
-      results.push({ reportId, url: blob.url, orgId, orgName, rows: rows.length });
+results.push({ reportId, url: blob.url, orgId, orgName, rows: rows.length });
+
     }
 
     return NextResponse.json({ ok: true, date: dateISO, results });
