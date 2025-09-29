@@ -198,6 +198,7 @@ function makeOrgResolver(all: Airtable.Record<any>[]) {
 }
 
 // ---- helpers: getStr / getNum / getLinks ----
+// ---- helpers: getStr / getNum / getLinks ----
 function getStr(r: Airtable.Record<any>, names: string[]): string | undefined {
   for (const n of names) {
     const v = r.get(n);
@@ -205,6 +206,7 @@ function getStr(r: Airtable.Record<any>, names: string[]): string | undefined {
       const s = v.trim();
       if (s) return s;
     } else if (Array.isArray(v) && v.length > 0) {
+      // Lookup/rollup часто отдают массив строк или объектов
       const first = v[0];
       if (typeof first === 'string' && first.trim() !== '') return first.trim();
       if (first && typeof first === 'object') {
@@ -238,19 +240,11 @@ function getNum(r: Airtable.Record<any>, names: string[]): number | undefined {
 function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
   for (const n of names) {
     const v = r.get(n);
-    if (Array.isArray(v)) return v as string[];
+    if (Array.isArray(v)) return v as string[]; // linked/lookup поля
   }
   return [];
 }
 
-
-function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
-  for (const n of names) {
-    const v = r.get(n);
-    if (Array.isArray(v)) return v as string[];
-  }
-  return [];
-}
 
 function fieldDateISO(v: any): string | null {
   if (!v) return null;
