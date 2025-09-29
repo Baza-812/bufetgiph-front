@@ -13,14 +13,13 @@ type Body = { recipientId?: string; date?: string };
 export async function POST(req: NextRequest) {
   try {
     const { recipientId, date } = (await req.json()) as Body;
+    const debug = req.nextUrl.searchParams.get('debug') === '1';
+
     if (!recipientId) {
       return NextResponse.json({ ok: false, error: 'recipientId required' }, { status: 400 });
     }
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      return NextResponse.json({ ok: false, error: 'Missing BLOB_READ_WRITE_TOKEN env' }, { status: 500 });
-    }
 
-    const dateISO = date || nextDayISO();
+    const dateISO = (date || nextDayISO()).slice(0, 10);
 
     // 1) Получатель и тип отчёта
     const rr = await base(TBL.REPORT_RECIPIENTS).find(recipientId).catch((e) => {
@@ -34,48 +33,91 @@ export async function POST(req: NextRequest) {
     const slug = String(rtype.get('Slug') || 'kitchen_daily');
 
     // 2) Разрешаем список организаций у получателя
-    //    Принимаем: recXXXXXXXX, orgXXX (бизнес-ключ), либо точное имя организации.
     const allOrgs = await selectAll(TBL.ORGS, { fields: ['Name', 'OrgID'] });
     const resolver = makeOrgResolver(allOrgs);
 
-    // raw из OrgsIncluded может быть: массив linked, массив строк, одна строка, пусто.
     const rawIncluded = rr.get('OrgsIncluded');
     let includedTokens: string[] = [];
     if (Array.isArray(rawIncluded)) {
-      // linked → массив объектов {id?, name?} или строк
       includedTokens = rawIncluded.map((x: any) => x?.id || String(x));
     } else if (typeof rawIncluded === 'string') {
       includedTokens = rawIncluded.split(/[;,]/).map((s) => s.trim()).filter(Boolean);
     }
+    if (!includedTokens.length) includedTokens = allOrgs.map((o) => o.getId());
 
-    // если пусто — берём все организации
-    if (!includedTokens.length) {
-      includedTokens = allOrgs.map((o) => o.getId());
-    }
-
-    // переводим токены в recId + человекочитаемый ключ (orgKey)
     const orgsResolved = includedTokens
       .map((t) => resolver(t))
       .filter(Boolean) as { recId: string; orgName: string; orgKey: string }[];
 
     if (!orgsResolved.length) {
-      throw new Error('No organizations resolved from OrgsIncluded');
+      return NextResponse.json({ ok: false, error: 'No organizations resolved from OrgsIncluded' }, { status: 400 });
     }
 
+    // 3) Тянем все заказы (минимальный набор полей)
+    const ordersAll = await selectAll(TBL.ORDERS, {
+      fields: ['OrderDateISO', 'Order Date', 'Status', 'Org', 'Employee', 'Meal Boxes', 'Order Lines'],
+    });
+
+    // Быстрая диагностика: что видим по дате/орг без пересечения
+    const F_STATUS = ['Status', 'Order Status'];
+    const F_ORG = ['Org', 'Organization', 'Organisation', 'Company'];
+    const F_ORDER_DATE = ['OrderDateISO', 'Order Date', 'Delivery Date', 'Date', 'Day'];
+
+    const byDate = ordersAll.filter((o) => hasDate(o, F_ORDER_DATE, dateISO));
+    const byOrg = (orgId: string) => ordersAll.filter((o) => getLinks(o, F_ORG).includes(orgId));
+
+    if (debug) {
+      const diag = orgsResolved.map(({ recId, orgName, orgKey }) => {
+        const arrDate = byDate;
+        const arrOrg = byOrg(recId);
+        const both = ordersAll.filter(
+          (o) => hasDate(o, F_ORDER_DATE, dateISO) && getLinks(o, F_ORG).includes(recId),
+        );
+        return {
+          orgName,
+          orgKey,
+          orgRecId: recId,
+          totals: {
+            allOrders: ordersAll.length,
+            byDate: arrDate.length,
+            byOrg: arrOrg.length,
+            both: both.length,
+          },
+          samples: {
+            byDate: sampleOrders(arrDate),
+            byOrg: sampleOrders(arrOrg),
+            both: sampleOrders(both),
+          },
+        };
+      });
+
+      return NextResponse.json({
+        ok: true,
+        mode: 'debug',
+        date: dateISO,
+        organizationsChecked: diag.length,
+        diag,
+      });
+    }
+
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return NextResponse.json({ ok: false, error: 'Missing BLOB_READ_WRITE_TOKEN env' }, { status: 500 });
+    }
+
+    // 4) Обычный режим: генерим xlsx и пишем в Reports
     const results: Array<{
       reportId: string;
       url: string;
-      orgId: string;     // recId
-      orgKey: string;    // orgXXX
+      orgId: string;
+      orgKey: string;
       orgName: string;
       rows: number;
     }> = [];
 
     for (const { recId: orgId, orgName, orgKey } of orgsResolved) {
-      // 3) Данные для отчёта
-      const { rows, counters } = await collectKitchenData(orgId, dateISO);
+      const { rows, counters } = await collectKitchenDataFromArrays(ordersAll, orgId, dateISO);
 
-      // 4) XLSX
+      // XLSX
       const xlsxBuf = await renderKitchenDailyXLSX({
         orgName,
         dateLabel: toRu(dateISO),
@@ -83,7 +125,6 @@ export async function POST(req: NextRequest) {
         counters,
       });
 
-      // 5) Blob
       const filename = `${safe(orgName)}_${dateISO}_${slug}.xlsx`.replace(/\s+/g, '_');
       const blob = await put(`reports/${filename}`, xlsxBuf, {
         access: 'public',
@@ -93,33 +134,28 @@ export async function POST(req: NextRequest) {
         token: process.env.BLOB_READ_WRITE_TOKEN!,
       });
 
-      // 6) Reports (пишем OrgsCovered как читаемый ключ orgXXX — как у тебя в базе)
+      // Запись в Reports
       const subj = `Заказы на ${toRu(dateISO)} — ${orgName}`;
       const body = [
         `Добрый день!`,
         ``,
         `Во вложении Excel-отчёт по заказам на ${toRu(dateISO)} для ${orgName}.`,
         `• Лист «Сотрудники» — сотрудники и их заказы`,
-        `• Лист «Агрегаты» — свод по блюдам (салаты, супы, блинчики/запеканки, милбоксы, выпечка, фрукты/напитки).`,
-        ``,
-        `Если нужны корректировки — напишите в ответ.`,
+        `• Лист «Агрегаты» — свод по блюдам.`,
       ].join('\n');
 
       const created = await (base(TBL.REPORTS) as any).create([
         {
           fields: {
-  ReportType: [reportTypeId],          // linked → ок
-  Recipient: [recipientId],            // linked → ок
-  OrgsCovered: [orgId],                // ✅ linked expects array of rec IDs
-  // (опционально, если такое поле есть в Reports как Text):
-  OrgsCoveredKey: orgKey,              // 'org120' для удобства
-  ReportDate: dateISO,
-  Status: 'ready',
-  SubjectFinal: subj,
-  BodyFinal: body,
-  File: [{ url: blob.url, filename }] as any[],
-},
-
+            ReportType: [reportTypeId],
+            Recipient: [recipientId],
+            OrgsCovered: [orgId], // LINKED: массив recId
+            ReportDate: dateISO,
+            Status: 'ready',
+            SubjectFinal: subj,
+            BodyFinal: body,
+            File: [{ url: blob.url, filename }] as any[],
+          },
         },
       ]);
 
@@ -135,20 +171,17 @@ export async function POST(req: NextRequest) {
     console.error('report/generate error:', e);
     return NextResponse.json(
       { ok: false, error: String(e?.message || e), stack: e?.stack },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
-/* ===================== Helpers & data collection ===================== */
+/* ===================== Helpers ===================== */
 
-// Превращает токен (recId | orgXXX | Name) → { recId, orgKey, orgName }
 function makeOrgResolver(all: Airtable.Record<any>[]) {
-  // карты для быстрого поиска
   const byId = new Map<string, Airtable.Record<any>>();
   const byOrgKey = new Map<string, Airtable.Record<any>>();
   const byName = new Map<string, Airtable.Record<any>>();
-
   for (const r of all) {
     byId.set(r.getId(), r);
     const key = (r.get('OrgID') as string) || '';
@@ -156,17 +189,13 @@ function makeOrgResolver(all: Airtable.Record<any>[]) {
     const name = (r.get('Name') as string) || '';
     if (name) byName.set(name, r);
   }
-
   return (token: string) => {
     if (!token) return null;
     let rec: Airtable.Record<any> | undefined;
-
     if (token.startsWith('rec')) rec = byId.get(token);
     if (!rec && token.startsWith('org')) rec = byOrgKey.get(token);
     if (!rec) rec = byName.get(token);
-
     if (!rec) return null;
-
     return {
       recId: rec.getId(),
       orgKey: (rec.get('OrgID') as string) || rec.getId(),
@@ -175,11 +204,10 @@ function makeOrgResolver(all: Airtable.Record<any>[]) {
   };
 }
 
-/** Универсальный доступ к полям записи */
 function getStr(r: Airtable.Record<any>, names: string[]): string | undefined {
   for (const n of names) {
     const v = r.get(n);
-    if (typeof v === 'string' && v.trim() !== '') return v as string;
+    if (typeof v === 'string' && v.trim() !== '') return v;
   }
   return undefined;
 }
@@ -199,7 +227,6 @@ function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
   return [];
 }
 
-/** Парсер поля даты → YYYY-MM-DD (fallback) */
 function fieldDateISO(v: any): string | null {
   if (!v) return null;
   if (typeof v === 'string') {
@@ -214,14 +241,29 @@ function fieldDateISO(v: any): string | null {
   return null;
 }
 
-/** Основной сбор данных — сначала пробуем OrderDateISO */
-async function collectKitchenData(orgRecId: string, dateISO: string) {
-  // 1) Orders (минимальный набор полей, включая OrderDateISO)
-  const ordersAll = await selectAll(TBL.ORDERS, {
-    fields: ['OrderDateISO', 'Order Date', 'Status', 'Org', 'Employee', 'Meal Boxes', 'Order Lines'],
-  });
+function hasDate(o: Airtable.Record<any>, dateFields: string[], dateISO: string) {
+  for (const n of dateFields) {
+    const val = o.get(n);
+    const iso = n === 'OrderDateISO'
+      ? (typeof val === 'string' ? val.slice(0, 10) : fieldDateISO(val))
+      : fieldDateISO(val);
+    if (iso === dateISO) return true;
+  }
+  return false;
+}
 
-  // возможные имена полей
+function sampleOrders(recs: Airtable.Record<any>[]) {
+  return recs.slice(0, 5).map((r) => ({
+    id: r.getId(),
+    OrderDateISO: (r.get('OrderDateISO') as any) || null,
+    status: (r.get('Status') as any) || null,
+    orgIds: (r.get('Org') as any) || (r.get('Organization') as any) || [],
+  }));
+}
+
+/* ===== сбор данных из уже загруженного массива ordersAll ===== */
+
+async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], orgRecId: string, dateISO: string) {
   const F_ORDER_DATE = ['OrderDateISO', 'Order Date', 'Delivery Date', 'Date', 'Day'];
   const F_STATUS = ['Status', 'Order Status'];
   const F_ORG = ['Org', 'Organization', 'Organisation', 'Company'];
@@ -229,27 +271,11 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
   const F_MEALBOXES = ['Meal Boxes', 'Meal Box', 'MealBox', 'MB'];
   const F_LINES = ['Order Lines', 'Lines', 'Items'];
 
-  // 2) Отбор по дате, статусу (!Cancelled) и организации (по recId)
   const orders = ordersAll.filter((o) => {
     const status = (getStr(o, F_STATUS) || '').toLowerCase();
     if (status === 'cancelled' || status === 'canceled') return false;
-
-    let hasDate = false;
-    for (const n of F_ORDER_DATE) {
-      const val = o.get(n);
-      const iso =
-        n === 'OrderDateISO'
-          ? (typeof val === 'string' ? val.slice(0, 10) : fieldDateISO(val))
-          : fieldDateISO(val);
-      if (iso === dateISO) {
-        hasDate = true;
-        break;
-      }
-    }
-    if (!hasDate) return false;
-
-    const orgLinks = getLinks(o, F_ORG); // здесь именно recId связанной Org
-    return orgLinks.includes(orgRecId);
+    if (!hasDate(o, F_ORDER_DATE, dateISO)) return false;
+    return getLinks(o, F_ORG).includes(orgRecId);
   });
 
   if (orders.length === 0) {
@@ -259,18 +285,15 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
     };
   }
 
-  // 3) Собираем ID связанных сущностей
   const employeeIds = new Set<string>();
   const mealBoxIds = new Set<string>();
   const lineIds = new Set<string>();
-
   for (const o of orders) {
     getLinks(o, F_EMP).forEach((id) => employeeIds.add(id));
     getLinks(o, F_MEALBOXES).forEach((id) => mealBoxIds.add(id));
     getLinks(o, F_LINES).forEach((id) => lineIds.add(id));
   }
 
-  // Employees → имя
   const employees = employeeIds.size
     ? await selectAll(TBL.EMPLOYEES, {
         fields: ['FullName', 'Email'],
@@ -278,23 +301,19 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
       })
     : [];
   const empName = new Map<string, string>();
-  employees.forEach((e) => {
-    empName.set(e.getId(), getStr(e, ['FullName', 'Email']) || '—');
-  });
+  employees.forEach((e) => empName.set(e.getId(), (e.get('FullName') as string) || (e.get('Email') as string) || '—'));
 
-  // Meal Boxes → подпись
   const mbs = mealBoxIds.size
     ? await selectAll(TBL.MEAL_BOXES, { fields: ['MB Label', 'Main Name', 'Side Name'] })
     : [];
   const mbLabel = new Map<string, string>();
   mbs.forEach((mb) => {
     const label =
-      getStr(mb, ['MB Label', 'Label', 'Name']) ||
-      `${getStr(mb, ['Main Name', 'Main']) || ''} + ${getStr(mb, ['Side Name', 'Side']) || ''}`.trim();
+      (mb.get('MB Label') as string) ||
+      `${(mb.get('Main Name') as string) || ''} + ${(mb.get('Side Name') as string) || ''}`.trim();
     mbLabel.set(mb.getId(), label || 'Meal box');
   });
 
-  // Order Lines → блюда
   const lines = lineIds.size
     ? await selectAll(TBL.ORDER_LINES, { fields: ['Order', 'Item (Menu Item)', 'Item Name', 'Quantity'] })
     : [];
@@ -308,12 +327,11 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
   lines.forEach((l) => getLinks(l, F_ITEM_LINK).forEach((id) => dishIds.add(id)));
 
   const dishes = dishIds.size ? await selectAll(TBL.DISHES, { fields: ['Category', 'Name'] }) : [];
-
   const dishCat = new Map<string, string>();
   const dishName = new Map<string, string>();
   dishes.forEach((d) => {
-    dishCat.set(d.getId(), getStr(d, ['Category']) || '');
-    dishName.set(d.getId(), getStr(d, ['Name', 'Title']) || '');
+    dishCat.set(d.getId(), (d.get('Category') as string) || '');
+    dishName.set(d.getId(), (d.get('Name') as string) || '');
   });
 
   const orderLineMap = new Map<string, { name: string; qty: number; cat: string }[]>();
@@ -321,7 +339,7 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
     const orderRef = getLinks(l, F_LINE_ORDER)[0];
     if (!orderRef) continue;
     const itemId = getLinks(l, F_ITEM_LINK)[0];
-    const name = getStr(l, F_ITEM_NAME) || (itemId ? (dishName.get(itemId) || '') : '');
+    const name = (l.get('Item Name') as string) || (itemId ? (dishName.get(itemId) || '') : '');
     const qty = getNum(l, F_QTY) ?? 1;
     const cat = itemId ? (dishCat.get(itemId) || '') : '';
     if (!orderLineMap.has(orderRef)) orderLineMap.set(orderRef, []);
@@ -331,10 +349,9 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
   const orderMBMap = new Map<string, string[]>();
   for (const o of orders) {
     const arr = getLinks(o, F_MEALBOXES).map((id) => mbLabel.get(id) || '').filter(Boolean);
-    orderMBMap.set(o.getId(), arr);
+    orderMBMap.set(o.getId(), arr.length ? arr : ['']);
   }
 
-  // 4) Таблица 1
   type Row = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
   const rows: Row[] = [];
   for (const o of orders) {
@@ -343,7 +360,8 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
     const extrasAll = (orderLineMap.get(o.getId()) || []).filter((x) =>
       ['Salad', 'Soup', 'Zapekanka', 'Fruit', 'Pastry', 'Drink'].includes(x.cat),
     );
-    for (const oneMB of mbsArr.length ? mbsArr : ['']) {
+
+    for (const oneMB of mbsArr) {
       const r: Row = { fullName, mealBox: oneMB };
       if (extrasAll.length > 0) r.extra1 = extrasAll[0].name;
       if (extrasAll.length > 1) r.extra2 = extrasAll[1].name;
@@ -353,7 +371,6 @@ async function collectKitchenData(orgRecId: string, dateISO: string) {
   }
   rows.sort((a, b) => a.fullName.localeCompare(b.fullName, 'ru'));
 
-  // 5) Таблица 2 (агрегаты)
   const cSalad = new Map<string, number>();
   const cSoup = new Map<string, number>();
   const cZap = new Map<string, number>();
