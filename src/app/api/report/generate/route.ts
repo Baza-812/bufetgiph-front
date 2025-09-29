@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
       const blob = await put(`reports/${filename}`, pdfBuf, {
         access: 'public',
         addRandomSuffix: false,
+        allowOverwrite: true,
         contentType: 'application/pdf',
         token: process.env.BLOB_READ_WRITE_TOKEN!,
       });
