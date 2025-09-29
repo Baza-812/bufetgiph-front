@@ -78,7 +78,8 @@ export async function POST(req: NextRequest) {
         `Если нужны корректировки — напишите в ответ.`,
       ].join('\n');
 
-      const created = await base(TBL.REPORTS).create([
+      // --- запись в Reports (с ослаблением типов SDK) ---
+const created = await (base(TBL.REPORTS) as any).create([
   {
     fields: {
       ReportType: [reportTypeId],
@@ -88,18 +89,21 @@ export async function POST(req: NextRequest) {
       Status: 'ready',
       SubjectFinal: subj,
       BodyFinal: body,
-      File: [{ url: blob.url, filename }],
+      // Airtable примет url/filename, а типы мешают — приводим к any
+      File: [{ url: blob.url, filename }] as any[],
     },
   },
 ]);
 
-const arr = created as any[];
+// created -> берём первую запись и достаём id
+const first = (created as any[])[0];
 const reportId =
-  arr && arr[0] && typeof arr[0].getId === 'function'
-    ? arr[0].getId()
-    : (arr[0]?.id as string | undefined) || 'unknown';
+  (first && typeof first.getId === 'function' && first.getId()) ||
+  first?.id ||
+  'unknown';
 
 results.push({ reportId, url: blob.url, orgId, orgName, rows: rows.length });
+
 
     }
 
