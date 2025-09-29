@@ -75,14 +75,13 @@ export async function POST(req: NextRequest) {
       const body = [
         `Добрый день!`,
         ``,
-        `Во вложении Excel-отчёт по заказам на ${toRu(dateISO)} для ${orgName}.`,
+        `Во вложении Excel-отчёт по заказам на ${toРu(dateISO)} для ${orgName}.`,
         `• Лист «Сотрудники» — сотрудники и их заказы`,
         `• Лист «Агрегаты» — свод по блюдам (салаты, супы, блинчики/запеканки, милбоксы, выпечка, фрукты/напитки).`,
         ``,
         `Если нужны корректировки — напишите в ответ.`,
       ].join('\n');
 
-      // ослабляем типизацию SDK (для Attachments достаточно url+filename)
       const created = await (base(TBL.REPORTS) as any).create([
         {
           fields: {
@@ -141,55 +140,56 @@ function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
   return [];
 }
 
+/** Парсер поля даты → YYYY-MM-DD (fallback) */
 function fieldDateISO(v: any): string | null {
   if (!v) return null;
-  // строка "YYYY-MM-DD..." → берём первые 10
   if (typeof v === 'string') {
     const m = v.match(/^(\d{4}-\d{2}-\d{2})/);
     if (m) return m[1];
-    // иное — пробуем распарсить Date
     const d = new Date(v);
     if (!isNaN(d as any)) return d.toISOString().slice(0, 10);
     return null;
   }
-  // Date/number → ISO-дату
   const d = new Date(v as any);
   if (!isNaN(d as any)) return d.toISOString().slice(0, 10);
   return null;
 }
 
-
-/** Сбор данных для кухонного отчёта — без зависимости от точных имён полей */
+/** Сбор данных для кухонного отчёта — сначала пробуем OrderDateISO */
 async function collectKitchenData(orgId: string, dateISO: string) {
-  // 1) Тянем все заказы, фильтруем в коде
-  const ordersAll = await selectAll(TBL.ORDERS, {});
+  // 1) Тянем все заказы, берём минимально нужные поля (включая OrderDateISO)
+  const ordersAll = await selectAll(TBL.ORDERS, {
+    fields: ['OrderDateISO', 'Order Date', 'Status', 'Org', 'Employee', 'Meal Boxes', 'Order Lines'],
+  });
 
   // возможные имена полей
-  const F_ORDER_DATE = ['Order Date', 'Delivery Date', 'Date', 'Day'];
+  const F_ORDER_DATE = ['OrderDateISO', 'Order Date', 'Delivery Date', 'Date', 'Day'];
   const F_STATUS = ['Status', 'Order Status'];
   const F_ORG = ['Org', 'Organization', 'Organisation', 'Company'];
   const F_EMP = ['Employee', 'User', 'Emp'];
   const F_MEALBOXES = ['Meal Boxes', 'Meal Box', 'MealBox', 'MB'];
   const F_LINES = ['Order Lines', 'Lines', 'Items'];
 
-  // 2) Отбор по дате, статусу (!Cancelled) и организации (по recId)
-    const orders = ordersAll.filter((o) => {
+  // 2) Отбор по дате, статусу (!Cancelled) и организации
+  const orders = ordersAll.filter((o) => {
     const status = (getStr(o, F_STATUS) || '').toLowerCase();
     if (status === 'cancelled' || status === 'canceled') return false;
 
-    // дата
+    // дата — сначала OrderDateISO (строка), затем fallback к парсеру
     let hasDate = false;
     for (const n of F_ORDER_DATE) {
-      const iso = fieldDateISO(o.get(n));
+      const val = o.get(n);
+      const iso = n === 'OrderDateISO'
+        ? (typeof val === 'string' ? val.slice(0, 10) : fieldDateISO(val))
+        : fieldDateISO(val);
       if (iso === dateISO) { hasDate = true; break; }
     }
     if (!hasDate) return false;
 
-    // организация (по ссылке)
+    // организация (по ссылке recId)
     const orgLinks = getLinks(o, F_ORG);
     return orgLinks.includes(orgId);
   });
-
 
   if (orders.length === 0) {
     return {
@@ -209,7 +209,7 @@ async function collectKitchenData(orgId: string, dateISO: string) {
     getLinks(o, F_LINES).forEach((id) => lineIds.add(id));
   }
 
-  // Employees → имя (твои реальные поля)
+  // Employees → имя
   const employees = employeeIds.size
     ? await selectAll(TBL.EMPLOYEES, {
         fields: ['FullName', 'Email'],
@@ -222,7 +222,7 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   });
 
   // Meal Boxes → подпись
-  const mbs = mealBoxIds.size ? await selectAll(TBL.MEAL_BOXES, {}) : [];
+  const mbs = mealBoxIds.size ? await selectAll(TBL.MEAL_BOXES, { fields: ['MB Label', 'Main Name', 'Side Name'] }) : [];
   const mbLabel = new Map<string, string>();
   mbs.forEach((mb) => {
     const label =
@@ -232,7 +232,9 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   });
 
   // Order Lines → блюда
-  const lines = lineIds.size ? await selectAll(TBL.ORDER_LINES, {}) : [];
+  const lines = lineIds.size
+    ? await selectAll(TBL.ORDER_LINES, { fields: ['Order', 'Item (Menu Item)', 'Item Name', 'Quantity'] })
+    : [];
 
   const F_LINE_ORDER = ['Order', 'Parent Order'];
   const F_ITEM_LINK = ['Item (Menu Item)', 'Menu Item', 'Dish'];
@@ -242,7 +244,7 @@ async function collectKitchenData(orgId: string, dateISO: string) {
   const dishIds = new Set<string>();
   lines.forEach((l) => getLinks(l, F_ITEM_LINK).forEach((id) => dishIds.add(id)));
 
-  const dishes = dishIds.size ? await selectAll(TBL.DISHES, {}) : [];
+  const dishes = dishIds.size ? await selectAll(TBL.DISHES, { fields: ['Category', 'Name'] }) : [];
 
   const dishCat = new Map<string, string>();
   const dishName = new Map<string, string>();
