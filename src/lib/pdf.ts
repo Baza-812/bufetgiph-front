@@ -2,7 +2,6 @@
 import fs from 'fs/promises';
 import path from 'path';
 // @ts-ignore — у pdfmake кривые тайпинги, используем как any
-import PdfPrinter from 'pdfmake';
 
 type EmployeeRow = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
 type Counters = {
@@ -22,18 +21,22 @@ export async function renderKitchenDailyPDF(input: {
 }): Promise<Buffer> {
   const { orgName, dateLabel, rows, counters } = input;
 
-  // читаем TTF локально из бандла (на Vercel это ок)
-  const regular = await fs.readFile(path.join(process.cwd(), 'public/fonts/NotoSans-Regular.ttf'));
-  const bold    = await fs.readFile(path.join(process.cwd(), 'public/fonts/NotoSans-Bold.ttf'));
+  // 1) динамически читаем TTF
+  if (!cachedRegular) cachedRegular = await loadLocalFont('public/fonts/NotoSans-Regular.ttf');
+  if (!cachedBold)    cachedBold    = await loadLocalFont('public/fonts/NotoSans-Bold.ttf');
+
+  // 2) динамически импортируем pdfmake на рантайме (а не при билде)
+  const PdfMakeMod = await import('pdfmake');
+  const PdfPrinter = (PdfMakeMod as any).default ?? (PdfMakeMod as any);
 
   const fonts = {
     NotoSans: {
-      normal: regular,
-      bold: bold,
+      normal: cachedRegular,
+      bold:   cachedBold,
     },
   };
 
-  const printer = new (PdfPrinter as any)(fonts);
+  const printer = new PdfPrinter(fonts);
 
   // Таблица 1 — сотрудники
   const table1Body = [
