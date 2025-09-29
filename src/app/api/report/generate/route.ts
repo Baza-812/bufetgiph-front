@@ -197,6 +197,7 @@ function makeOrgResolver(all: Airtable.Record<any>[]) {
   };
 }
 
+// ---- helpers: getStr / getNum / getLinks ----
 function getStr(r: Airtable.Record<any>, names: string[]): string | undefined {
   for (const n of names) {
     const v = r.get(n);
@@ -204,10 +205,8 @@ function getStr(r: Airtable.Record<any>, names: string[]): string | undefined {
       const s = v.trim();
       if (s) return s;
     } else if (Array.isArray(v) && v.length > 0) {
-      // Lookup/rollup часто отдают массив строк
       const first = v[0];
       if (typeof first === 'string' && first.trim() !== '') return first.trim();
-      // иногда в массиве объекты с полем name/text — подстрахуемся
       if (first && typeof first === 'object') {
         const s = (first as any).name ?? (first as any).text ?? '';
         if (typeof s === 'string' && s.trim() !== '') return s.trim();
@@ -216,6 +215,34 @@ function getStr(r: Airtable.Record<any>, names: string[]): string | undefined {
   }
   return undefined;
 }
+
+function getNum(r: Airtable.Record<any>, names: string[]): number | undefined {
+  for (const n of names) {
+    const v = r.get(n);
+    if (typeof v === 'number' && !Number.isNaN(v)) return v;
+    if (typeof v === 'string') {
+      const num = Number(v);
+      if (!Number.isNaN(num)) return num;
+    } else if (Array.isArray(v) && v.length > 0) {
+      const first = v[0];
+      if (typeof first === 'number' && !Number.isNaN(first)) return first;
+      if (typeof first === 'string') {
+        const num = Number(first);
+        if (!Number.isNaN(num)) return num;
+      }
+    }
+  }
+  return undefined;
+}
+
+function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
+  for (const n of names) {
+    const v = r.get(n);
+    if (Array.isArray(v)) return v as string[];
+  }
+  return [];
+}
+
 
 function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
   for (const n of names) {
