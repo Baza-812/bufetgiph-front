@@ -159,10 +159,10 @@ async function collectKitchenData(orgId: string, dateISO: string) {
     ((o.get('Order Lines') as any[]) || []).forEach((id) => lineIds.add(id));
   });
 
-  // Employees → имена (учитываем FullName и "Full Name")
+  // Employees → имена (строго по твоим полям: FullName + fallback Email)
 const employees = employeeIds.size
   ? await selectAll(TBL.EMPLOYEES, {
-      fields: ['FullName', 'Full Name', 'First Name', 'Last Name'],
+      fields: ['FullName', 'Email'], // ⬅️ только существующие поля
       filterByFormula: `OR(${[...employeeIds].map((id) => `RECORD_ID()='${id}'`).join(',')})`,
     })
   : [];
@@ -171,10 +171,10 @@ const empName = new Map<string, string>();
 employees.forEach((e) => {
   const full =
     (e.get('FullName') as string) ||
-    (e.get('Full Name') as string) ||
-    `${e.get('Last Name') || ''} ${e.get('First Name') || ''}`.trim();
-  empName.set(e.getId(), full || '—');
+    (e.get('Email') as string) || '—';
+  empName.set(e.getId(), full);
 });
+
 
 
   // Meal Boxes → подпись
