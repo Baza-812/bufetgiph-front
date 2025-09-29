@@ -57,6 +57,15 @@ export async function POST(req: NextRequest) {
       fields: ['OrderDateISO', 'Order Date', 'Status', 'Org', 'Employee', 'Meal Boxes', 'Order Lines'],
     });
 
+    // 🔽 ДОБАВЬ ЭТО ЗДЕСЬ (до любых debug-блоков!)
+const F_LINE_CATEGORY = [
+  'Category (from Dish)',
+  'Category',
+  'Dish Category',
+  'Категория',
+  'Категория (из блюда)',
+];
+
     if (debug) {
       const F_STATUS = ['Status', 'Order Status'];
       const F_ORG = ['Org', 'Organization', 'Organisation', 'Company'];
