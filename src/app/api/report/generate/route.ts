@@ -246,24 +246,28 @@ function hasDate(o: Airtable.Record<any>, dateFields: string[], dateISO: string)
   return false;
 }
 
-/** Экстра или нет — поддерживаем твои имена категорий и русские аналоги */
-function isExtraCategory(catRaw: string | undefined) {
-  const cat = (catRaw || '').toLowerCase().trim();
-  if (!cat) return true; // если категории нет — считаем экстрой (чтобы не терять данные)
-  const positives = new Set([
-    'salad', 'soup', 'zapekanka', 'pastry', 'fruit', 'drink', 'fruits', 'drinks',
-    'салаты', 'салат', 'супы', 'суп', 'запеканка', 'запеканки', 'блины', 'блины и запеканки',
-    'выпечка', 'фрукты', 'напитки', 'фрукты и напитки'
-  ]);
-  const negatives = new Set(['meal box', 'mealbox', 'meal_box', 'основное блюдо и гарнир']);
-  if (negatives.has(cat)) return false;
-  if (positives.has(cat)) return true;
-  if (/(салат|суп|запеканк|блин|выпечк|фрукт|напит)/i.test(cat)) return true;
-  if (/(salad|soup|zapek|pastr|fruit|drink)/i.test(cat)) return true;
-  return !/(meal\s*box|основное блюдо)/i.test(cat);
+function nextDayISO() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+function toRu(iso: string) {
+  const [y, m, d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+function safe(s: string) {
+  return s.replace(/[^\w.\-]+/g, '_');
+}
+function sampleOrders(recs: Airtable.Record<any>[]) {
+  return recs.slice(0, 5).map((r) => ({
+    id: r.getId(),
+    OrderDateISO: (r.get('OrderDateISO') as any) || null,
+    status: (r.get('Status') as any) || null,
+    orgIds: (r.get('Org') as any) || (r.get('Organization') as any) || [],
+  }));
 }
 
-/* ===== сбор данных (работает и без линка на блюдо) ===== */
+/* ===== Сбор данных c использованием категории из Order Lines ===== */
 
 async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], orgRecId: string, dateISO: string) {
   const F_ORDER_DATE = ['OrderDateISO', 'Order Date', 'Delivery Date', 'Date', 'Day'];
@@ -319,52 +323,34 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
     mbLabel.set(mb.getId(), label || 'Meal box');
   });
 
-  // строки заказов
+  // строки заказов — важное: включаем поле категории из линий
   const lines = lineIds.size
-    ? await selectAll(TBL.ORDER_LINES, { fields: ['Order', 'Item (Menu Item)', 'Item Name', 'Quantity'] })
+    ? await selectAll(TBL.ORDER_LINES, {
+        fields: [
+          'Order',
+          'Item (Menu Item)',
+          'Item Name',
+          'Quantity',
+          'Category (from Dish)', // <- lookup из Dish.Category
+        ],
+      })
     : [];
 
   const F_LINE_ORDER = ['Order', 'Parent Order'];
   const F_ITEM_LINK = ['Item (Menu Item)', 'Menu Item', 'Dish'];
   const F_ITEM_NAME = ['Item Name', 'Name', 'Title'];
   const F_QTY = ['Quantity', 'Qty', 'Count'];
+  const F_LINE_CATEGORY = ['Category (from Dish)', 'Category']; // сначала lookup, потом возможный fallback
 
-  // справочник блюд (для определения категорий)
-  const dishIds = new Set<string>();
-  lines.forEach((l) => getLinks(l, F_ITEM_LINK).forEach((id) => dishIds.add(id)));
-  const dishes = dishIds.size
-    ? await selectAll(TBL.DISHES, { fields: ['Category', 'Name'] })
-    : await selectAll(TBL.DISHES, { fields: ['Category', 'Name'] }); // даже без id — вытянем "по имени"
-
-  // карты блюд по id и по имени (на случай отсутствия линка)
-  const dishCatById = new Map<string, string>();
-  const dishByName = new Map<string, { cat: string; name: string }>(); // key = name lower
-  dishes.forEach((d) => {
-    const id = d.getId();
-    const name = (d.get('Name') as string) || '';
-    const cat = (d.get('Category') as string) || '';
-    if (id) dishCatById.set(id, cat);
-    if (name) dishByName.set(name.trim().toLowerCase(), { cat, name });
-  });
-
-  // группируем линии по заказу, определяем категорию: по id, иначе по названию
+  // группируем линии по заказу, берём категорию прямо из Order Lines
   const orderLineMap = new Map<string, { name: string; qty: number; cat: string }[]>();
   for (const l of lines) {
     const orderRef = getLinks(l, F_LINE_ORDER)[0];
     if (!orderRef) continue;
 
-    const itemId = getLinks(l, F_ITEM_LINK)[0];
     const nameStr = (getStr(l, F_ITEM_NAME) || '').trim();
     const qty = getNum(l, F_QTY) ?? 1;
-
-    let cat = '';
-    if (itemId) {
-      cat = dishCatById.get(itemId) || '';
-    }
-    if (!cat && nameStr) {
-      const hit = dishByName.get(nameStr.toLowerCase());
-      if (hit) cat = hit.cat || '';
-    }
+    const cat = (getStr(l, F_LINE_CATEGORY) || '').trim();
 
     if (!orderLineMap.has(orderRef)) orderLineMap.set(orderRef, []);
     orderLineMap.get(orderRef)!.push({ name: nameStr, qty, cat });
@@ -378,12 +364,20 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   }
 
   // ——— Таблица 1 (сотрудники)
+  const EXTRAS_SET = new Set([
+    'salad','soup','zapekanka','pastry','fruit','drink','fruits','drinks',
+    'салаты','салат','супы','суп','запеканка','запеканки','блины','блины и запеканки',
+    'выпечка','фрукты','напитки','фрукты и напитки'
+  ]);
+
   type Row = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
   const rows: Row[] = [];
   for (const o of orders) {
     const fullName = empName.get(getLinks(o, F_EMP)[0]) || '—';
     const mbsArr = orderMBMap.get(o.getId()) || [''];
-    const extrasAll = (orderLineMap.get(o.getId()) || []).filter((x) => isExtraCategory(x.cat));
+    const extrasAll = (orderLineMap.get(o.getId()) || []).filter((x) =>
+      EXTRAS_SET.has((x.cat || '').toLowerCase().trim())
+    );
 
     for (const oneMB of mbsArr) {
       const r: Row = { fullName, mealBox: oneMB };
@@ -410,7 +404,8 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
     for (const l of arr) {
       const add = (m: Map<string, number>, key: string, inc: number) =>
         m.set(key, (m.get(key) || 0) + inc);
-      const cat = (l.cat || '').toLowerCase();
+      const cat = (l.cat || '').toLowerCase().trim();
+
       if (cat === 'salad' || cat === 'салат' || cat === 'салаты') add(cSalad, l.name, l.qty);
       else if (cat === 'soup' || cat === 'суп' || cat === 'супы') add(cSoup, l.name, l.qty);
       else if (cat === 'zapekanka' || /запеканк|блин/i.test(cat)) add(cZap, l.name, l.qty);
@@ -434,25 +429,4 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
       fruitdrink: toPairs(cFD),
     },
   };
-}
-
-function nextDayISO() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return d.toISOString().slice(0, 10);
-}
-function toRu(iso: string) {
-  const [y, m, d] = iso.split('-');
-  return `${d}.${m}.${y}`;
-}
-function safe(s: string) {
-  return s.replace(/[^\w.\-]+/g, '_');
-}
-function sampleOrders(recs: Airtable.Record<any>[]) {
-  return recs.slice(0, 5).map((r) => ({
-    id: r.getId(),
-    OrderDateISO: (r.get('OrderDateISO') as any) || null,
-    status: (r.get('Status') as any) || null,
-    orgIds: (r.get('Org') as any) || (r.get('Organization') as any) || [],
-  }));
 }
