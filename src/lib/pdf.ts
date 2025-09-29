@@ -117,9 +117,10 @@ export async function renderKitchenDailyPDF(input: {
   const pdfDoc = printer.createPdfKitDocument(docDefinition);
   const chunks: Buffer[] = [];
   return await new Promise<Buffer>((resolve, reject) => {
-    pdfDoc.on('data', (c: Buffer) => chunks.push(c));
-    pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
-    pdfDoc.on('error', reject);
-    pdfDoc.end();
-  });
+  // @ts-ignore у pdfkit нет корректных d.ts для getBuffer
+  pdfDoc.getBuffer((b: Buffer) => resolve(b));
+  pdfDoc.on('error', reject);
+  pdfDoc.end();
+});
+
 }
