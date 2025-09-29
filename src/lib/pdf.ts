@@ -1,8 +1,8 @@
 // src/lib/pdf.ts
 import fs from 'fs/promises';
 import path from 'path';
-// @ts-ignore — у pdfmake кривые тайпинги, используем как any
 
+// типы данных для отчёта
 type EmployeeRow = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
 type Counters = {
   salads: [string, number][];
@@ -13,6 +13,18 @@ type Counters = {
   fruitdrink: [string, number][];
 };
 
+const A4 = { w: 595.28, h: 841.89 }; // points
+
+// --- КЭШ ФАЙЛОВ ШРИФТОВ (область модуля) ---
+let cachedRegular: Uint8Array | null = null;
+let cachedBold: Uint8Array | null = null;
+
+async function loadLocalFont(relPath: string): Promise<Uint8Array> {
+  const abs = path.join(process.cwd(), relPath);
+  const buf = await fs.readFile(abs);
+  return new Uint8Array(buf);
+}
+
 export async function renderKitchenDailyPDF(input: {
   orgName: string;
   dateLabel: string;
@@ -21,11 +33,11 @@ export async function renderKitchenDailyPDF(input: {
 }): Promise<Buffer> {
   const { orgName, dateLabel, rows, counters } = input;
 
-  // 1) динамически читаем TTF
+  // 1) локально читаем TTF и кэшируем
   if (!cachedRegular) cachedRegular = await loadLocalFont('public/fonts/NotoSans-Regular.ttf');
   if (!cachedBold)    cachedBold    = await loadLocalFont('public/fonts/NotoSans-Bold.ttf');
 
-  // 2) динамически импортируем pdfmake на рантайме (а не при билде)
+  // 2) динамически импортируем pdfmake (чтобы бандлер не ломал fontkit)
   const PdfMakeMod = await import('pdfmake');
   const PdfPrinter = (PdfMakeMod as any).default ?? (PdfMakeMod as any);
 
@@ -56,16 +68,22 @@ export async function renderKitchenDailyPDF(input: {
 
   const aggList = (pairs: [string, number][]) =>
     pairs.length
-      ? pairs.map(([name, qty]) => ({ columns: [ { text: name, width: '*'}, { text: `${qty} шт`, width: 40, alignment: 'right' } ], margin: [0, 1, 0, 1] }))
+      ? pairs.map(([name, qty]) => ({
+          columns: [
+            { text: name, width: '*' },
+            { text: `${qty} шт`, width: 40, alignment: 'right' },
+          ],
+          margin: [0, 1, 0, 1],
+        }))
       : [ { text: '—', color: '#666' } ];
 
   const docDefinition = {
     defaultStyle: { font: 'NotoSans', fontSize: 10.5, color: '#111' },
     styles: {
-      h1: { fontSize: 20, bold: true, margin: [0,0,0,4] },
-      sub: { color: '#666', margin: [0,0,0,12] },
+      h1: { fontSize: 20, bold: true, margin: [0, 0, 0, 4] },
+      sub: { color: '#666', margin: [0, 0, 0, 12] },
       th: { bold: true, fillColor: '#FAFAFA' },
-      blockTitle: { bold: true, fontSize: 11.5, margin: [0,8,0,6] },
+      blockTitle: { bold: true, fontSize: 11.5, margin: [0, 8, 0, 6] },
     },
     content: [
       { text: `${orgName} — ${dateLabel}`, style: 'h1' },
@@ -74,15 +92,16 @@ export async function renderKitchenDailyPDF(input: {
       {
         table: {
           headerRows: 1,
-          widths: ['36%','32%','16%','16%'],
+          widths: ['36%', '32%', '16%', '16%'],
           body: table1Body,
         },
         layout: {
-          fillColor: (rowIndex: number) => (rowIndex === 0 ? '#FAFAFA' : (rowIndex % 2 ? '#FCFCFD' : null)),
+          fillColor: (rowIndex: number) =>
+            rowIndex === 0 ? '#FAFAFA' : rowIndex % 2 ? '#FCFCFD' : undefined,
           hLineColor: '#E7E7EA',
           vLineColor: '#E7E7EA',
         },
-        margin: [0,0,0,10],
+        margin: [0, 0, 0, 10],
       },
 
       {
@@ -118,23 +137,13 @@ export async function renderKitchenDailyPDF(input: {
   };
 
   const pdfDoc = printer.createPdfKitDocument(docDefinition);
-  const chunks: Buffer[] = [];
-    return await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
 
-    pdfDoc.on('data', (c: Uint8Array) => chunks.push(c));
-    pdfDoc.on('end', () => {
-      // Склеиваем Uint8Array[] вручную в Buffer
-      let total = 0;
-      for (const c of chunks) total += c.length;
-      const out = Buffer.allocUnsafe(total);
-      let offset = 0;
-      for (const c of chunks) { out.set(c, offset); offset += c.length; }
-      resolve(out);
-    });
+  // Сбор буфера без конфликтов типов
+  return await new Promise<Buffer>((resolve, reject) => {
+    // у pdfkit есть удобный метод getBuffer; у него нет d.ts — игнорим тайпинги
+    // @ts-ignore
+    pdfDoc.getBuffer((b: Buffer) => resolve(b));
     pdfDoc.on('error', reject);
     pdfDoc.end();
   });
-
-
 }
