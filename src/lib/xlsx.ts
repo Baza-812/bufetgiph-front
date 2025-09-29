@@ -55,13 +55,13 @@ export async function renderKitchenDailyXLSX(opts: {
 
   // строки
   for (const r of rows) {
-    ws.addRow({
-      fullName: r.fullName || '',
-      mealBox:  r.mealBox  || '',
-      extra1:   r.extra1   || '',
-      extra2:   r.extra2   || '',
-    });
-  }
+  ws.addRow([
+    r.fullName || '',
+    r.mealBox  || '',
+    r.extra1   || '',
+    r.extra2   || '',
+  ]);
+}
 
   // автофильтр и формат
   ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: 4 } };
@@ -107,8 +107,10 @@ export async function renderKitchenDailyXLSX(opts: {
     rowPtr++; // пустая строка между секциями
   }
 
-  w2.getColumn(1).width = 50;
-  w2.getColumn(2).width = 12;
+  ws.getColumn(1).alignment = { wrapText: true };
+ws.getColumn(2).alignment = { wrapText: true };
+ws.getColumn(3).alignment = { wrapText: true };
+ws.getColumn(4).alignment = { wrapText: true };
 
   // ===== Генерация =====
   const buf = await wb.xlsx.writeBuffer();
