@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { base, TBL, selectAll } from '@/lib/airtable';
 import { put } from '@vercel/blob';
 import Airtable from 'airtable';
-import { renderKitchenDailyPDF } from '@/lib/pdf';
+import { renderKitchenDailyXLSX } from '@/lib/xlsx';
 
 export const runtime = 'nodejs';
 
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
       const { rows, counters } = await collectKitchenData(orgId, dateISO);
 
       // 3) Рендер PDF (pdf-lib)
-      const pdfBuf = await renderKitchenDailyPDF({
+      const xlsxBuf = await renderKitchenDailyXLSX({
         orgName,
         dateLabel: toRu(dateISO),
         rows,
@@ -57,14 +57,16 @@ export async function POST(req: NextRequest) {
       });
 
       // 4) Загрузка в Vercel Blob
-      const filename = `${safe(orgName)}_${dateISO}_${slug}.pdf`.replace(/\s+/g, '_');
-      const blob = await put(`reports/${filename}`, pdfBuf, {
-        access: 'public',
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        contentType: 'application/pdf',
-        token: process.env.BLOB_READ_WRITE_TOKEN!,
-      });
+      const filename = `${safe(orgName)}_${dateISO}_${slug}.xlsx`.replace(/\s+/g, '_');
+
+const blob = await put(`reports/${filename}`, xlsxBuf, {
+  access: 'public',
+  addRandomSuffix: false,
+  allowOverwrite: true,
+  contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  token: process.env.BLOB_READ_WRITE_TOKEN!,
+});
+
 
       // 5) Запись в Reports (Airtable)
       const subj = `Заказы на ${toRu(dateISO)} — ${orgName}`;
@@ -72,10 +74,10 @@ export async function POST(req: NextRequest) {
         `Добрый день!`,
         ``,
         `Во вложении отчёт по заказам на ${toRu(dateISO)} для ${orgName}.`,
-        `• Таблица 1 — сотрудники и их заказы`,
-        `• Таблица 2 — агрегаты по блюдам (салаты, супы, блинчики/запеканки, милбоксы, выпечка, фрукты/напитки).`,
+        `• Лист «Сотрудники» — сотрудники и их заказы`,
+        `• Лист «Агрегаты» — свод по блюдам (салаты, супы, блинчики/запеканки, милбоксы, выпечка, фрукты/напитки).`,
         ``,
-        `Если нужны корректировки — напишите в ответ.`,
+        `Хорошего дня.`,
       ].join('\n');
 
       // --- запись в Reports (с ослаблением типов SDK) ---
