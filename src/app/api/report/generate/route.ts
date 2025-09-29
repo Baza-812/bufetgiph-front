@@ -200,18 +200,23 @@ function makeOrgResolver(all: Airtable.Record<any>[]) {
 function getStr(r: Airtable.Record<any>, names: string[]): string | undefined {
   for (const n of names) {
     const v = r.get(n);
-    if (typeof v === 'string' && v.trim() !== '') return v;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (s) return s;
+    } else if (Array.isArray(v) && v.length > 0) {
+      // Lookup/rollup часто отдают массив строк
+      const first = v[0];
+      if (typeof first === 'string' && first.trim() !== '') return first.trim();
+      // иногда в массиве объекты с полем name/text — подстрахуемся
+      if (first && typeof first === 'object') {
+        const s = (first as any).name ?? (first as any).text ?? '';
+        if (typeof s === 'string' && s.trim() !== '') return s.trim();
+      }
+    }
   }
   return undefined;
 }
-function getNum(r: Airtable.Record<any>, names: string[]): number | undefined {
-  for (const n of names) {
-    const v = r.get(n);
-    const num = typeof v === 'number' ? v : (typeof v === 'string' ? Number(v) : NaN);
-    if (!Number.isNaN(num)) return num;
-  }
-  return undefined;
-}
+
 function getLinks(r: Airtable.Record<any>, names: string[]): string[] {
   for (const n of names) {
     const v = r.get(n);
