@@ -291,7 +291,7 @@ export default function QuizClient() {
           <Panel>
             <img
               src={QUIZ_BANNER_SRC}
-              alt="Информация на день"
+              alt="Неделя китайской кухни"
               className="mb-2 w-full rounded-2xl border border-white/10"
             />
           </Panel>
