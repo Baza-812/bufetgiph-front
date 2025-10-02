@@ -22,6 +22,9 @@ const SOUP_CATS = ['Soup'];
 const MAIN_CATS = ['Main'];
 const SIDE_CATS = ['Side'];
 
+/** Путь к баннеру в /public */
+const QUIZ_BANNER_SRC = '/china_banner.jpg';
+
 /** Черновик, который хранится в localStorage (у вас дата обязательна) */
 type Draft = {
   date: string;
@@ -284,6 +287,15 @@ export default function QuizClient() {
       {/* Шаг 1 — Витрина */}
       {!loading && !err && step === '1' && (
         <>
+          {/* Баннер над меню — один и тот же для всех дней */}
+          <Panel>
+            <img
+              src={QUIZ_BANNER_SRC}
+              alt="Информация на день"
+              className="mb-2 w-full rounded-2xl border border-white/10"
+            />
+          </Panel>
+          
           <Showcase byCat={byCat} />
           <div className="flex gap-3">
             <Button onClick={()=>go('2')}>Далее</Button>
