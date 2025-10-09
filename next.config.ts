@@ -12,11 +12,10 @@ const nextConfig = {
 
   async rewrites() {
     return {
-      // ВАЖНО: beforeFiles — переписывает ДО матчей файловой системы,
-      // значит ЛЮБОЙ /api/* пойдёт на backend, а не на локальные API-роуты фронта
+      // Прокси на backend ПОД ОТДЕЛЬНЫМ ПРЕФИКСОМ, чтобы не пересекаться с локальными /api/* фронта
       beforeFiles: [
         {
-          source: '/api/:path*',
+          source: '/backend/:path*',
           destination: `${API_HOST}/api/:path*`,
         },
       ],
