@@ -12,12 +12,9 @@ module.exports = {
 
   async rewrites() {
     return {
-      // Прокси на backend под отдельным префиксом — без конфликтов с локальными /api/*
+      // префикс без конфликтов с локальными /api/*
       beforeFiles: [
-        {
-          source: '/backend/:path*',
-          destination: `${API_HOST}/api/:path*`,
-        },
+        { source: '/backend/:path*', destination: `${API_HOST}/api/:path*` },
       ],
     };
   },
