@@ -1,21 +1,23 @@
-// next.config.js
-const isPreview =
-  process.env.VERCEL_ENV === 'preview' || process.env.NODE_ENV !== 'production';
-
-const API_HOST = isPreview
-  ? 'https://dev-bufetgiph-api.vercel.app'   // dev API
-  : 'https://bufetgiph-api.vercel.app';      // prod API
-
-module.exports = {
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // чтобы линт не валил прод-сборку
   eslint: { ignoreDuringBuilds: true },
+
+  // важное: не бандлить pdf-пакеты, а тянуть их из node_modules на рантайме
   serverExternalPackages: ['pdfmake', 'pdfkit', '@foliojs-fork/fontkit'],
 
   async rewrites() {
+    // локальные /api маршруты (например, /api/report/generate) обрабатываются самим приложением,
+    // всё остальное под /api/* уходит фолбэком на внешний продовый API
     return {
-      // префикс без конфликтов с локальными /api/*
-      beforeFiles: [
-        { source: '/backend/:path*', destination: `${API_HOST}/api/:path*` },
+      fallback: [
+        {
+          source: '/api/:path*',
+          destination: 'https://bufetgiph-api.vercel.app/api/:path*',
+        },
       ],
     };
   },
 };
+
+export default nextConfig;
