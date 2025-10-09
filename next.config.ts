@@ -1,4 +1,9 @@
 /** @type {import('next').NextConfig} */
+const isPreview = process.env.VERCEL_ENV === 'preview'; // dev-стенд на Vercel
+const API_HOST = isPreview
+  ? 'https://dev-bufetgiph-api.vercel.app'   // ← dev API
+  : 'https://bufetgiph-api.vercel.app';      // ← prod API
+
 const nextConfig = {
   // чтобы линт не валил прод-сборку
   eslint: { ignoreDuringBuilds: true },
@@ -7,13 +12,14 @@ const nextConfig = {
   serverExternalPackages: ['pdfmake', 'pdfkit', '@foliojs-fork/fontkit'],
 
   async rewrites() {
-    // локальные /api маршруты (например, /api/report/generate) обрабатываются самим приложением,
-    // всё остальное под /api/* уходит фолбэком на внешний продовый API
+    // 1) все локальные /api роуты, которые реально существуют в Next, обрабатываются локально
+    // 2) всё остальное под /api/* уходит прокси на нужный API-хост (dev или prod)
     return {
+      // если хочешь гарантированно проксировать ВСЁ, можно использовать beforeFiles вместо fallback
       fallback: [
         {
           source: '/api/:path*',
-          destination: 'https://bufetgiph-api.vercel.app/api/:path*',
+          destination: `${API_HOST}/api/:path*`,
         },
       ],
     };
