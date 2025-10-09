@@ -99,7 +99,7 @@ export default function HRConsolePage() {
       if (!org) return;
       try {
         setErr('');
-        const js = await fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}&as=hr`);
+        const js = await fetchJSON<DatesResp>(`/backend/dates?org=${encodeURIComponent(org)}&as=hr`);
         if (!js.ok) throw new Error((js as unknown as { error?: string }).error || 'Ошибка загрузки дат');
         setDates(js.dates || []);
         if (!date && js.dates?.length) setDate(js.dates[0]);
