@@ -31,13 +31,13 @@ export default function OrderClient() {
   // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
-  const [busyReady, setBusyReady] = useState(false); // ← готовность статуса занятости/серости
+  const [busyReady, setBusyReady] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null); // для модалки
   const [error, setError] = useState('');
 
-  // 1) забираем креды из query/localStorage (один раз)
+  // 1) креды из query/localStorage
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
@@ -67,7 +67,7 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // Перезагрузка «занятости» одним запросом /api/busy
+  // 3) перезагрузка статуса «занято»
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
     setBusyReady(false);
@@ -76,15 +76,33 @@ export default function OrderClient() {
         employeeID, org, token,
         dates: dates.join(','),
       });
-      const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
+      // ОЖИДАЕМ ФОРМАТ: busy[date] = { exists: boolean, orderId: string|null }
+      const r = await fetchJSON<{ ok: boolean; busy: Record<string, { exists: boolean; orderId: string | null }> }>(
+        `/api/busy?${qs.toString()}`
+      );
+
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        map[d] = r.busy[d]
-          ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
-          : { ok: true, summary: null };
+        const cell = r.busy?.[d];
+        if (cell?.exists) {
+          map[d] = {
+            ok: true,
+            summary: {
+              orderId: cell.orderId || '__has__',
+              fullName: '',
+              date: d,
+              mealBox: '',
+              extra1: '',
+              extra2: '',
+            } as any,
+          };
+        } else {
+          map[d] = { ok: true, summary: null };
+        }
       }
       setBusy(map);
-    } catch {
+    } catch (e) {
+      // на ошибке — всё свободно (чтоб не стопорить)
       const map: Record<string, SingleResp> = {};
       for (const d of dates) map[d] = { ok: false, summary: null };
       setBusy(map);
@@ -93,10 +111,9 @@ export default function OrderClient() {
     }
   }, [dates, employeeID, org, token]);
 
-  // первичная загрузка busy
   useEffect(() => { reloadBusy(); }, [reloadBusy]);
 
-  // обновлять при возвращении на вкладку (после квиза)
+  // обновить при возвращении на вкладку (после квиза)
   useEffect(() => {
     const onFocus = () => { reloadBusy(); };
     window.addEventListener('focus', onFocus);
@@ -107,7 +124,7 @@ export default function OrderClient() {
 
   // 4) клик по дате
   async function handlePickDate(d: string) {
-    // Если занятость ещё не подгрузилась — проверим точечно, чтобы не улететь в квиз по ошибке
+    // Если «серость» ещё не готова — проверим точечно, чтобы не улететь в квиз
     if (!busyReady) {
       try {
         const u = new URL('/api/hr_orders', window.location.origin);
@@ -118,32 +135,22 @@ export default function OrderClient() {
         u.searchParams.set('date', d);
         const r = await fetchJSON<SingleResp>(u.toString());
         if (r?.summary?.orderId) {
-          setSelected(d); // есть заказ — модалка
+          setSelected(d);
           return;
         }
-        // свободно — квиз
-        const q = new URL('/order/quiz', window.location.origin);
-        q.searchParams.set('date', d);
-        q.searchParams.set('step', '1');
-        q.searchParams.set('org', org);
-        q.searchParams.set('employeeID', employeeID);
-        q.searchParams.set('token', token);
-        router.push(q.toString());
-        return;
-      } catch {
-        // на ошибке — пускаем в квиз, чтобы не стопорить пользователя
-        const q = new URL('/order/quiz', window.location.origin);
-        q.searchParams.set('date', d);
-        q.searchParams.set('step', '1');
-        q.searchParams.set('org', org);
-        q.searchParams.set('employeeID', employeeID);
-        q.searchParams.set('token', token);
-        router.push(q.toString());
-        return;
-      }
+      } catch {}
+      // свободно → квиз
+      const q = new URL('/order/quiz', window.location.origin);
+      q.searchParams.set('date', d);
+      q.searchParams.set('step', '1');
+      q.searchParams.set('org', org);
+      q.searchParams.set('employeeID', employeeID);
+      q.searchParams.set('token', token);
+      router.push(q.toString());
+      return;
     }
 
-    // Когда занятость известна — решаем локально
+    // Если занято — модалка, иначе — квиз
     const isBusy = Boolean(busy[d]?.summary);
     if (!isBusy) {
       const q = new URL('/order/quiz', window.location.origin);
@@ -155,7 +162,7 @@ export default function OrderClient() {
       router.push(q.toString());
       return;
     }
-    setSelected(d); // занято — модалка
+    setSelected(d);
   }
 
   return (
@@ -166,7 +173,6 @@ export default function OrderClient() {
         </p>
       </Panel>
 
-      {/* креды вручную — на случай, если пришли без query */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -190,7 +196,7 @@ export default function OrderClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map(d => {
-            const has = Boolean(busy[d]?.summary); // СЕРОЕ если заказ уже есть
+            const has = Boolean(busy[d]?.summary); // серое если заказ есть
             const label = fmtDayLabel(d);
             return (
               <Button
@@ -198,7 +204,7 @@ export default function OrderClient() {
                 onClick={() => handlePickDate(d)}
                 className="w-full"
                 variant={has ? 'ghost' : 'primary'}
-                disabled={!busyReady} // ← до загрузки «серости» клики блокируем
+                disabled={!busyReady}  // пока серость не готова — блокируем клики
               >
                 {label}
               </Button>
@@ -206,7 +212,6 @@ export default function OrderClient() {
           })}
         </div>
 
-        {/* Легенда */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
             <span className="inline-block w-3 h-3 rounded bg-brand-500" /> свободно
@@ -217,7 +222,6 @@ export default function OrderClient() {
         </div>
       </Panel>
 
-      {/* Модалка со составом — показываем только когда выбран день */}
       {selected && (
         <DateModal
           iso={selected}
@@ -233,7 +237,7 @@ export default function OrderClient() {
   );
 }
 
-/* ——— Модалка: состав + действия — всегда остаётся открытой; показывает лоадер, пока тянем детали ——— */
+/* ——— Модалка — догружает состав по orderId или по дате/кредам ——— */
 function DateModal({
   iso, employeeID, org, token, info, onClose, onChanged,
 }: {
@@ -246,14 +250,31 @@ function DateModal({
   const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
   const [loading, setLoading] = useState(false);
 
-  // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
   useEffect(() => {
     let ignore = false;
     (async () => {
-      const needFetch = !info?.summary || info.summary.orderId === '__has__';
-      if (!needFetch) { setSum(info!.summary); return; }
+      // если уже есть нормальный orderId — используем
+      if (info?.summary && info.summary.orderId && info.summary.orderId !== '__has__') {
+        setSum(info.summary);
+        return;
+      }
+
+      setLoading(true); setErr('');
       try {
-        setLoading(true); setErr('');
+        // 1) пробуем догрузить по orderId из busy (если пришёл)
+        const orderIdFromBusy = info && (info as any).summary?.orderId && (info as any).summary.orderId !== '__has__'
+          ? (info as any).summary.orderId
+          : undefined;
+
+        if (orderIdFromBusy) {
+          const u = new URL('/api/order_summary', window.location.origin);
+          u.searchParams.set('orderId', orderIdFromBusy);
+          const r = await fetchJSON<{ ok:boolean; summary: SingleResp['summary'] }>(u.toString());
+          if (!ignore) setSum(r?.summary || null);
+          return;
+        }
+
+        // 2) иначе — точечная проверка по дате/кредам
         const u = new URL('/api/hr_orders', window.location.origin);
         u.searchParams.set('mode','single');
         u.searchParams.set('employeeID', employeeID);
