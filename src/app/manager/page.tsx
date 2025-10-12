@@ -1,9 +1,8 @@
-// src/app/manager/page.tsx
 'use client';
 
 import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import ManagerClient from './ManagerClient';
+import ManagerDatesClient from './ManagerDatesClient';
 
 export default function ManagerPageWrapper() {
   return (
@@ -19,5 +18,5 @@ function ManagerPage() {
   const employeeID = sp.get('employeeID') || '';
   const token = sp.get('token') || '';
 
-  return <ManagerClient org={org} employeeID={employeeID} token={token} />;
+  return <ManagerDatesClient org={org} employeeID={employeeID} token={token} />;
 }
