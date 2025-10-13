@@ -30,6 +30,8 @@ type PrefillResp =
     }
   | { ok: false; error: string };
 
+type PrefillBox = { mainId?: string; sideId?: string; qty?: number };
+
 type BoxRow = { key: string; mainId: string | null; sideId: string | null; qty: number };
 
 function uuid() {
@@ -169,10 +171,15 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         // boxes
         const bxs: BoxRow[] = [];
         if (Array.isArray(s.boxes)) {
-          s.boxes.forEach((b) =>
-            bxs.push({ key: uuid(), mainId: b.mainId || null, sideId: b.sideId || null, qty: Math.max(0, b.qty || 0) }),
-          );
-        } else if (Array.isArray(s.lines)) {
+  for (const b of s.boxes as PrefillBox[]) {
+    bxs.push({
+      key: uuid(),
+      mainId: (b.mainId as string) || null,
+      sideId: (b.sideId as string) || null,
+      qty: Math.max(0, Number(b.qty || 0)),
+    });
+  }
+} else if (Array.isArray(s.lines)) {
           // сгруппируем как main+side, если удастся
           s.lines
             .filter((l) => l.type === 'box' || l.type === 'mealbox')
