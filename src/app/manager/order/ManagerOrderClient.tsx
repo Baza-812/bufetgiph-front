@@ -219,24 +219,29 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         const bxs: BoxRow[] = [];
         if (Array.isArray(s.boxes)) {
           (s.boxes as PrefillBox[]).forEach((b: PrefillBox) => {
-            bxs.push({
-              key: uuid(),
-              mainId: (b.mainId as string) || null,
-              sideId: (b.sideId as string) || null,
-              qty: Math.max(0, Number(b.qty || 0)),
-            });
-          });
+  const allow = mainAllowsSide((b.mainId as string) || null);
+  bxs.push({
+    key: uuid(),
+    mainId: (b.mainId as string) || null,
+    sideId: allow ? ((b.sideId as string) || null) : null, // ← чистим гарнир, если не нужен
+    qty: Math.max(0, Number(b.qty || 0)),
+  });
+});
+
         } else if (Array.isArray(s.lines)) {
           ((s.lines as PrefillLine[]) || [])
-            .filter((l: PrefillLine) => l.type === 'box' || l.type === 'mealbox')
-            .forEach((l: PrefillLine) => {
-              bxs.push({
-                key: uuid(),
-                mainId: (l.mainId as string) || null,
-                sideId: (l.sideId as string) || null,
-                qty: Math.max(0, Number(l.qty || 0)),
-              });
-            });
+  .filter((l: PrefillLine) => l.type === 'box' || l.type === 'mealbox')
+  .forEach((l: PrefillLine) => {
+    const mainId = (l.mainId as string) || null;
+    const allow = mainAllowsSide(mainId);
+    bxs.push({
+      key: uuid(),
+      mainId,
+      sideId: allow ? ((l.sideId as string) || null) : null,
+      qty: Math.max(0, Number(l.qty || 0)),
+    });
+  });
+
         }
         if (bxs.length) setBoxes(bxs);
 
@@ -283,12 +288,16 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     setDone(null);
 
     const cleanedBoxes = boxes
-      .map((b) => ({
-        mainId: b.mainId || undefined,
-        sideId: b.sideId || undefined,
-        qty: Math.max(0, Math.floor(b.qty || 0)),
-      }))
-      .filter((b) => (b.mainId || b.sideId) && b.qty > 0);
+  .map((b) => {
+    const allow = mainAllowsSide(b.mainId);
+    return {
+      mainId: b.mainId || undefined,
+      sideId: allow ? (b.sideId || undefined) : undefined, // ← очищаем гарнир, если он не нужен
+      qty: Math.max(0, Math.floor(b.qty || 0)),
+    };
+  })
+  .filter((b) => (b.mainId || b.sideId) && b.qty > 0);
+
 
     const pack = (m: Record<string, number>) =>
       Object.entries(m)
