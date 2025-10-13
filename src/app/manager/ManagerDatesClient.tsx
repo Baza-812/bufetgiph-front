@@ -37,7 +37,6 @@ async function getManagerSummary(org: string, employeeID: string, token: string,
     const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
     if (!r2.ok) return null;
     const j2 = await r2.json().catch(() => ({}));
-    // попробуем нормализовать к единому виду
     if (j2?.summary) return j2.summary as ManagerOrderSummary;
     if (j2?.order) {
       return {
