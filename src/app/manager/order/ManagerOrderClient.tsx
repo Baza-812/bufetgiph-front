@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
+import { useRouter } from 'next/navigation';
 
 type MenuItem = {
   id: string;
@@ -10,6 +11,7 @@ type MenuItem = {
   type: 'main' | 'side' | 'extra';
   category?: string | null;
   description?: string | null;
+  noSide?: boolean; // ← флаг «гарнир не нужен»
 };
 
 type MenuRespLoose =
@@ -70,7 +72,7 @@ async function getManagerSummary(org: string, employeeID: string, token: string,
   return null;
 }
 
-// расширенный нормализатор меню
+// расширенный нормализатор меню (+ флаг noSide для «гарнирных»)
 function normMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
 
@@ -101,6 +103,21 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
     return 'extra';
   };
 
+  const detectNoSide = (f: any): boolean => {
+    // Явные флаги в данных (если есть)
+    if (f?.RequiresSide === false || f?.SideRequired === false || f?.NeedSide === false) return true;
+    if (f?.RequiresSide === 'false' || f?.SideRequired === 'false' || f?.NeedSide === 'false') return true;
+
+    const name =
+      f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'] ?? '';
+    const cat =
+      f?.Category ?? f?.category ?? f?.['Dish Category'] ?? f?.['Menu Category'] ?? '';
+
+    const txt = `${name} ${cat}`.toLowerCase();
+    // «гарнирное», «без гарнира», английские эвристики
+    return /(гарнирн|без\s*гарнира|garnir|one\s*course|single\s*dish)/i.test(txt);
+  };
+
   const push = (arr: any[] | undefined, enforcedType?: MenuItem['type']) => {
     (arr || []).forEach((raw) => {
       const f = raw?.fields || raw;
@@ -112,13 +129,18 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
         f?.Category || f?.category || f?.['Extra Category'] || f?.['Dish Category'] || f?.['Menu Category'] || null;
       const desc = f?.Description || f?.description || null;
       const type = enforcedType ?? detectType(f);
-      out.push({
+
+      const item: MenuItem = {
         id: String(id),
         name: String(name),
         type,
         category: cat ? String(cat) : null,
         description: desc ? String(desc) : null,
-      });
+      };
+      if (item.type === 'main') {
+        item.noSide = detectNoSide(f);
+      }
+      out.push(item);
     });
   };
 
@@ -140,6 +162,7 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
 
 export default function ManagerOrderClient(props: { org: string; employeeID: string; token: string; date: string }) {
   const { org, employeeID, token, date } = props;
+  const router = useRouter();
 
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -160,20 +183,11 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
   const sou = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('soup')), [menu]);
   const pas = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('pastry')), [menu]);
 
-  // гарнир не требуется для этих mains
-  const noSideMainIds = useMemo(() => {
-    const set = new Set<string>();
-    const re = /(garnir|гарнирн|без\s*гарнира|one\s*course|single\s*dish)/i;
-    mains.forEach((m) => {
-      const txt = `${m.name || ''} ${m.category || ''}`;
-      if (re.test(txt)) set.add(m.id);
-    });
-    return set;
-  }, [mains]);
-
   function mainAllowsSide(mainId: string | null) {
     if (!mainId) return true;
-    return !noSideMainIds.has(mainId);
+    const m = mains.find((x) => x.id === mainId);
+    if (!m) return true;
+    return !m.noSide;
   }
 
   function setQty(map: Record<string, number>, setMap: (v: Record<string, number>) => void, id: string, qty: number) {
@@ -300,6 +314,16 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
       });
       if (!resp.ok) throw new Error(resp.error || 'Ошибка сохранения');
       setDone({ orderId: resp.orderId || '—' });
+
+      // → сразу вернуться к выбору даты
+      const u = new URL('/manager', window.location.origin);
+      u.searchParams.set('org', org);
+      u.searchParams.set('employeeID', employeeID);
+      u.searchParams.set('token', token);
+      // небольшая задержка, чтобы юзер увидел «сохранено»
+      setTimeout(() => {
+        window.location.href = u.toString();
+      }, 600);
     } catch (e: any) {
       setError(e.message || String(e));
     } finally {
@@ -307,9 +331,24 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     }
   }
 
+  // Кнопка «Назад» вверху
+  function goBack() {
+    const u = new URL('/manager', window.location.origin);
+    u.searchParams.set('org', org);
+    u.searchParams.set('employeeID', employeeID);
+    u.searchParams.set('token', token);
+    router.push(u.toString());
+  }
+
   return (
     <main className="p-4 space-y-6">
-      <Panel title={`Заказ менеджера на ${date || '—'}`}>
+      <div className="flex justify-between items-center">
+        <Panel title={`Заказ менеджера на ${date || '—'}`} />
+        <div className="flex-1" />
+        <Button variant="ghost" onClick={goBack}>Назад</Button>
+      </div>
+
+      <Panel title="">
         {/* Zapekanka */}
         <section className="space-y-2">
           <div className="text-white font-semibold">Запеканки и блинчики</div>
