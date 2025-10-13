@@ -21,9 +21,13 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-function fmtDateHuman(iso: string) {
-  const [y, m, d] = iso.split('-');
-  return `${d}.${m}`;
+function fmtBtnLabel(iso: string) {
+  const d = new Date(iso);
+  // например: "Вт, 14.10"
+  const wd = d.toLocaleDateString('ru-RU', { weekday: 'short' }); // вт, ср, чт...
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${wd[0].toUpperCase()}${wd.slice(1)}, ${dd}.${mm}`;
 }
 
 export default function ManagerDatesClient(props: { org: string; employeeID: string; token: string }) {
@@ -38,7 +42,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
     summary: null,
   });
 
-  // 1) получаем доступные даты (HR-окно, чтобы «сегодня» было до HR cutoff)
+  // 1) доступные даты (HR окно)
   useEffect(() => {
     if (!org || !employeeID || !token) return;
     fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}&as=hr`)
@@ -46,7 +50,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
       .catch(() => setDates([]));
   }, [org, employeeID, token]);
 
-  // 2) для каждой даты проверяем — есть ли уже менеджерский заказ
+  // 2) статус по датам — есть ли уже заказ менеджера
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -72,14 +76,21 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
     };
   }, [org, employeeID, token, dates]);
 
-  function colorFor(d: string) {
-    // жёлтая — заказ есть; серая — нет
-    return status[d] === 'has' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-neutral-800 hover:bg-neutral-700';
+  // ! Инвертируем цвета:
+  //  - свободно (нет заказа)  -> ЖЁЛТАЯ
+  //  - заказ уже есть         -> СЕРАЯ
+  function classesFor(d: string) {
+    const common =
+      'px-5 py-3 rounded-full font-semibold transition-colors disabled:opacity-50';
+    if (status[d] === 'has') {
+      return `${common} bg-neutral-700 text-white hover:bg-neutral-600`;
+    }
+    return `${common} bg-amber-500 text-black hover:bg-amber-400`;
   }
 
   async function onClickDay(d: string) {
     if (status[d] === 'has') {
-      // показать модалку с составом
+      // показать модалку
       try {
         const url = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
           employeeID,
@@ -91,7 +102,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
         setModal({ open: true, date: d, summary: null });
       }
     } else {
-      // перейти к созданию заказа
+      // переход к форме
       const u = new URL('/manager/order', window.location.origin);
       u.searchParams.set('org', org);
       u.searchParams.set('employeeID', employeeID);
@@ -122,7 +133,9 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderId: modal.summary.orderId, org, employeeID, token }),
     }).catch(() => {});
-    if (modal.date) setStatus((s) => ({ ...s, [modal.date!]: 'none' }));
+    if (modal.date) setStatus((s) => ({ ...s, [modal.date!]: 'has' /* сервер может ещё держать флаг */ }));
+    // Лучше форс-рефреш статуса:
+    setStatus((s) => ({ ...s, [modal.date!]: 'none' }));
     closeModal();
   }
 
@@ -131,39 +144,48 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
       <Panel title="Выберите дату">
         <div className="flex flex-wrap gap-3">
           {dates.map((d) => (
-            <button
-              key={d}
-              className={`px-4 py-3 rounded-lg text-white ${colorFor(d)}`}
-              onClick={() => onClickDay(d)}
-            >
-              {fmtDateHuman(d)}
+            <button key={d} className={classesFor(d)} onClick={() => onClickDay(d)}>
+              {fmtBtnLabel(d)}
             </button>
           ))}
           {!dates.length && <div className="text-white/60">Нет доступных дат</div>}
         </div>
-        <div className="text-xs text-white/50 mt-2">Серые — свободно. Жёлтые — заказ уже есть.</div>
+        <div className="text-xs text-white/50 mt-3 flex gap-6 items-center">
+          <span className="inline-flex items-center gap-2">
+            <span className="inline-block w-4 h-2 rounded-full bg-amber-500" /> свободно
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span className="inline-block w-4 h-2 rounded-full bg-neutral-600" /> уже заказано
+          </span>
+        </div>
       </Panel>
 
       {modal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="bg-neutral-900 border border-white/10 rounded-2xl p-4 w-full max-w-xl">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-lg font-semibold">
-                Заказ на {modal.date ? fmtDateHuman(modal.date) : ''}
-              </div>
-              <button className="text-white/50 hover:text-white" onClick={closeModal}>Закрыть</button>
+              <div className="text-lg font-semibold">Состав заказа — {modal.date}</div>
+              <button className="text-white/50 hover:text-white" onClick={closeModal}>
+                Закрыть
+              </button>
             </div>
             {modal.summary ? (
               <div className="space-y-2 text-white/90">
-                {(modal.summary.lines || []).map((t, i) => <div key={i}>• {t}</div>)}
+                {(modal.summary.lines || []).map((t, i) => (
+                  <div key={i}>• {t}</div>
+                ))}
               </div>
             ) : (
               <div className="text-white/70">Не удалось получить состав заказа.</div>
             )}
             <div className="flex gap-2 pt-4">
               <Button onClick={closeModal}>ОК</Button>
-              <Button variant="ghost" onClick={onEdit}>Изменить</Button>
-              <Button variant="danger" onClick={onCancel} disabled={!modal.summary?.orderId}>Отменить</Button>
+              <Button variant="ghost" onClick={onEdit}>
+                Изменить
+              </Button>
+              <Button variant="danger" onClick={onCancel} disabled={!modal.summary?.orderId}>
+                Отменить
+              </Button>
             </div>
           </div>
         </div>
