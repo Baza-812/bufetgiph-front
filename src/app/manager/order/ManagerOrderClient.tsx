@@ -16,6 +16,16 @@ type MenuRespLoose =
   | { ok: boolean; date: string; items: any[] }
   | { ok: boolean; date: string; mains: any[]; sides: any[]; extras: any[] };
 
+type PrefillLine = {
+  itemId?: string;
+  mainId?: string;
+  sideId?: string;
+  qty: number;
+  type: string;
+  category?: string;
+};
+
+
 type PrefillResp =
   | {
       ok: boolean;
@@ -180,11 +190,18 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     });
   }
 } else if (Array.isArray(s.lines)) {
-          // сгруппируем как main+side, если удастся
-          s.lines
-            .filter((l) => l.type === 'box' || l.type === 'mealbox')
-            .forEach((l) => bxs.push({ key: uuid(), mainId: l.mainId || null, sideId: l.sideId || null, qty: l.qty || 0 }));
-        }
+  ((s.lines as PrefillLine[]) || [])
+    .filter((l: PrefillLine) => l.type === 'box' || l.type === 'mealbox')
+    .forEach((l: PrefillLine) => {
+      bxs.push({
+        key: uuid(),
+        mainId: (l.mainId as string) || null,
+        sideId: (l.sideId as string) || null,
+        qty: Math.max(0, Number(l.qty || 0)),
+      });
+    });
+}
+
         if (bxs.length) setBoxes(bxs);
 
         // extras по категориям
