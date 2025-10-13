@@ -58,49 +58,82 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// нормализация меню
 function normMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
-  const push = (arr: any[] | undefined, type: MenuItem['type']) => {
+
+  // детектор типа по разным полям/значениям
+  const detectType = (f: any): MenuItem['type'] => {
+    // 1) Явные поля
+    const rawType =
+      f?.Type ?? f?.type ?? f?.Kind ?? f?.kind ?? f?.Course ?? f?.course ?? f?.Group ?? f?.group ?? f?.['Dish Type'];
+    if (rawType) {
+      const t = String(rawType).toLowerCase();
+      if (/(main|основ|второе)/.test(t)) return 'main';
+      if (/(side|гарнир)/.test(t)) return 'side';
+      if (/(extra|доп|салат|суп|запеканк|выпечк|pastry|salad|soup|zapekanka)/.test(t)) return 'extra';
+    }
+
+    // 2) Категория может нести смысл типа
+    const rawCat =
+      f?.Category ?? f?.category ?? f?.['Extra Category'] ?? f?.['Dish Category'] ?? f?.['Menu Category'];
+    if (rawCat) {
+      const c = String(rawCat).toLowerCase();
+      if (/(main|основ|второе)/.test(c)) return 'main';
+      if (/(side|гарнир)/.test(c)) return 'side';
+      if (/(extra|доп|салат|суп|запеканк|выпечк|pastry|salad|soup|zapekanka)/.test(c)) return 'extra';
+    }
+
+    // 3) Фолбэк — по названию (крайняя мера)
+    const rawName = f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'];
+    if (rawName) {
+      const n = String(rawName).toLowerCase();
+      if (/(гарнир)/.test(n)) return 'side';
+      if (/(салат|суп|запеканк|блинчик|выпечк|булоч|пирож)/.test(n)) return 'extra';
+      if (/(котлет|куриц|говя|свини|рыб|плов|паста|стейк|биточ)/.test(n)) return 'main';
+    }
+
+    return 'extra';
+  };
+
+  const push = (arr: any[] | undefined, enforcedType?: MenuItem['type']) => {
     (arr || []).forEach((raw) => {
       const f = raw?.fields || raw;
-      const id = raw?.id || f?.id || f?.recordId || '';
+      const id = raw?.id || f?.id || f?.recordId || f?.ID || '';
       if (!id) return;
       const name =
-        f?.Name || f?.name || f?.Title || f?.title || f?.['Dish Name'] || f?.['Meal Name'] || `${type} ${id}`;
-      const cat = f?.Category || f?.category || f?.['Extra Category'] || f?.['Dish Category'] || null;
+        f?.Name || f?.name || f?.Title || f?.title || f?.['Dish Name'] || f?.['Meal Name'] || `#${id}`;
+      const cat =
+        f?.Category || f?.category || f?.['Extra Category'] || f?.['Dish Category'] || f?.['Menu Category'] || null;
       const desc = f?.Description || f?.description || null;
-      out.push({ id: String(id), name: String(name), type, category: cat ? String(cat) : null, description: desc });
+
+      const type = enforcedType ?? detectType(f);
+
+      out.push({
+        id: String(id),
+        name: String(name),
+        type,
+        category: cat ? String(cat) : null,
+        description: desc ? String(desc) : null,
+      });
     });
   };
 
+  // Схема 1: отдельные поля
   if ('mains' in resp || 'sides' in resp || 'extras' in resp) {
     push((resp as any).mains, 'main');
     push((resp as any).sides, 'side');
     push((resp as any).extras, 'extra');
     return out;
   }
+
+  // Схема 2: единый items[]
   if ('items' in resp && Array.isArray((resp as any).items)) {
-    (resp as any).items.forEach((raw: any) => {
-      const f = raw?.fields || raw;
-      const id = raw?.id || f?.id || f?.recordId || '';
-      if (!id) return;
-      let type: MenuItem['type'] = 'extra';
-      const tRaw = f?.Type || f?.type || f?.Kind || f?.kind || '';
-      const t = String(tRaw).toLowerCase();
-      if (t.includes('main') || t.includes('основ')) type = 'main';
-      else if (t.includes('side') || t.includes('гарнир')) type = 'side';
-      else type = 'extra';
-      const name =
-        f?.Name || f?.name || f?.Title || f?.title || f?.['Dish Name'] || f?.['Meal Name'] || `${type} ${id}`;
-      const cat = f?.Category || f?.category || f?.['Extra Category'] || f?.['Dish Category'] || null;
-      const desc = f?.Description || f?.description || null;
-      out.push({ id: String(id), name: String(name), type, category: cat ? String(cat) : null, description: desc });
-    });
-    return out;
+    push((resp as any).items); // типы определим детектором
   }
+
   return out;
 }
+
 
 export default function ManagerOrderClient(props: { org: string; employeeID: string; token: string; date: string }) {
   const { org, employeeID, token, date } = props;
