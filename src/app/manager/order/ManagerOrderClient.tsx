@@ -21,45 +21,56 @@ type PrefillLine = { itemId?: string; mainId?: string; sideId?: string; qty: num
 
 type BoxRow = { key: string; mainId: string | null; sideId: string | null; qty: number };
 
-/** универсальный fetch JSON */
-async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...init });
-  const bodyText = await res.text().catch(() => '');
-  const json = (bodyText && (JSON.parse(bodyText) as any)) || {};
-  if (!res.ok) {
-    const msg = json?.error || bodyText || `${res.status}`;
-    throw new Error(`${init?.method || 'GET'} ${url} -> ${res.status} ${msg}`);
-  }
-  return json as T;
+// ---- helpers -------------------------------------------------------------
+
+function uuid() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2);
 }
 
-/** Фолбэк-получение состава для префилла: /order_manager (GET) → /order_summary */
+async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...init });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`${init?.method || 'GET'} ${url} -> ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+// универсальная загрузка состава заказа менеджера (GET /order_manager -> fallback /order_summary)
 async function getManagerSummary(org: string, employeeID: string, token: string, date: string) {
+  // 1) пробуем /order_manager
+  const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+    employeeID,
+  )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}`;
   try {
-    const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-      employeeID,
-    )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}`;
     const r1 = await fetch(url1, { cache: 'no-store', credentials: 'same-origin' });
     const j1 = await r1.json().catch(() => ({}));
-    if (r1.ok && j1?.summary) return j1.summary;
-    if (j1?.error === 'POST only' || r1.status === 405 || r1.status === 404) {
-      throw new Error('fallback');
+    if (r1.ok && j1?.summary) return j1.summary as any;
+    if (j1?.error !== 'POST only' && r1.status !== 405 && r1.status !== 404) {
+      return null;
     }
   } catch {
-    const url2 = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-      employeeID,
-    )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}&mode=single`;
+    /* fallthrough */
+  }
+
+  // 2) fallback: /order_summary
+  const url2 = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+    employeeID,
+  )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}&mode=single`;
+  try {
     const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
     if (!r2.ok) return null;
     const j2 = await r2.json().catch(() => ({}));
-    if (j2?.summary) return j2.summary;
+    if (j2?.summary) return j2.summary as any;
     if (j2?.order) return { orderId: j2.order.id || j2.order.orderId, lines: j2.lines || [] };
-    return null;
+  } catch {
+    /* no-op */
   }
   return null;
 }
 
-/** Нормализация меню: поддержка разных схем/полей ru/en */
+// расширенный нормализатор меню
 function normMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
 
@@ -117,16 +128,15 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
     push((resp as any).extras, 'extra');
     return out;
   }
+
   if ('items' in resp && Array.isArray((resp as any).items)) {
     push((resp as any).items);
   }
+
   return out;
 }
 
-function uuid() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  return Math.random().toString(36).slice(2);
-}
+// ------------------------------------------------------------------------
 
 export default function ManagerOrderClient(props: { org: string; employeeID: string; token: string; date: string }) {
   const { org, employeeID, token, date } = props;
@@ -145,25 +155,12 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
 
   const mains = useMemo(() => menu.filter((i) => i.type === 'main'), [menu]);
   const sides = useMemo(() => menu.filter((i) => i.type === 'side'), [menu]);
+  const zap = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('zapekanka')), [menu]);
+  const sal = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('salad')), [menu]);
+  const sou = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('soup')), [menu]);
+  const pas = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('pastry')), [menu]);
 
-  const zap = useMemo(
-    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('zapekanka')),
-    [menu],
-  );
-  const sal = useMemo(
-    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('salad')),
-    [menu],
-  );
-  const sou = useMemo(
-    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('soup')),
-    [menu],
-  );
-  const pas = useMemo(
-    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('pastry')),
-    [menu],
-  );
-
-  // набор «основных без гарнира» (гарнирные/one course и т.п.)
+  // гарнир не требуется для этих mains
   const noSideMainIds = useMemo(() => {
     const set = new Set<string>();
     const re = /(garnir|гарнирн|без\s*гарнира|one\s*course|single\s*dish)/i;
@@ -187,7 +184,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     setMap(next);
   }
 
-  // меню
+  // загрузка меню
   useEffect(() => {
     if (!org || !date) return;
     setLoading(true);
@@ -362,4 +359,138 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         {/* Soup */}
         <section className="space-y-2 pt-4">
           <div className="text-white font-semibold">Супы</div>
-          <div className="grid gap
+          <div className="grid gap-2">
+            {sou.map((i) => (
+              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
+                <div>
+                  <div className="text-white">{i.name}</div>
+                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
+                  value={soups[i.id] || 0}
+                  onChange={(e) => setQty(soups, setSoups, i.id, parseInt(e.target.value || '0', 10))}
+                />
+              </label>
+            ))}
+            {!sou.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+          </div>
+        </section>
+
+        {/* Main + Side */}
+        <section className="space-y-2 pt-4">
+          <div className="text-white font-semibold">Основные блюда и гарниры</div>
+          <div className="space-y-3">
+            {boxes.map((b, idx) => {
+              const allowSide = mainAllowsSide(b.mainId);
+              return (
+                <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                  <div className="md:col-span-2">
+                    <div className="text-xs text-white/60 mb-1">Основное блюдо</div>
+                    <select
+                      className="w-full bg-neutral-800 text-white rounded px-2 py-2"
+                      value={b.mainId || ''}
+                      onChange={(e) => {
+                        const newMain = e.target.value || null;
+                        const allow = mainAllowsSide(newMain);
+                        patchBox(b.key, { mainId: newMain, sideId: allow ? b.sideId : null });
+                      }}
+                      disabled={loading}
+                    >
+                      <option value="">— не выбрано —</option>
+                      {mains.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <div className="text-xs text-white/60 mb-1">Гарнир</div>
+                    <select
+                      className="w-full bg-neutral-800 text-white rounded px-2 py-2"
+                      value={b.sideId || ''}
+                      onChange={(e) => patchBox(b.key, { sideId: e.target.value || null })}
+                      disabled={loading || !allowSide}
+                    >
+                      <option value="">{allowSide ? '— не выбрано —' : 'не требуется'}</option>
+                      {allowSide &&
+                        sides.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-white/60 mb-1">Кол-во</div>
+                    <input
+                      type="number"
+                      min={0}
+                      className="w-full bg-neutral-800 text-white rounded px-2 py-2"
+                      value={b.qty}
+                      onChange={(e) => patchBox(b.key, { qty: Math.max(0, parseInt(e.target.value || '0', 10)) })}
+                    />
+                  </div>
+
+                  <div className="md:col-span-6 flex gap-2">
+                    {idx === boxes.length - 1 && (
+                      <Button variant="ghost" onClick={addBox}>
+                        + Добавить основное блюдо
+                      </Button>
+                    )}
+                    {boxes.length > 1 && (
+                      <Button variant="ghost" onClick={() => removeBox(b.key)}>
+                        Удалить
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Pastry */}
+        <section className="space-y-2 pt-4">
+          <div className="text-white font-semibold">Выпечка</div>
+          <div className="grid gap-2">
+            {pas.map((i) => (
+              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
+                <div>
+                  <div className="text-white">{i.name}</div>
+                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
+                  value={pastry[i.id] || 0}
+                  onChange={(e) => setQty(pastry, setPastry, i.id, parseInt(e.target.value || '0', 10))}
+                />
+              </label>
+            ))}
+            {!pas.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+          </div>
+        </section>
+
+        {error && <div className="text-rose-400 mt-3">{error}</div>}
+        {done && (
+          <div className="text-emerald-400 mt-3">
+            Заказ сохранён. Номер заказа: <b>{done.orderId}</b>
+          </div>
+        )}
+
+        <div className="pt-4">
+          <Button onClick={submit} disabled={submitting || loading}>
+            {submitting ? 'Сохраняю…' : 'Оформить заказ'}
+          </Button>
+        </div>
+      </Panel>
+    </main>
+  );
+}
