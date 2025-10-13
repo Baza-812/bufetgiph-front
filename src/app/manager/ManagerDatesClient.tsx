@@ -98,7 +98,10 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
       await Promise.all(
         dates.map(async (d) => {
           const s = await getManagerSummary(org, employeeID, token, d);
-          map[d] = s && (s.orderId || s.id) ? 'has' : 'none';
+          const st = String((s as any)?.status || '').toLowerCase();
+          const cancelled = st === 'cancelled' || st === 'canceled';
+          map[d] = s && (s.orderId || (s as any).id) && !cancelled ? 'has' : 'none';
+
         }),
       );
       if (!cancelled) setStatus(map);
