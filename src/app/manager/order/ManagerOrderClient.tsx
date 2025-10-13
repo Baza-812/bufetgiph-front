@@ -342,13 +342,15 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
 
   return (
     <main className="p-4 space-y-6">
-      <div className="flex justify-between items-center">
-        <Panel title={`Заказ менеджера на ${date || '—'}`} />
-        <div className="flex-1" />
-        <Button variant="ghost" onClick={goBack}>Назад</Button>
-      </div>
+  <div className="flex items-center justify-between">
+    <h2 className="text-xl font-semibold text-white">
+      Заказ менеджера на {date || '—'}
+    </h2>
+    <Button variant="ghost" onClick={goBack}>Назад</Button>
+  </div>
 
-      <Panel title="">
+  <Panel title="">
+
         {/* Zapekanka */}
         <section className="space-y-2">
           <div className="text-white font-semibold">Запеканки и блинчики</div>
