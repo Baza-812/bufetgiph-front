@@ -6,28 +6,69 @@ import Button from '@/components/ui/Button';
 import { useRouter } from 'next/navigation';
 
 type DatesResp = { ok: boolean; dates: string[] };
-type ManagerOrderSummary = { orderId: string; date: string; lines: string[] };
+
+type ManagerOrderSummary = {
+  orderId?: string;
+  id?: string;
+  date?: string;
+  lines?: string[];
+  // допускаем любые доп. поля из API
+  [k: string]: any;
+};
 
 type GetOrderResp =
   | { ok: true; summary: ManagerOrderSummary | null }
   | { ok: false; error: string };
 
+/** универсальный fetch JSON */
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...init });
+  const bodyText = await res.text().catch(() => '');
+  const json = (bodyText && (JSON.parse(bodyText) as any)) || {};
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${init?.method || 'GET'} ${url} -> ${res.status} ${text}`);
+    const msg = json?.error || bodyText || `${res.status}`;
+    throw new Error(`${init?.method || 'GET'} ${url} -> ${res.status} ${msg}`);
   }
-  return res.json();
+  return json as T;
 }
 
+/** формат подписи кнопки: "Вт, 14.10" */
 function fmtBtnLabel(iso: string) {
   const d = new Date(iso);
-  // например: "Вт, 14.10"
-  const wd = d.toLocaleDateString('ru-RU', { weekday: 'short' }); // вт, ср, чт...
+  const wd = d.toLocaleDateString('ru-RU', { weekday: 'short' }); // вт, ср...
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${wd[0].toUpperCase()}${wd.slice(1)}, ${dd}.${mm}`;
+  const wdCap = wd.length ? wd[0].toUpperCase() + wd.slice(1) : '';
+  return `${wdCap}, ${dd}.${mm}`;
+}
+
+/** Фолбэк-получение состава: сначала /order_manager (если появится GET),
+ * если он отвечает "POST only"/405/404 — идём на /order_summary */
+async function getManagerSummary(org: string, employeeID: string, token: string, date: string) {
+  // попытка №1 — /order_manager (GET)
+  try {
+    const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+      employeeID,
+    )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}`;
+    const r1 = await fetch(url1, { cache: 'no-store', credentials: 'same-origin' });
+    const j1 = await r1.json().catch(() => ({}));
+    if (r1.ok && j1?.summary) return j1.summary;
+    if (j1?.error === 'POST only' || r1.status === 405 || r1.status === 404) {
+      throw new Error('fallback');
+    }
+  } catch {
+    // попытка №2 — /order_summary
+    const url2 = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+      employeeID,
+    )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}&mode=single`;
+    const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
+    if (!r2.ok) return null;
+    const j2 = await r2.json().catch(() => ({}));
+    if (j2?.summary) return j2.summary;
+    if (j2?.order) return { orderId: j2.order.id || j2.order.orderId, lines: j2.lines || [] };
+    return null;
+  }
+  return null;
 }
 
 export default function ManagerDatesClient(props: { org: string; employeeID: string; token: string }) {
@@ -42,7 +83,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
     summary: null,
   });
 
-  // 1) доступные даты (HR окно)
+  // 1) тянем доступные даты с учётом HR cutoff
   useEffect(() => {
     if (!org || !employeeID || !token) return;
     fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}&as=hr`)
@@ -50,7 +91,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
       .catch(() => setDates([]));
   }, [org, employeeID, token]);
 
-  // 2) статус по датам — есть ли уже заказ менеджера
+  // 2) на каждую дату проверяем — есть ли заказ
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -59,11 +100,8 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
       await Promise.all(
         dates.map(async (d) => {
           try {
-            const url = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-              employeeID,
-            )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(d)}`;
-            const js = await fetchJSON<GetOrderResp>(url);
-            map[d] = (js as any)?.summary?.orderId ? 'has' : 'none';
+            const s = await getManagerSummary(org, employeeID, token, d);
+            map[d] = s && (s.orderId || s.id) ? 'has' : 'none';
           } catch {
             map[d] = 'none';
           }
@@ -76,9 +114,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
     };
   }, [org, employeeID, token, dates]);
 
-  // ! Инвертируем цвета:
-  //  - свободно (нет заказа)  -> ЖЁЛТАЯ
-  //  - заказ уже есть         -> СЕРАЯ
+  // свободно -> жёлтая; уже заказано -> серая
   function classesFor(d: string) {
     const common =
       'px-5 py-3 rounded-full font-semibold transition-colors disabled:opacity-50';
@@ -90,19 +126,11 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
 
   async function onClickDay(d: string) {
     if (status[d] === 'has') {
-      // показать модалку
-      try {
-        const url = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-          employeeID,
-        )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(d)}`;
-        const js = await fetchJSON<GetOrderResp>(url);
-        const summary = (js as any)?.summary || null;
-        setModal({ open: true, date: d, summary });
-      } catch {
-        setModal({ open: true, date: d, summary: null });
-      }
+      // открыть модалку с составом
+      const summary = await getManagerSummary(org, employeeID, token, d);
+      setModal({ open: true, date: d, summary: summary || null });
     } else {
-      // переход к форме
+      // перейти к созданию
       const u = new URL('/manager/order', window.location.origin);
       u.searchParams.set('org', org);
       u.searchParams.set('employeeID', employeeID);
@@ -127,15 +155,14 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
   }
 
   async function onCancel() {
-    if (!modal.summary?.orderId) return;
+    if (!modal.summary?.orderId && !modal.summary?.id) return;
+    const orderId = String(modal.summary?.orderId || modal.summary?.id);
     await fetchJSON(`/api/order_cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderId: modal.summary.orderId, org, employeeID, token }),
+      body: JSON.stringify({ orderId, org, employeeID, token }),
     }).catch(() => {});
-    if (modal.date) setStatus((s) => ({ ...s, [modal.date!]: 'has' /* сервер может ещё держать флаг */ }));
-    // Лучше форс-рефреш статуса:
-    setStatus((s) => ({ ...s, [modal.date!]: 'none' }));
+    if (modal.date) setStatus((s) => ({ ...s, [modal.date!]: 'none' }));
     closeModal();
   }
 
@@ -150,6 +177,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
           ))}
           {!dates.length && <div className="text-white/60">Нет доступных дат</div>}
         </div>
+
         <div className="text-xs text-white/50 mt-3 flex gap-6 items-center">
           <span className="inline-flex items-center gap-2">
             <span className="inline-block w-4 h-2 rounded-full bg-amber-500" /> свободно
@@ -164,14 +192,16 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="bg-neutral-900 border border-white/10 rounded-2xl p-4 w-full max-w-xl">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-lg font-semibold">Состав заказа — {modal.date}</div>
+              <div className="text-lg font-semibold">
+                Состав заказа — {modal.date}
+              </div>
               <button className="text-white/50 hover:text-white" onClick={closeModal}>
                 Закрыть
               </button>
             </div>
-            {modal.summary ? (
+            {modal.summary?.lines?.length ? (
               <div className="space-y-2 text-white/90">
-                {(modal.summary.lines || []).map((t, i) => (
+                {modal.summary.lines.map((t, i) => (
                   <div key={i}>• {t}</div>
                 ))}
               </div>
@@ -183,7 +213,7 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
               <Button variant="ghost" onClick={onEdit}>
                 Изменить
               </Button>
-              <Button variant="danger" onClick={onCancel} disabled={!modal.summary?.orderId}>
+              <Button variant="danger" onClick={onCancel} disabled={!modal.summary?.orderId && !modal.summary?.id}>
                 Отменить
               </Button>
             </div>
