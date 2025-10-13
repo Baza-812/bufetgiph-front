@@ -38,77 +38,48 @@ export default function ManagerDatesClient(props: { org: string; employeeID: str
     summary: null,
   });
 
-  // префилл
-useEffect(() => {
-  if (!org || !employeeID || !token || !date) return;
-  (async () => {
-    try {
-      const url = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-        employeeID,
-      )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}`;
-      const js = await fetchJSON<PrefillResp>(url);
-      const s = js?.summary || null;
-      if (!s) return;
+  // 1) получаем доступные даты (HR-окно, чтобы «сегодня» было до HR cutoff)
+  useEffect(() => {
+    if (!org || !employeeID || !token) return;
+    fetchJSON<DatesResp>(`/api/dates?org=${encodeURIComponent(org)}&as=hr`)
+      .then((d) => setDates(Array.isArray(d.dates) ? d.dates : []))
+      .catch(() => setDates([]));
+  }, [org, employeeID, token]);
 
-      const bxs: BoxRow[] = [];
-      if (Array.isArray(s.boxes)) {
-        (s.boxes as PrefillBox[]).forEach((b: PrefillBox) => {
-          bxs.push({
-            key: uuid(),
-            mainId: (b.mainId as string) || null,
-            sideId: (b.sideId as string) || null,
-            qty: Math.max(0, Number(b.qty || 0)),
-          });
-        });
-      } else if (Array.isArray(s.lines)) {
-        ((s.lines as PrefillLine[]) || [])
-          .filter((l: PrefillLine) => l.type === 'box' || l.type === 'mealbox')
-          .forEach((l: PrefillLine) => {
-            bxs.push({
-              key: uuid(),
-              mainId: (l.mainId as string) || null,
-              sideId: (l.sideId as string) || null,
-              qty: Math.max(0, Number(l.qty || 0)),
-            });
-          });
-      }
-      if (bxs.length) setBoxes(bxs);
-
-      const lines: PrefillLine[] | undefined = Array.isArray(s.extras)
-        ? (s.extras as { itemId: string; qty: number; category?: string }[]).map((e) => ({
-            itemId: e.itemId,
-            qty: e.qty,
-            type: 'extra',
-            category: e.category,
-          }))
-        : (s.lines as PrefillLine[] | undefined);
-
-      const collect = (pred: (l: PrefillLine) => boolean) => {
-        const out: Record<string, number> = {};
-        (lines || []).forEach((l: PrefillLine) => {
-          const id = (l.itemId as string) || (l as any).extraId || (l as any).id;
-          if (!id) return;
-          if (pred(l)) out[id] = (out[id] || 0) + (Number(l.qty) || 0);
-        });
-        return out;
-      };
-      setZapekanki(collect((l) => String(l.category || '').toLowerCase().includes('zapekanka')));
-      setSalads(collect((l) => String(l.category || '').toLowerCase().includes('salad')));
-      setSoups(collect((l) => String(l.category || '').toLowerCase().includes('soup')));
-      setPastry(collect((l) => String(l.category || '').toLowerCase().includes('pastry')));
-    } catch {
-      /* no-op */
-    }
-  })();
-}, [org, employeeID, token, date]);
-
+  // 2) для каждой даты проверяем — есть ли уже менеджерский заказ
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!org || !employeeID || !token || !dates.length) return;
+      const map: Record<string, 'none' | 'has'> = {};
+      await Promise.all(
+        dates.map(async (d) => {
+          try {
+            const url = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+              employeeID,
+            )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(d)}`;
+            const js = await fetchJSON<GetOrderResp>(url);
+            map[d] = (js as any)?.summary?.orderId ? 'has' : 'none';
+          } catch {
+            map[d] = 'none';
+          }
+        }),
+      );
+      if (!cancelled) setStatus(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [org, employeeID, token, dates]);
 
   function colorFor(d: string) {
+    // жёлтая — заказ есть; серая — нет
     return status[d] === 'has' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-neutral-800 hover:bg-neutral-700';
   }
 
   async function onClickDay(d: string) {
     if (status[d] === 'has') {
+      // показать модалку с составом
       try {
         const url = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
           employeeID,
@@ -120,6 +91,7 @@ useEffect(() => {
         setModal({ open: true, date: d, summary: null });
       }
     } else {
+      // перейти к созданию заказа
       const u = new URL('/manager/order', window.location.origin);
       u.searchParams.set('org', org);
       u.searchParams.set('employeeID', employeeID);
@@ -177,7 +149,7 @@ useEffect(() => {
           <div className="bg-neutral-900 border border-white/10 rounded-2xl p-4 w-full max-w-xl">
             <div className="flex items-center justify-between mb-2">
               <div className="text-lg font-semibold">
-                Заказ на {modal.date ? modal.date : ''}
+                Заказ на {modal.date ? fmtDateHuman(modal.date) : ''}
               </div>
               <button className="text-white/50 hover:text-white" onClick={closeModal}>Закрыть</button>
             </div>
