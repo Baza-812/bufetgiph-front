@@ -576,9 +576,10 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
             })}
 
             <div>
-              <Button variant="secondary" onClick={addBox}>
-                + Добавить основное блюдо
+              <Button variant="ghost" onClick={addBox}>
+              + Добавить основное блюдо
               </Button>
+
             </div>
           </div>
         </section>
