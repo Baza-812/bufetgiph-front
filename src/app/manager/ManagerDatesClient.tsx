@@ -5,13 +5,7 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import { useSearchParams, useRouter } from 'next/navigation';
 
-type Summary = {
-  orderId?: string;
-  status?: string;
-  date?: string;
-  lines?: string[];
-};
-
+type Summary = { orderId?: string; status?: string; date?: string; lines?: string[] };
 type SummaryResp = { ok: boolean; summary: Summary | null };
 
 function fmtDayLabel(iso: string) {
@@ -45,9 +39,12 @@ export default function ManagerDatesClient() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
 
-  // карта «занят/свободен»: true = уже есть заказ (не Cancelled)
+  // карта «занят/свободен»
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [busyReady, setBusyReady] = useState(false);
+
+  // для явного контроля — что вернул summary по каждой дате
+  const [summaryByDate, setSummaryByDate] = useState<Record<string, Summary | null>>({});
 
   // модалка
   const [modalOpen, setModalOpen] = useState(false);
@@ -56,7 +53,20 @@ export default function ManagerDatesClient() {
   const [modalError, setModalError] = useState<string | null>(null);
   const [modalSummary, setModalSummary] = useState<Summary | null>(null);
 
-  // 1) тянем окно дат (для менеджера — as=hr, чтобы «сегодня» было до HR cutoff)
+  // health — чтобы видеть, в какое API попали
+  const [health, setHealth] = useState<any>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const h = await fetchJSON('/api/health');
+        setHealth(h);
+      } catch {
+        setHealth(null);
+      }
+    })();
+  }, []);
+
+  // 1) тянем окно дат (as=hr, чтобы включать «сегодня» до HR cutoff)
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -72,12 +82,14 @@ export default function ManagerDatesClient() {
     })();
   }, [org]);
 
-  // 2) строим «серость» только через /api/order_summary — надёжно и просто
+  // 2) «серость» считаем строго по /api/order_summary
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
     setBusyReady(false);
     try {
       const map: Record<string, boolean> = {};
+      const sbd: Record<string, Summary | null> = {};
+
       await Promise.all(
         dates.map(async (d) => {
           try {
@@ -85,14 +97,18 @@ export default function ManagerDatesClient() {
               employeeID,
             )}&date=${encodeURIComponent(d)}`;
             const s = await fetchJSON<SummaryResp>(u);
-            const st = String(s?.summary?.status || '').toLowerCase();
+            const sum = s?.summary || null;
+            sbd[d] = sum;
+            const st = String(sum?.status || '').toLowerCase();
             const cancelled = st === 'cancelled' || st === 'canceled';
-            map[d] = Boolean(s?.summary?.orderId) && !cancelled;
+            map[d] = Boolean(sum?.orderId) && !cancelled;
           } catch {
             map[d] = false;
+            sbd[d] = null;
           }
         }),
       );
+      setSummaryByDate(sbd);
       setBusy(map);
     } finally {
       setBusyReady(true);
@@ -154,18 +170,12 @@ export default function ManagerDatesClient() {
         headers: { 'Content-Type': 'application/json' },
         cache: 'no-store',
         credentials: 'same-origin',
-        body: JSON.stringify({
-          orderId: modalSummary.orderId,
-          org,
-          employeeID,
-          token,
-        }),
+        body: JSON.stringify({ orderId: modalSummary.orderId, org, employeeID, token }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) throw new Error(j?.error || 'Ошибка отмены');
 
-      // «разжёлтим» день и закрываем модалку
-      if (modalDate) setBusy((m) => ({ ...m, [modalDate]: false }));
+      if (modalDate) setBusy((m) => ({ ...m, [modalDate]: false })); // «разжёлтим»
       closeModal();
     } catch (e: any) {
       setModalError(e?.message || String(e));
@@ -185,9 +195,18 @@ export default function ManagerDatesClient() {
     else toOrderPage(d);
   }
 
+  const missingParams = !org || !employeeID || !token;
+
   return (
     <main>
       <Panel title="Заказ менеджера: выберите дату">
+        {missingParams && (
+          <div className="mb-3 text-amber-400 text-sm">
+            Не хватает параметров в URL: <b>{!org && 'org '}{!employeeID && 'employeeID '}{!token && 'token'}</b>.
+            Открой ссылку вида: <code className="bg-black/20 px-1 rounded">/manager?org=...&employeeID=...&token=...</code>
+          </div>
+        )}
+
         {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
         {err && <div className="text-red-400 text-sm">Ошибка: {err}</div>}
 
@@ -195,17 +214,27 @@ export default function ManagerDatesClient() {
           {dates.map((d) => {
             const has = !!busy[d]; // true → серый, false → жёлтый
             const label = fmtDayLabel(d);
+            const sum = summaryByDate[d];
+            const st = String(sum?.status || '').toLowerCase();
 
-            // для надёжности красим не только variant, но и классом:
-            const cls =
-              has
-                ? 'w-full rounded-lg px-3 py-2 bg-neutral-700 text-white'
-                : 'w-full rounded-lg px-3 py-2 bg-yellow-500 text-black hover:bg-yellow-400';
+            const cls = has
+              ? 'w-full rounded-lg px-3 py-2 bg-neutral-700 text-white'
+              : 'w-full rounded-lg px-3 py-2 bg-yellow-500 text-black hover:bg-yellow-400';
 
             return (
-              <button key={d} onClick={() => onPick(d)} className={cls} disabled={!busyReady}>
-                {label}
-              </button>
+              <div key={d} className="space-y-1">
+                <button onClick={() => onPick(d)} className={cls} disabled={!busyReady || missingParams}>
+                  {label}
+                </button>
+                {/* маленький тег-подсказка по тому, что пришло из summary */}
+                <div className="text-[10px] text-white/50">
+                  {sum?.orderId ? (
+                    <span>status: <b>{st || '—'}</b>, id: {sum.orderId.slice(0, 6)}…</span>
+                  ) : (
+                    <span>нет заказа</span>
+                  )}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -218,9 +247,13 @@ export default function ManagerDatesClient() {
             <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
           </span>
         </div>
+
+        <div className="mt-4 text-xs text-white/40">
+          API health: {health ? JSON.stringify(health) : 'нет ответа'}
+        </div>
       </Panel>
 
-      {/* Модалка занятых дат */}
+      {/* Модалка */}
       {modalOpen && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/60" onClick={closeModal} />
@@ -234,14 +267,11 @@ export default function ManagerDatesClient() {
               <div className="p-4 space-y-3">
                 {modalLoading && <div className="text-white/70 text-sm">Загрузка состава…</div>}
                 {modalError && <div className="text-rose-400 text-sm">Ошибка: {modalError}</div>}
-
                 {!modalLoading && !modalError && (
                   <>
                     {modalSummary?.lines && modalSummary.lines.length > 0 ? (
                       <ul className="list-disc list-inside space-y-1 text-white/90">
-                        {modalSummary.lines.map((line, i) => (
-                          <li key={i}>{line}</li>
-                        ))}
+                        {modalSummary.lines.map((line, i) => <li key={i}>{line}</li>)}
                       </ul>
                     ) : (
                       <div className="text-white/60 text-sm">Не удалось получить состав заказа…</div>
@@ -251,15 +281,9 @@ export default function ManagerDatesClient() {
               </div>
 
               <div className="px-4 py-3 border-t border-white/10 flex items-center justify-end gap-2">
-                <Button variant="ghost" onClick={closeModal} disabled={modalLoading}>
-                  ОК
-                </Button>
-                <Button variant="ghost" onClick={editOrder} disabled={modalLoading || !modalDate}>
-                  Изменить
-                </Button>
-                <Button variant="danger" onClick={cancelOrder} disabled={modalLoading || !modalSummary?.orderId}>
-                  Отменить
-                </Button>
+                <Button variant="ghost" onClick={closeModal} disabled={modalLoading}>ОК</Button>
+                <Button variant="ghost" onClick={editOrder} disabled={modalLoading || !modalDate}>Изменить</Button>
+                <Button variant="danger" onClick={cancelOrder} disabled={modalLoading || !modalSummary?.orderId}>Отменить</Button>
               </div>
             </div>
           </div>
