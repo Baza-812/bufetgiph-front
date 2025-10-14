@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -45,7 +45,7 @@ export default function ManagerDatesClient() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
 
-  // карта «занят/свободен»
+  // карта «занят/свободен»: true = уже есть заказ (не Cancelled)
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [busyReady, setBusyReady] = useState(false);
 
@@ -56,7 +56,7 @@ export default function ManagerDatesClient() {
   const [modalError, setModalError] = useState<string | null>(null);
   const [modalSummary, setModalSummary] = useState<Summary | null>(null);
 
-  // 1) даты (для менеджера используем окно as=hr, чтобы «сегодня» было доступно до HR cutoff)
+  // 1) тянем окно дат (для менеджера — as=hr, чтобы «сегодня» было до HR cutoff)
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -72,18 +72,14 @@ export default function ManagerDatesClient() {
     })();
   }, [org]);
 
-  // 2) занятость: сначала /api/busy (как у сотрудников), затем перепроверяем true-дни через /api/order_summary и отбрасываем Cancelled
+  // 2) строим «серость» только через /api/order_summary — надёжно и просто
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
     setBusyReady(false);
     try {
-      const qs = new URLSearchParams({ employeeID, org, token, dates: dates.join(',') });
-      const base = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
-      const map: Record<string, boolean> = { ...(base.busy || {}) };
-
-      const needCheck = Object.keys(map).filter((d) => map[d]);
+      const map: Record<string, boolean> = {};
       await Promise.all(
-        needCheck.map(async (d) => {
+        dates.map(async (d) => {
           try {
             const u = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
               employeeID,
@@ -93,15 +89,10 @@ export default function ManagerDatesClient() {
             const cancelled = st === 'cancelled' || st === 'canceled';
             map[d] = Boolean(s?.summary?.orderId) && !cancelled;
           } catch {
-            // на ошибке не меняем
+            map[d] = false;
           }
         }),
       );
-
-      setBusy(map);
-    } catch {
-      const map: Record<string, boolean> = {};
-      for (const d of dates) map[d] = false;
       setBusy(map);
     } finally {
       setBusyReady(true);
@@ -110,7 +101,7 @@ export default function ManagerDatesClient() {
 
   useEffect(() => { reloadBusy(); }, [reloadBusy]);
 
-  // при возврате на вкладку — обновим
+  // при возврате на вкладку — обновить (после оформления/отмены)
   useEffect(() => {
     const onFocus = () => reloadBusy();
     window.addEventListener('focus', onFocus);
@@ -126,7 +117,7 @@ export default function ManagerDatesClient() {
     router.push(u.toString());
   }
 
-  // открыть модалку для занятого дня
+  // открыть модалку состав/действия
   async function openModalFor(date: string) {
     setModalOpen(true);
     setModalDate(date);
@@ -173,7 +164,7 @@ export default function ManagerDatesClient() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) throw new Error(j?.error || 'Ошибка отмены');
 
-      // локально «разжёлтим» день
+      // «разжёлтим» день и закрываем модалку
       if (modalDate) setBusy((m) => ({ ...m, [modalDate]: false }));
       closeModal();
     } catch (e: any) {
@@ -190,13 +181,8 @@ export default function ManagerDatesClient() {
 
   function onPick(d: string) {
     if (!busyReady) return;
-    if (busy[d]) {
-      // занят — модалка
-      openModalFor(d);
-    } else {
-      // свободен — форма заказа
-      toOrderPage(d);
-    }
+    if (busy[d]) openModalFor(d);
+    else toOrderPage(d);
   }
 
   return (
@@ -209,23 +195,24 @@ export default function ManagerDatesClient() {
           {dates.map((d) => {
             const has = !!busy[d]; // true → серый, false → жёлтый
             const label = fmtDayLabel(d);
+
+            // для надёжности красим не только variant, но и классом:
+            const cls =
+              has
+                ? 'w-full rounded-lg px-3 py-2 bg-neutral-700 text-white'
+                : 'w-full rounded-lg px-3 py-2 bg-yellow-500 text-black hover:bg-yellow-400';
+
             return (
-              <Button
-                key={d}
-                onClick={() => onPick(d)}
-                className="w-full"
-                variant={has ? 'ghost' : 'primary'}
-                disabled={!busyReady}
-              >
+              <button key={d} onClick={() => onPick(d)} className={cls} disabled={!busyReady}>
                 {label}
-              </Button>
+              </button>
             );
           })}
         </div>
 
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded bg-brand-500" /> свободно
+            <span className="inline-block w-3 h-3 rounded bg-yellow-500" /> свободно
           </span>
           <span className="inline-flex items-center gap-2">
             <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
