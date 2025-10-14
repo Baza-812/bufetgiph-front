@@ -93,9 +93,7 @@ export default function ManagerDatesClient() {
       await Promise.all(
         dates.map(async (d) => {
           try {
-            const u = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-              employeeID,
-            )}&date=${encodeURIComponent(d)}`;
+            const u = `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(d)}&scope=org`;
             const s = await fetchJSON<SummaryResp>(u);
             const sum = s?.summary || null;
             sbd[d] = sum;
@@ -141,9 +139,7 @@ export default function ManagerDatesClient() {
     setModalError(null);
     setModalLoading(true);
     try {
-      const u = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-        employeeID,
-      )}&date=${encodeURIComponent(date)}`;
+      const u = `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}&scope=org`;
       const j = await fetchJSON<SummaryResp>(u);
       setModalSummary(j.summary || null);
     } catch (e: any) {
