@@ -1,211 +1,279 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
-import { useRouter } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 
-type DatesResp = { ok: boolean; dates: string[] };
-type ManagerOrderSummary = { orderId?: string; id?: string; date?: string; lines?: string[] };
+type Summary = {
+  orderId?: string;
+  status?: string;
+  date?: string;
+  lines?: string[];
+};
 
-type GetOrderResp =
-  | { ok: true; summary: ManagerOrderSummary | null }
-  | { ok: false; error: string };
+type SummaryResp = { ok: boolean; summary: Summary | null };
 
-// универсальная загрузка состава заказа менеджера (GET /order_manager -> fallback /order_summary)
-async function getManagerSummary(org: string, employeeID: string, token: string, date: string) {
-  // 1) пробуем /order_manager
-  const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-    employeeID,
-  )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}`;
+function fmtDayLabel(iso: string) {
   try {
-    const r1 = await fetch(url1, { cache: 'no-store', credentials: 'same-origin' });
-    const j1 = await r1.json().catch(() => ({}));
-    if (r1.ok && j1?.summary) return j1.summary as ManagerOrderSummary;
-    if (j1?.error !== 'POST only' && r1.status !== 405 && r1.status !== 404) {
-      return null;
-    }
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+    const wd = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'][dt.getUTCDay()];
+    const dd = String(d).padStart(2, '0');
+    const mm = String(m).padStart(2, '0');
+    return `${wd.toUpperCase()} ${dd}.${mm}`;
   } catch {
-    /* fallthrough */
+    return iso;
   }
-
-  // 2) fallback: /order_summary
-  const url2 = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-    employeeID,
-  )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}&mode=single`;
-  try {
-    const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
-    if (!r2.ok) return null;
-    const j2 = await r2.json().catch(() => ({}));
-    if (j2?.summary) return j2.summary as ManagerOrderSummary;
-    if (j2?.order) {
-      return {
-        orderId: j2.order.id || j2.order.orderId,
-        lines: j2.lines || [],
-        date,
-      } as ManagerOrderSummary;
-    }
-  } catch {
-    /* no-op */
-  }
-  return null;
 }
 
-function fmtBtnLabel(iso: string) {
-  // например: "Вт, 14.10"
-  const d = new Date(iso + 'T00:00:00');
-  const wd = d.toLocaleDateString('ru-RU', { weekday: 'short' }); // вт, ср, чт...
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const cap = wd ? wd[0].toUpperCase() + wd.slice(1) : '';
-  return `${cap}, ${dd}.${mm}`;
+async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const r = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...init });
+  if (!r.ok) throw new Error(`${init?.method || 'GET'} ${url} -> ${r.status}`);
+  return r.json();
 }
 
-export default function ManagerDatesClient(props: { org: string; employeeID: string; token: string }) {
-  const { org, employeeID, token } = props;
+export default function ManagerDatesClient() {
+  const sp = useSearchParams();
   const router = useRouter();
 
-  const [dates, setDates] = useState<string[]>([]);
-  const [status, setStatus] = useState<Record<string, 'none' | 'has'>>({});
-  const [modal, setModal] = useState<{ open: boolean; date: string | null; summary: ManagerOrderSummary | null }>({
-    open: false,
-    date: null,
-    summary: null,
-  });
+  const org = sp.get('org') || '';
+  const employeeID = sp.get('employeeID') || '';
+  const token = sp.get('token') || '';
 
-  // 1) доступные даты (HR окно)
+  const [dates, setDates] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string>('');
+
+  // карта «занят/свободен»
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [busyReady, setBusyReady] = useState(false);
+
+  // модалка
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalDate, setModalDate] = useState<string | null>(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [modalSummary, setModalSummary] = useState<Summary | null>(null);
+
+  // 1) даты (для менеджера используем окно as=hr, чтобы «сегодня» было доступно до HR cutoff)
   useEffect(() => {
-    if (!org || !employeeID || !token) return;
     (async () => {
+      if (!org) return;
       try {
-        const d = await fetch(`/api/dates?org=${encodeURIComponent(org)}&as=hr`, {
-          cache: 'no-store',
-          credentials: 'same-origin',
-        }).then((r) => r.json() as Promise<DatesResp>);
-        setDates(Array.isArray(d.dates) ? d.dates : []);
-      } catch {
-        setDates([]);
+        setLoading(true); setErr('');
+        const r = await fetchJSON<{ ok: boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}&as=hr`);
+        setDates(r.dates || []);
+      } catch (e: any) {
+        setErr(e?.message || String(e));
+      } finally {
+        setLoading(false);
       }
     })();
-  }, [org, employeeID, token]);
+  }, [org]);
 
-  // 2) статус по датам — есть ли уже заказ менеджера
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!org || !employeeID || !token || !dates.length) return;
-      const map: Record<string, 'none' | 'has'> = {};
+  // 2) занятость: сначала /api/busy (как у сотрудников), затем перепроверяем true-дни через /api/order_summary и отбрасываем Cancelled
+  const reloadBusy = useCallback(async () => {
+    if (!employeeID || !org || !token || dates.length === 0) return;
+    setBusyReady(false);
+    try {
+      const qs = new URLSearchParams({ employeeID, org, token, dates: dates.join(',') });
+      const base = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
+      const map: Record<string, boolean> = { ...(base.busy || {}) };
+
+      const needCheck = Object.keys(map).filter((d) => map[d]);
       await Promise.all(
-        dates.map(async (d) => {
-          const s = await getManagerSummary(org, employeeID, token, d);
-          const st = String((s as any)?.status || '').toLowerCase();
-          const cancelled = st === 'cancelled' || st === 'canceled';
-          map[d] = s && (s.orderId || (s as any).id) && !cancelled ? 'has' : 'none';
-
+        needCheck.map(async (d) => {
+          try {
+            const u = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+              employeeID,
+            )}&date=${encodeURIComponent(d)}`;
+            const s = await fetchJSON<SummaryResp>(u);
+            const st = String(s?.summary?.status || '').toLowerCase();
+            const cancelled = st === 'cancelled' || st === 'canceled';
+            map[d] = Boolean(s?.summary?.orderId) && !cancelled;
+          } catch {
+            // на ошибке не меняем
+          }
         }),
       );
-      if (!cancelled) setStatus(map);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [org, employeeID, token, dates]);
 
-  // цвета: свободно -> ЖЁЛТАЯ; уже заказано -> СЕРАЯ
-  function classesFor(d: string) {
-    const base = 'px-5 py-3 rounded-full font-semibold transition-colors';
-    return status[d] === 'has'
-      ? `${base} bg-neutral-700 text-white hover:bg-neutral-600`
-      : `${base} bg-amber-500 text-black hover:bg-amber-400`;
-  }
-
-  async function onClickDay(d: string) {
-    if (status[d] === 'has') {
-      const summary = await getManagerSummary(org, employeeID, token, d);
-      setModal({ open: true, date: d, summary: summary || null });
-    } else {
-      const u = new URL('/manager/order', window.location.origin);
-      u.searchParams.set('org', org);
-      u.searchParams.set('employeeID', employeeID);
-      u.searchParams.set('token', token);
-      u.searchParams.set('date', d);
-      router.push(u.toString());
+      setBusy(map);
+    } catch {
+      const map: Record<string, boolean> = {};
+      for (const d of dates) map[d] = false;
+      setBusy(map);
+    } finally {
+      setBusyReady(true);
     }
-  }
+  }, [dates, employeeID, org, token]);
 
-  function closeModal() {
-    setModal((m) => ({ ...m, open: false }));
-  }
+  useEffect(() => { reloadBusy(); }, [reloadBusy]);
 
-  function onEdit() {
-    if (!modal.date) return;
+  // при возврате на вкладку — обновим
+  useEffect(() => {
+    const onFocus = () => reloadBusy();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [reloadBusy]);
+
+  function toOrderPage(date: string) {
     const u = new URL('/manager/order', window.location.origin);
     u.searchParams.set('org', org);
     u.searchParams.set('employeeID', employeeID);
     u.searchParams.set('token', token);
-    u.searchParams.set('date', modal.date);
+    u.searchParams.set('date', date);
     router.push(u.toString());
   }
 
-  async function onCancel() {
-    if (!modal.summary?.orderId) return;
-    await fetch('/api/order_cancel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ orderId: modal.summary.orderId, org, employeeID, token }),
-    }).catch(() => {});
-    if (modal.date) setStatus((s) => ({ ...s, [modal.date!]: 'none' }));
-    closeModal();
+  // открыть модалку для занятого дня
+  async function openModalFor(date: string) {
+    setModalOpen(true);
+    setModalDate(date);
+    setModalSummary(null);
+    setModalError(null);
+    setModalLoading(true);
+    try {
+      const u = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+        employeeID,
+      )}&date=${encodeURIComponent(date)}`;
+      const j = await fetchJSON<SummaryResp>(u);
+      setModalSummary(j.summary || null);
+    } catch (e: any) {
+      setModalError(e?.message || String(e));
+    } finally {
+      setModalLoading(false);
+    }
+  }
+
+  function closeModal() {
+    setModalOpen(false);
+    setModalDate(null);
+    setModalError(null);
+    setModalSummary(null);
+  }
+
+  async function cancelOrder() {
+    if (!modalSummary?.orderId) return;
+    try {
+      setModalLoading(true);
+      setModalError(null);
+      const r = await fetch('/api/order_cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          orderId: modalSummary.orderId,
+          org,
+          employeeID,
+          token,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) throw new Error(j?.error || 'Ошибка отмены');
+
+      // локально «разжёлтим» день
+      if (modalDate) setBusy((m) => ({ ...m, [modalDate]: false }));
+      closeModal();
+    } catch (e: any) {
+      setModalError(e?.message || String(e));
+    } finally {
+      setModalLoading(false);
+    }
+  }
+
+  function editOrder() {
+    if (!modalDate) return;
+    toOrderPage(modalDate);
+  }
+
+  function onPick(d: string) {
+    if (!busyReady) return;
+    if (busy[d]) {
+      // занят — модалка
+      openModalFor(d);
+    } else {
+      // свободен — форма заказа
+      toOrderPage(d);
+    }
   }
 
   return (
-    <main className="p-4 space-y-6">
-      <Panel title="Выберите дату">
-        <div className="flex flex-wrap gap-3">
-          {dates.map((d) => (
-            <button key={d} className={classesFor(d)} onClick={() => onClickDay(d)}>
-              {fmtBtnLabel(d)}
-            </button>
-          ))}
-          {!dates.length && <div className="text-white/60">Нет доступных дат</div>}
+    <main>
+      <Panel title="Заказ менеджера: выберите дату">
+        {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
+        {err && <div className="text-red-400 text-sm">Ошибка: {err}</div>}
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {dates.map((d) => {
+            const has = !!busy[d]; // true → серый, false → жёлтый
+            const label = fmtDayLabel(d);
+            return (
+              <Button
+                key={d}
+                onClick={() => onPick(d)}
+                className="w-full"
+                variant={has ? 'ghost' : 'primary'}
+                disabled={!busyReady}
+              >
+                {label}
+              </Button>
+            );
+          })}
         </div>
-        <div className="text-xs text-white/50 mt-3 flex gap-6 items-center">
+
+        <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-2 rounded-full bg-amber-500" /> свободно
+            <span className="inline-block w-3 h-3 rounded bg-brand-500" /> свободно
           </span>
           <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-4 h-2 rounded-full bg-neutral-600" /> уже заказано
+            <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
           </span>
         </div>
       </Panel>
 
-      {modal.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-neutral-900 border border-white/10 rounded-2xl p-4 w-full max-w-xl">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-lg font-semibold">Состав заказа — {modal.date}</div>
-              <button className="text-white/50 hover:text-white" onClick={closeModal}>
-                Закрыть
-              </button>
-            </div>
-            {modal.summary?.lines?.length ? (
-              <div className="space-y-2 text-white/90">
-                {modal.summary.lines.map((t, i) => (
-                  <div key={i}>• {t}</div>
-                ))}
+      {/* Модалка занятых дат */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/60" onClick={closeModal} />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-lg bg-neutral-900 rounded-xl shadow-xl border border-white/10 overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+                <div className="text-white font-semibold">Заказ на {modalDate || '—'}</div>
+                <button className="text-white/60 hover:text-white" onClick={closeModal}>✕</button>
               </div>
-            ) : (
-              <div className="text-white/70">Не удалось получить состав заказа.</div>
-            )}
-            <div className="flex gap-2 pt-4">
-              <Button onClick={closeModal}>ОК</Button>
-              <Button variant="ghost" onClick={onEdit}>
-                Изменить
-              </Button>
-              <Button variant="danger" onClick={onCancel} disabled={!modal.summary?.orderId}>
-                Отменить
-              </Button>
+
+              <div className="p-4 space-y-3">
+                {modalLoading && <div className="text-white/70 text-sm">Загрузка состава…</div>}
+                {modalError && <div className="text-rose-400 text-sm">Ошибка: {modalError}</div>}
+
+                {!modalLoading && !modalError && (
+                  <>
+                    {modalSummary?.lines && modalSummary.lines.length > 0 ? (
+                      <ul className="list-disc list-inside space-y-1 text-white/90">
+                        {modalSummary.lines.map((line, i) => (
+                          <li key={i}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-white/60 text-sm">Не удалось получить состав заказа…</div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="px-4 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+                <Button variant="ghost" onClick={closeModal} disabled={modalLoading}>
+                  ОК
+                </Button>
+                <Button variant="ghost" onClick={editOrder} disabled={modalLoading || !modalDate}>
+                  Изменить
+                </Button>
+                <Button variant="danger" onClick={cancelOrder} disabled={modalLoading || !modalSummary?.orderId}>
+                  Отменить
+                </Button>
+              </div>
             </div>
           </div>
         </div>
