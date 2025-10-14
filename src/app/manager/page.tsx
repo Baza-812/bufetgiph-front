@@ -18,5 +18,5 @@ function ManagerPage() {
   const employeeID = sp.get('employeeID') || '';
   const token = sp.get('token') || '';
 
-  return <ManagerDatesClient org={org} employeeID={employeeID} token={token} />;
+  return <ManagerDatesClient />;
 }
