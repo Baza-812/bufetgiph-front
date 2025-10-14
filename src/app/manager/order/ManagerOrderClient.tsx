@@ -5,25 +5,28 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import { useRouter } from 'next/navigation';
 
+/* ===================== Types ===================== */
+
 type MenuItem = {
   id: string;
   name: string;
   type: 'main' | 'side' | 'extra';
   category?: string | null;
   description?: string | null;
-  noSide?: boolean; // ← флаг «гарнир не нужен»
+  noSide?: boolean; // ← «гарнирное» основное: гарнир не положен
 };
 
-type MenuRespLoose =
-  | { ok: boolean; date: string; items: any[] }
-  | { ok: boolean; date: string; mains: any[]; sides: any[]; extras: any[] };
+type MenuRespLoose = {
+  ok?: boolean;
+  items?: Array<any>;
+};
 
-type PrefillBox = { mainId?: string; sideId?: string; qty?: number };
-type PrefillLine = { itemId?: string; mainId?: string; sideId?: string; qty: number; type: string; category?: string };
+type PrefillBox = { mainId?: string | null; sideId?: string | null; qty?: number };
+type PrefillLine = { type?: 'box' | 'mealbox' | 'extra'; mainId?: string | null; sideId?: string | null; itemId?: string | null; qty?: number; category?: string | null };
 
 type BoxRow = { key: string; mainId: string | null; sideId: string | null; qty: number };
 
-// ---- helpers -------------------------------------------------------------
+/* ===================== Utils ===================== */
 
 function uuid() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
@@ -39,7 +42,10 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// универсальная загрузка состава заказа менеджера (GET /order_manager -> fallback /order_summary)
+/** Универсальная загрузка сводки заказа менеджера на дату.
+ *  1) Пытаемся GET /api/order_manager?org&employeeID&token&date (если поддержан)
+ *  2) Фолбэк на /api/order_summary?org&employeeID&date
+ */
 async function getManagerSummary(org: string, employeeID: string, token: string, date: string) {
   // 1) пробуем /order_manager
   const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
@@ -56,23 +62,17 @@ async function getManagerSummary(org: string, employeeID: string, token: string,
     /* fallthrough */
   }
 
-  // 2) fallback: /order_summary
+  // 2) /order_summary
   const url2 = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
     employeeID,
-  )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}&mode=single`;
-  try {
-    const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
-    if (!r2.ok) return null;
-    const j2 = await r2.json().catch(() => ({}));
-    if (j2?.summary) return j2.summary as any;
-    if (j2?.order) return { orderId: j2.order.id || j2.order.orderId, lines: j2.lines || [] };
-  } catch {
-    /* no-op */
-  }
-  return null;
+  )}&date=${encodeURIComponent(date)}`;
+  const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
+  if (!r2.ok) return null;
+  const j2 = await r2.json().catch(() => ({}));
+  return j2?.summary || null;
 }
 
-// расширенный нормализатор меню (+ флаг noSide для «гарнирных»)
+/** Нормализация меню + определение гарнирного main (noSide) по нескольким сигналам */
 function normMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
 
@@ -104,61 +104,71 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
   };
 
   const detectNoSide = (f: any): boolean => {
-    // Явные флаги в данных (если есть)
-    if (f?.RequiresSide === false || f?.SideRequired === false || f?.NeedSide === false) return true;
-    if (f?.RequiresSide === 'false' || f?.SideRequired === 'false' || f?.NeedSide === 'false') return true;
-
-    const name =
-      f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'] ?? '';
-    const cat =
-      f?.Category ?? f?.category ?? f?.['Dish Category'] ?? f?.['Menu Category'] ?? '';
-
-    const txt = `${name} ${cat}`.toLowerCase();
-    // «гарнирное», «без гарнира», английские эвристики
-    return /(гарнирн|без\s*гарнира|garnir|one\s*course|single\s*dish)/i.test(txt);
-  };
-
-  const push = (arr: any[] | undefined, enforcedType?: MenuItem['type']) => {
-    (arr || []).forEach((raw) => {
-      const f = raw?.fields || raw;
-      const id = raw?.id || f?.id || f?.recordId || f?.ID || '';
-      if (!id) return;
-      const name =
-        f?.Name || f?.name || f?.Title || f?.title || f?.['Dish Name'] || f?.['Meal Name'] || `#${id}`;
-      const cat =
-        f?.Category || f?.category || f?.['Extra Category'] || f?.['Dish Category'] || f?.['Menu Category'] || null;
-      const desc = f?.Description || f?.description || null;
-      const type = enforcedType ?? detectType(f);
-
-      const item: MenuItem = {
-        id: String(id),
-        name: String(name),
-        type,
-        category: cat ? String(cat) : null,
-        description: desc ? String(desc) : null,
-      };
-      if (item.type === 'main') {
-        item.noSide = detectNoSide(f);
+    const cands = [
+      f?.['Main Type'],
+      f?.['Group'],
+      f?.['Dish Group'],
+      f?.['Category'],
+      f?.['Dish Category'],
+      f?.['Menu Category'],
+      f?.['Extra Category'],
+      f?.Category,
+      f?.category,
+      f?.Type,
+      f?.type,
+      f?.Name,
+      f?.name,
+      f?.Title,
+      f?.title,
+    ];
+    for (const v of cands) {
+      if (!v) continue;
+      const s = String(v).toLowerCase();
+      if (
+        s.includes('garnirnoe') ||
+        s.includes('гарнирное') ||
+        s.includes('garnirn') ||
+        s === 'garnirnoe' ||
+        s === 'гарнирное'
+      ) {
+        return true;
       }
-      out.push(item);
-    });
+    }
+    // иногда признак хранится как булев/чекбокс
+    if (f?.['No Side'] === true || f?.noSide === true) return true;
+    return false;
   };
 
-  if ('mains' in resp || 'sides' in resp || 'extras' in resp) {
-    push((resp as any).mains, 'main');
-    push((resp as any).sides, 'side');
-    push((resp as any).extras, 'extra');
-    return out;
-  }
+  const getName = (f: any) =>
+    f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'] ?? 'Без названия';
 
-  if ('items' in resp && Array.isArray((resp as any).items)) {
-    push((resp as any).items);
+  const getDesc = (f: any) =>
+    f?.Description ?? f?.description ?? f?.['Short Description'] ?? f?.['Desc'] ?? null;
+
+  const getCat = (f: any) =>
+    f?.Category ?? f?.category ?? f?.['Extra Category'] ?? f?.['Dish Category'] ?? f?.['Menu Category'] ?? null;
+
+  const items = Array.isArray(resp?.items) ? resp.items : [];
+  for (const r of items) {
+    const id = r?.id || r?.recordId || r?.recId;
+    const fields = r?.fields || r?.f || r;
+
+    if (!id || !fields) continue;
+
+    const type = detectType(fields);
+    const name = String(getName(fields));
+    const description = getDesc(fields);
+    const category = getCat(fields);
+
+    const noSide = type === 'main' ? detectNoSide(fields) : false;
+
+    out.push({ id: String(id), name, type, category, description, noSide });
   }
 
   return out;
 }
 
-// ------------------------------------------------------------------------
+/* ===================== Component ===================== */
 
 export default function ManagerOrderClient(props: { org: string; employeeID: string; token: string; date: string }) {
   const { org, employeeID, token, date } = props;
@@ -178,39 +188,66 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
 
   const mains = useMemo(() => menu.filter((i) => i.type === 'main'), [menu]);
   const sides = useMemo(() => menu.filter((i) => i.type === 'side'), [menu]);
-  const zap = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('zapekanka')), [menu]);
-  const sal = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('salad')), [menu]);
-  const sou = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('soup')), [menu]);
-  const pas = useMemo(() => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('pastry')), [menu]);
+  const zap = useMemo(
+    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('zapekanka')),
+    [menu],
+  );
+  const sal = useMemo(
+    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('salad')),
+    [menu],
+  );
+  const sou = useMemo(
+    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('soup')),
+    [menu],
+  );
+  const pas = useMemo(
+    () => menu.filter((i) => i.type === 'extra' && (i.category || '').toLowerCase().includes('pastry')),
+    [menu],
+  );
+
+  function getCategoryByMenuId(id: string | null): string {
+    if (!id) return '';
+    const m = menu.find((x) => x.id === id);
+    return (m?.category || '').toString();
+  }
 
   function mainAllowsSide(mainId: string | null) {
     if (!mainId) return true;
     const m = mains.find((x) => x.id === mainId);
     if (!m) return true;
+    // если помечен как «гарнирное» — гарнир запрещён
     return !m.noSide;
   }
 
-  function setQty(map: Record<string, number>, setMap: (v: Record<string, number>) => void, id: string, qty: number) {
-    const q = Math.max(0, Math.floor(qty || 0));
-    const next = { ...map };
-    if (q <= 0) delete next[id];
-    else next[id] = q;
-    setMap(next);
-  }
-
-  // загрузка меню
+  /* ---------- initial menu load ---------- */
   useEffect(() => {
-    if (!org || !date) return;
-    setLoading(true);
-    fetchJSON<MenuRespLoose>(`/api/menu?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}`)
-      .then((r) => setMenu(normMenu(r)))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [org, date]);
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        setDone(null);
 
-  // префилл из существующего заказа
+        const url = `/api/menu?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+          employeeID,
+        )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}&as=manager`;
+        const j = await fetchJSON<MenuRespLoose>(url);
+        if (cancelled) return;
+
+        setMenu(normMenu(j));
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [org, employeeID, token, date]);
+
+  /* ---------- префилл из существующего заказа ---------- */
   useEffect(() => {
-    if (!org || !employeeID || !token || !date) return;
     (async () => {
       try {
         const s: any = await getManagerSummary(org, employeeID, token, date);
@@ -219,37 +256,36 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         const bxs: BoxRow[] = [];
         if (Array.isArray(s.boxes)) {
           (s.boxes as PrefillBox[]).forEach((b: PrefillBox) => {
-  const allow = mainAllowsSide((b.mainId as string) || null);
-  bxs.push({
-    key: uuid(),
-    mainId: (b.mainId as string) || null,
-    sideId: allow ? ((b.sideId as string) || null) : null, // ← чистим гарнир, если не нужен
-    qty: Math.max(0, Number(b.qty || 0)),
-  });
-});
-
+            const mainId = (b.mainId as string) || null;
+            const allow = mainAllowsSide(mainId);
+            bxs.push({
+              key: uuid(),
+              mainId,
+              sideId: allow ? ((b.sideId as string) || null) : null, // ← чистим гарнир, если «гарнирное»
+              qty: Math.max(0, Number(b.qty || 0)),
+            });
+          });
         } else if (Array.isArray(s.lines)) {
-          ((s.lines as PrefillLine[]) || [])
-  .filter((l: PrefillLine) => l.type === 'box' || l.type === 'mealbox')
-  .forEach((l: PrefillLine) => {
-    const mainId = (l.mainId as string) || null;
-    const allow = mainAllowsSide(mainId);
-    bxs.push({
-      key: uuid(),
-      mainId,
-      sideId: allow ? ((l.sideId as string) || null) : null,
-      qty: Math.max(0, Number(l.qty || 0)),
-    });
-  });
-
+          (s.lines as PrefillLine[])
+            .filter((l: PrefillLine) => l.type === 'box' || l.type === 'mealbox')
+            .forEach((l: PrefillLine) => {
+              const mainId = (l.mainId as string) || null;
+              const allow = mainAllowsSide(mainId);
+              bxs.push({
+                key: uuid(),
+                mainId,
+                sideId: allow ? ((l.sideId as string) || null) : null,
+                qty: Math.max(0, Number(l.qty || 0)),
+              });
+            });
         }
         if (bxs.length) setBoxes(bxs);
 
         const lines: PrefillLine[] | undefined = Array.isArray(s.extras)
-          ? (s.extras as { itemId: string; qty: number; category?: string }[]).map((e) => ({
-              itemId: e.itemId,
-              qty: e.qty,
+          ? (s.extras as any[]).map((e) => ({
               type: 'extra',
+              itemId: e.itemId,
+              qty: Number(e.qty || 0),
               category: e.category,
             }))
           : (s.lines as PrefillLine[] | undefined);
@@ -273,6 +309,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     })();
   }, [org, employeeID, token, date]);
 
+  /* ---------- helpers ---------- */
   function addBox() {
     setBoxes((p) => [...p, { key: uuid(), mainId: null, sideId: null, qty: 0 }]);
   }
@@ -283,64 +320,14 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     setBoxes((p) => p.map((b) => (b.key === k ? { ...b, ...patch } : b)));
   }
 
-  async function submit() {
-    setError(null);
-    setDone(null);
-
-    const cleanedBoxes = boxes
-  .map((b) => {
-    const allow = mainAllowsSide(b.mainId);
-    return {
-      mainId: b.mainId || undefined,
-      sideId: allow ? (b.sideId || undefined) : undefined, // ← очищаем гарнир, если он не нужен
-      qty: Math.max(0, Math.floor(b.qty || 0)),
-    };
-  })
-  .filter((b) => (b.mainId || b.sideId) && b.qty > 0);
-
-
-    const pack = (m: Record<string, number>) =>
-      Object.entries(m)
-        .map(([itemId, qty]) => ({ itemId, qty: Math.max(0, Math.floor(qty || 0)) }))
-        .filter((x) => x.qty > 0);
-
-    const body = {
-      employeeID,
-      org,
-      token,
-      date,
-      boxes: cleanedBoxes,
-      extras: [...pack(zapekanki), ...pack(salads), ...pack(soups), ...pack(pastry)],
-      clientToken: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`,
-    };
-
-    try {
-      setSubmitting(true);
-      const resp = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(`/api/order_manager`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!resp.ok) throw new Error(resp.error || 'Ошибка сохранения');
-      setDone({ orderId: resp.orderId || '—' });
-
-      // → сразу вернуться к выбору даты
-      const u = new URL('/manager', window.location.origin);
-      u.searchParams.set('org', org);
-      u.searchParams.set('employeeID', employeeID);
-      u.searchParams.set('token', token);
-      // небольшая задержка, чтобы юзер увидел «сохранено»
-      setTimeout(() => {
-        window.location.href = u.toString();
-      }, 600);
-    } catch (e: any) {
-      setError(e.message || String(e));
-    } finally {
-      setSubmitting(false);
-    }
+  function setQty(map: Record<string, number>, setMap: (x: Record<string, number>) => void, id: string, val: number) {
+    const v = Math.max(0, Math.floor(Number.isFinite(val) ? val : 0));
+    const next = { ...map };
+    if (v <= 0) delete next[id];
+    else next[id] = v;
+    setMap(next);
   }
 
-  // Кнопка «Назад» вверху
   function goBack() {
     const u = new URL('/manager', window.location.origin);
     u.searchParams.set('org', org);
@@ -349,17 +336,85 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     router.push(u.toString());
   }
 
+  /* ---------- submit ---------- */
+  async function submit() {
+    try {
+      setSubmitting(true);
+      setError(null);
+
+      // boxes — очищаем sideId для «гарнирных»
+      const cleanedBoxes = boxes
+        .map((b) => {
+          const allow = mainAllowsSide(b.mainId);
+          return {
+            mainId: b.mainId || undefined,
+            sideId: allow ? (b.sideId || undefined) : undefined, // ← ключевая строка
+            qty: Math.max(0, Math.floor(b.qty || 0)),
+          };
+        })
+        .filter((b) => (b.mainId || b.sideId) && (b as any).qty > 0);
+
+      // extras — только разрешённые категории (zapekanka/salad/soup/pastry)
+      const extras: Array<{ itemId: string; qty: number }> = [];
+      const pushMap = (m: Record<string, number>) => {
+        Object.entries(m).forEach(([id, qty]) => {
+          const q = Math.max(0, Math.floor(qty || 0));
+          if (q > 0) extras.push({ itemId: id, qty: q });
+        });
+      };
+      pushMap(zapekanki);
+      pushMap(salads);
+      pushMap(soups);
+      pushMap(pastry);
+
+      const body = {
+        org,
+        employeeID,
+        token,
+        date,
+        boxes: cleanedBoxes,
+        extras,
+        clientToken: uuid(), // идемпотентность
+      };
+
+      const r = await fetch('/api/order_manager', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j?.ok) {
+        throw new Error(j?.error || 'Ошибка сохранения');
+      }
+      setDone({ orderId: j.orderId || '—' });
+
+      // возврат на календарь после успешного сохранения
+      setTimeout(() => {
+        goBack();
+      }, 600);
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /* ===================== UI ===================== */
+
   return (
     <main className="p-4 space-y-6">
-  <div className="flex items-center justify-between">
-    <h2 className="text-xl font-semibold text-white">
-      Заказ менеджера на {date || '—'}
-    </h2>
-    <Button variant="ghost" onClick={goBack}>Назад</Button>
-  </div>
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-semibold text-white">Заказ менеджера на {date || '—'}</h2>
+        <div className="flex-1" />
+        <Button variant="ghost" onClick={goBack}>
+          Назад
+        </Button>
+      </div>
 
-  <Panel title="">
-
+      <Panel title="">
         {/* Zapekanka */}
         <section className="space-y-2">
           <div className="text-white font-semibold">Запеканки и блинчики</div>
@@ -406,7 +461,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
           </div>
         </section>
 
-        {/* Soup */}
+        {/* Soups */}
         <section className="space-y-2 pt-4">
           <div className="text-white font-semibold">Супы</div>
           <div className="grid gap-2">
@@ -429,11 +484,34 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
           </div>
         </section>
 
-        {/* Main + Side */}
+        {/* Pastry */}
+        <section className="space-y-2 pt-4">
+          <div className="text-white font-semibold">Выпечка</div>
+          <div className="grid gap-2">
+            {pas.map((i) => (
+              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
+                <div>
+                  <div className="text-white">{i.name}</div>
+                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
+                  value={pastry[i.id] || 0}
+                  onChange={(e) => setQty(pastry, setPastry, i.id, parseInt(e.target.value || '0', 10))}
+                />
+              </label>
+            ))}
+            {!pas.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+          </div>
+        </section>
+
+        {/* Meal Boxes */}
         <section className="space-y-2 pt-4">
           <div className="text-white font-semibold">Основные блюда и гарниры</div>
           <div className="space-y-3">
-            {boxes.map((b, idx) => {
+            {boxes.map((b) => {
               const allowSide = mainAllowsSide(b.mainId);
               return (
                 <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
@@ -461,70 +539,47 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
                   <div className="md:col-span-2">
                     <div className="text-xs text-white/60 mb-1">Гарнир</div>
                     <select
-                      className="w-full bg-neutral-800 text-white rounded px-2 py-2"
+                      className="w-full bg-neutral-800 text-white rounded px-2 py-2 disabled:opacity-50"
                       value={b.sideId || ''}
                       onChange={(e) => patchBox(b.key, { sideId: e.target.value || null })}
-                      disabled={loading || !allowSide}
+                      disabled={loading || !allowSide} // ← блокируем для «гарнирных»
                     >
-                      <option value="">{allowSide ? '— не выбрано —' : 'не требуется'}</option>
-                      {allowSide &&
-                        sides.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
+                      <option value="">— не выбрано —</option>
+                      {sides.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  <div>
+                  <div className="md:col-span-1">
                     <div className="text-xs text-white/60 mb-1">Кол-во</div>
                     <input
                       type="number"
                       min={0}
-                      className="w-full bg-neutral-800 text-white rounded px-2 py-2"
+                      className="w-full bg-neutral-900 text-white rounded px-2 py-2 text-right"
                       value={b.qty}
-                      onChange={(e) => patchBox(b.key, { qty: Math.max(0, parseInt(e.target.value || '0', 10)) })}
+                      onChange={(e) =>
+                        patchBox(b.key, { qty: Math.max(0, Math.floor(parseInt(e.target.value || '0', 10))) })
+                      }
                     />
                   </div>
 
-                  <div className="md:col-span-6 flex gap-2">
-                    {idx === boxes.length - 1 && (
-                      <Button variant="ghost" onClick={addBox}>
-                        + Добавить основное блюдо
-                      </Button>
-                    )}
-                    {boxes.length > 1 && (
-                      <Button variant="ghost" onClick={() => removeBox(b.key)}>
-                        Удалить
-                      </Button>
-                    )}
+                  <div className="md:col-span-1 flex gap-2">
+                    <Button variant="ghost" onClick={() => removeBox(b.key)}>
+                      Удалить
+                    </Button>
                   </div>
                 </div>
               );
             })}
-          </div>
-        </section>
 
-        {/* Pastry */}
-        <section className="space-y-2 pt-4">
-          <div className="text-white font-semibold">Выпечка</div>
-          <div className="grid gap-2">
-            {pas.map((i) => (
-              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
-                <div>
-                  <div className="text-white">{i.name}</div>
-                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
-                  value={pastry[i.id] || 0}
-                  onChange={(e) => setQty(pastry, setPastry, i.id, parseInt(e.target.value || '0', 10))}
-                />
-              </label>
-            ))}
-            {!pas.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+            <div>
+              <Button variant="secondary" onClick={addBox}>
+                + Добавить основное блюдо
+              </Button>
+            </div>
           </div>
         </section>
 
