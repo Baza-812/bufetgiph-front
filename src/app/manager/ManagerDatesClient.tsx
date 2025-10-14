@@ -5,7 +5,13 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import { useSearchParams, useRouter } from 'next/navigation';
 
-type Summary = { orderId?: string; status?: string; date?: string; lines?: string[] };
+type Summary = {
+  orderId?: string;
+  status?: string;
+  date?: string;
+  lines?: string[];
+};
+
 type SummaryResp = { ok: boolean; summary: Summary | null };
 
 function fmtDayLabel(iso: string) {
@@ -43,9 +49,6 @@ export default function ManagerDatesClient() {
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [busyReady, setBusyReady] = useState(false);
 
-  // для явного контроля — что вернул summary по каждой дате
-  const [summaryByDate, setSummaryByDate] = useState<Record<string, Summary | null>>({});
-
   // модалка
   const [modalOpen, setModalOpen] = useState(false);
   const [modalDate, setModalDate] = useState<string | null>(null);
@@ -53,20 +56,7 @@ export default function ManagerDatesClient() {
   const [modalError, setModalError] = useState<string | null>(null);
   const [modalSummary, setModalSummary] = useState<Summary | null>(null);
 
-  // health — чтобы видеть, в какое API попали
-  const [health, setHealth] = useState<any>(null);
-  useEffect(() => {
-    (async () => {
-      try {
-        const h = await fetchJSON('/api/health');
-        setHealth(h);
-      } catch {
-        setHealth(null);
-      }
-    })();
-  }, []);
-
-  // 1) тянем окно дат (as=hr, чтобы включать «сегодня» до HR cutoff)
+  // 1) окно дат (для менеджера — as=hr, чтобы включать «сегодня» до HR cutoff)
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -82,40 +72,34 @@ export default function ManagerDatesClient() {
     })();
   }, [org]);
 
-  // 2) «серость» считаем строго по /api/order_summary
+  // 2) «серость» считаем строго по /api/order_summary scope=org
   const reloadBusy = useCallback(async () => {
-    if (!employeeID || !org || !token || dates.length === 0) return;
+    if (!org || dates.length === 0) return;
     setBusyReady(false);
     try {
       const map: Record<string, boolean> = {};
-      const sbd: Record<string, Summary | null> = {};
-
       await Promise.all(
         dates.map(async (d) => {
           try {
             const u = `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(d)}&scope=org`;
             const s = await fetchJSON<SummaryResp>(u);
-            const sum = s?.summary || null;
-            sbd[d] = sum;
-            const st = String(sum?.status || '').toLowerCase();
+            const st = String(s?.summary?.status || '').toLowerCase();
             const cancelled = st === 'cancelled' || st === 'canceled';
-            map[d] = Boolean(sum?.orderId) && !cancelled;
+            map[d] = Boolean(s?.summary?.orderId) && !cancelled;
           } catch {
             map[d] = false;
-            sbd[d] = null;
           }
         }),
       );
-      setSummaryByDate(sbd);
       setBusy(map);
     } finally {
       setBusyReady(true);
     }
-  }, [dates, employeeID, org, token]);
+  }, [dates, org]);
 
   useEffect(() => { reloadBusy(); }, [reloadBusy]);
 
-  // при возврате на вкладку — обновить (после оформления/отмены)
+  // после возврата со страницы заказа — обновим
   useEffect(() => {
     const onFocus = () => reloadBusy();
     window.addEventListener('focus', onFocus);
@@ -124,14 +108,14 @@ export default function ManagerDatesClient() {
 
   function toOrderPage(date: string) {
     const u = new URL('/manager/order', window.location.origin);
-    u.searchParams.set('org', org);
-    u.searchParams.set('employeeID', employeeID);
-    u.searchParams.set('token', token);
+    if (org) u.searchParams.set('org', org);
+    if (employeeID) u.searchParams.set('employeeID', employeeID);
+    if (token) u.searchParams.set('token', token);
     u.searchParams.set('date', date);
     router.push(u.toString());
   }
 
-  // открыть модалку состав/действия
+  // открыть модалку: сразу просим with=lines, чтобы показать состав
   async function openModalFor(date: string) {
     setModalOpen(true);
     setModalDate(date);
@@ -139,7 +123,7 @@ export default function ManagerDatesClient() {
     setModalError(null);
     setModalLoading(true);
     try {
-      const u = `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}&scope=org`;
+      const u = `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}&scope=org&with=lines`;
       const j = await fetchJSON<SummaryResp>(u);
       setModalSummary(j.summary || null);
     } catch (e: any) {
@@ -191,18 +175,9 @@ export default function ManagerDatesClient() {
     else toOrderPage(d);
   }
 
-  const missingParams = !org || !employeeID || !token;
-
   return (
     <main>
       <Panel title="Заказ менеджера: выберите дату">
-        {missingParams && (
-          <div className="mb-3 text-amber-400 text-sm">
-            Не хватает параметров в URL: <b>{!org && 'org '}{!employeeID && 'employeeID '}{!token && 'token'}</b>.
-            Открой ссылку вида: <code className="bg-black/20 px-1 rounded">/manager?org=...&employeeID=...&token=...</code>
-          </div>
-        )}
-
         {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
         {err && <div className="text-red-400 text-sm">Ошибка: {err}</div>}
 
@@ -210,27 +185,14 @@ export default function ManagerDatesClient() {
           {dates.map((d) => {
             const has = !!busy[d]; // true → серый, false → жёлтый
             const label = fmtDayLabel(d);
-            const sum = summaryByDate[d];
-            const st = String(sum?.status || '').toLowerCase();
-
             const cls = has
               ? 'w-full rounded-lg px-3 py-2 bg-neutral-700 text-white'
               : 'w-full rounded-lg px-3 py-2 bg-yellow-500 text-black hover:bg-yellow-400';
 
             return (
-              <div key={d} className="space-y-1">
-                <button onClick={() => onPick(d)} className={cls} disabled={!busyReady || missingParams}>
-                  {label}
-                </button>
-                {/* маленький тег-подсказка по тому, что пришло из summary */}
-                <div className="text-[10px] text-white/50">
-                  {sum?.orderId ? (
-                    <span>status: <b>{st || '—'}</b>, id: {sum.orderId.slice(0, 6)}…</span>
-                  ) : (
-                    <span>нет заказа</span>
-                  )}
-                </div>
-              </div>
+              <button key={d} onClick={() => onPick(d)} className={cls} disabled={!busyReady}>
+                {label}
+              </button>
             );
           })}
         </div>
@@ -242,10 +204,6 @@ export default function ManagerDatesClient() {
           <span className="inline-flex items-center gap-2">
             <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
           </span>
-        </div>
-
-        <div className="mt-4 text-xs text-white/40">
-          API health: {health ? JSON.stringify(health) : 'нет ответа'}
         </div>
       </Panel>
 
@@ -263,6 +221,7 @@ export default function ManagerDatesClient() {
               <div className="p-4 space-y-3">
                 {modalLoading && <div className="text-white/70 text-sm">Загрузка состава…</div>}
                 {modalError && <div className="text-rose-400 text-sm">Ошибка: {modalError}</div>}
+
                 {!modalLoading && !modalError && (
                   <>
                     {modalSummary?.lines && modalSummary.lines.length > 0 ? (
