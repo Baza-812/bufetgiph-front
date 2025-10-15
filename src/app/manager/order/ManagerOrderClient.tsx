@@ -76,6 +76,20 @@ async function getManagerSummary(org: string, employeeID: string, token: string,
   return j2?.summary || null;
 }
 
+/** true для checkbox/lookup-boolean Airtable (и массивов из lookup). */
+function readLookupBool(f: any, keys: string[]): boolean {
+  for (const k of keys) {
+    const v = f?.[k];
+    if (Array.isArray(v)) {
+      if (v.some((x) => x === true || x === 1 || String(x).toLowerCase() === 'true')) return true;
+    } else if (v === true || v === 1 || String(v).toLowerCase() === 'true') {
+      return true;
+    }
+  }
+  return false;
+}
+
+
 /** Нормализация меню + определение «гарнирного main» (noSide) */
 function normMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
@@ -108,11 +122,21 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
   };
 
   const detectNoSide = (f: any): boolean => {
-  // 1) явные булевые/флаги, если есть
-  if (f?.['No Side'] === true || f?.noSide === true) return true;
-  if (String(f?.['Side Required'] ?? '').toLowerCase() === 'no') return true;
+  // 1) Жёсткий приоритет — явный флаг из Airtable:
+  //    чекбокс в Dishes и его lookup в Menu.
+  if (
+    readLookupBool(f, [
+      'Garnirnoe (from Dish)',
+      'Garnirnoe (from Dishes)',
+      'Garnirnoe',              // на случай, если поле прокинуто напрямую
+      'Гарнирное (из блюда)',   // если вдруг есть русская версия названия
+      'Гарнирное',
+    ])
+  ) {
+    return true;
+  }
 
-  // 2) признаки в типах/категориях/группах
+  // 2) Фоллбек: любые текстовые признаки в типах/категориях/названии/описании
   const candidates = [
     f?.['Main Type'],
     f?.['Group'],
@@ -125,16 +149,19 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
     f?.category,
     f?.Type,
     f?.type,
+    f?.Name,
+    f?.name,
+    f?.Title,
+    f?.title,
+    f?.Description,
+    f?.description,
   ];
-
   for (const v of candidates) {
     if (!v) continue;
     const s = String(v).toLowerCase();
-    // любые варианты написания
     if (
-      s.includes('garnirnoe') || // транслит
-      s.includes('garnirn') ||
-      s.includes('гарнирно') || // "гарнирное", "гарнирные"
+      s.includes('garnirnoe') ||
+      s.includes('гарнирно') ||
       s.includes('без гарнира') ||
       s.includes('no side') ||
       s.includes('without side')
@@ -142,27 +169,9 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
       return true;
     }
   }
-
-  // 3) эвристика по названию/описанию
-  const name =
-    f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'] ?? '';
-  const desc =
-    f?.Description ?? f?.description ?? f?.['Short Description'] ?? f?.['Desc'] ?? '';
-
-  const hay = (name + ' ' + desc).toLowerCase();
-  if (
-    hay.includes('garnirnoe') ||
-    hay.includes('гaрнирн') || // охватывает "гарнирн*"
-    hay.includes('гарнирно') ||
-    hay.includes('без гарнира') ||
-    hay.includes('no side') ||
-    hay.includes('without side')
-  ) {
-    return true;
-  }
-
   return false;
 };
+
 
 
   const getName = (f: any) =>
