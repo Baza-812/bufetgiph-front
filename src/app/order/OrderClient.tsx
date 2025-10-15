@@ -7,6 +7,7 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import HintDates from '@/components/HintDates';
 
 type SingleResp = {
   ok: boolean;
@@ -50,6 +51,8 @@ export default function OrderClient() {
       localStorage.setItem('baza.token', t);
     }
   }, []);
+
+  <HintDates />
 
   // 2) опубликованные даты
   useEffect(() => {
