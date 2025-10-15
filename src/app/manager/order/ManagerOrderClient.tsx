@@ -108,39 +108,62 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
   };
 
   const detectNoSide = (f: any): boolean => {
-    const cands = [
-      f?.['Main Type'],
-      f?.['Group'],
-      f?.['Dish Group'],
-      f?.['Category'],
-      f?.['Dish Category'],
-      f?.['Menu Category'],
-      f?.['Extra Category'],
-      f?.Category,
-      f?.category,
-      f?.Type,
-      f?.type,
-      f?.Name,
-      f?.name,
-      f?.Title,
-      f?.title,
-    ];
-    for (const v of cands) {
-      if (!v) continue;
-      const s = String(v).toLowerCase();
-      if (
-        s.includes('garnirnoe') ||
-        s.includes('гарнирное') ||
-        s.includes('garnirn') ||
-        s === 'garnirnoe' ||
-        s === 'гарнирное'
-      ) {
-        return true;
-      }
+  // 1) явные булевые/флаги, если есть
+  if (f?.['No Side'] === true || f?.noSide === true) return true;
+  if (String(f?.['Side Required'] ?? '').toLowerCase() === 'no') return true;
+
+  // 2) признаки в типах/категориях/группах
+  const candidates = [
+    f?.['Main Type'],
+    f?.['Group'],
+    f?.['Dish Group'],
+    f?.['Category'],
+    f?.['Dish Category'],
+    f?.['Menu Category'],
+    f?.['Extra Category'],
+    f?.Category,
+    f?.category,
+    f?.Type,
+    f?.type,
+  ];
+
+  for (const v of candidates) {
+    if (!v) continue;
+    const s = String(v).toLowerCase();
+    // любые варианты написания
+    if (
+      s.includes('garnirnoe') || // транслит
+      s.includes('garnirn') ||
+      s.includes('гарнирно') || // "гарнирное", "гарнирные"
+      s.includes('без гарнира') ||
+      s.includes('no side') ||
+      s.includes('without side')
+    ) {
+      return true;
     }
-    if (f?.['No Side'] === true || f?.noSide === true) return true;
-    return false;
-  };
+  }
+
+  // 3) эвристика по названию/описанию
+  const name =
+    f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'] ?? '';
+  const desc =
+    f?.Description ?? f?.description ?? f?.['Short Description'] ?? f?.['Desc'] ?? '';
+
+  const hay = (name + ' ' + desc).toLowerCase();
+  if (
+    hay.includes('garnirnoe') ||
+    hay.includes('гaрнирн') || // охватывает "гарнирн*"
+    hay.includes('гарнирно') ||
+    hay.includes('без гарнира') ||
+    hay.includes('no side') ||
+    hay.includes('without side')
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
 
   const getName = (f: any) =>
     f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'] ?? 'Без названия';
@@ -448,7 +471,10 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
                         onChange={(e) => patchBox(b.key, { sideId: e.target.value || null })}
                         disabled={loading || !allowSide}
                       >
-                        <option value="">— не выбрано —</option>
+                        <option value="">
+  {allowSide ? '— не выбрано —' : 'Гарнир не требуется'}
+</option>
+
                         {sides.map((s) => (
                           <option key={s.id} value={s.id}>
                             {s.name}
