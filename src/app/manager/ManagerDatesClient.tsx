@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
+import HintDates from '@/components/HintDates';
 import { useSearchParams, useRouter } from 'next/navigation';
 
 type Summary = {
@@ -197,14 +198,10 @@ export default function ManagerDatesClient() {
           })}
         </div>
 
-        <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
-          <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded bg-yellow-500" /> свободно
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
-          </span>
-        </div>
+      {/* Подсказка над кнопками дат */}
+      <HintDates isManager />
+        
+        
       </Panel>
 
       {/* Модалка */}
