@@ -13,7 +13,7 @@ type MenuItem = {
   type: 'main' | 'side' | 'extra';
   category?: string | null;
   description?: string | null;
-  noSide?: boolean; // ← «гарнирное» основное: гарнир не положен
+  noSide?: boolean; // «гарнирное» основное: гарнир не положен
 };
 
 type MenuRespLoose = {
@@ -22,7 +22,14 @@ type MenuRespLoose = {
 };
 
 type PrefillBox = { mainId?: string | null; sideId?: string | null; qty?: number };
-type PrefillLine = { type?: 'box' | 'mealbox' | 'extra'; mainId?: string | null; sideId?: string | null; itemId?: string | null; qty?: number; category?: string | null };
+type PrefillLine = {
+  type?: 'box' | 'mealbox' | 'extra';
+  mainId?: string | null;
+  sideId?: string | null;
+  itemId?: string | null;
+  qty?: number;
+  category?: string | null;
+};
 
 type BoxRow = { key: string; mainId: string | null; sideId: string | null; qty: number };
 
@@ -42,10 +49,7 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-/** Универсальная загрузка сводки заказа менеджера на дату.
- *  1) Пытаемся GET /api/order_manager?org&employeeID&token&date (если поддержан)
- *  2) Фолбэк на /api/order_summary?org&employeeID&date
- */
+/** Универсальная загрузка сводки заказа менеджера на дату. */
 async function getManagerSummary(org: string, employeeID: string, token: string, date: string) {
   // 1) пробуем /order_manager
   const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
@@ -72,7 +76,7 @@ async function getManagerSummary(org: string, employeeID: string, token: string,
   return j2?.summary || null;
 }
 
-/** Нормализация меню + определение гарнирного main (noSide) по нескольким сигналам */
+/** Нормализация меню + определение «гарнирного main» (noSide) */
 function normMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
 
@@ -134,7 +138,6 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
         return true;
       }
     }
-    // иногда признак хранится как булев/чекбокс
     if (f?.['No Side'] === true || f?.noSide === true) return true;
     return false;
   };
@@ -205,18 +208,11 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     [menu],
   );
 
-  function getCategoryByMenuId(id: string | null): string {
-    if (!id) return '';
-    const m = menu.find((x) => x.id === id);
-    return (m?.category || '').toString();
-  }
-
   function mainAllowsSide(mainId: string | null) {
     if (!mainId) return true;
     const m = mains.find((x) => x.id === mainId);
     if (!m) return true;
-    // если помечен как «гарнирное» — гарнир запрещён
-    return !m.noSide;
+    return !m.noSide; // для «гарнирного» — гарнир запрещён
   }
 
   /* ---------- initial menu load ---------- */
@@ -261,7 +257,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
             bxs.push({
               key: uuid(),
               mainId,
-              sideId: allow ? ((b.sideId as string) || null) : null, // ← чистим гарнир, если «гарнирное»
+              sideId: allow ? ((b.sideId as string) || null) : null,
               qty: Math.max(0, Number(b.qty || 0)),
             });
           });
@@ -342,13 +338,13 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
       setSubmitting(true);
       setError(null);
 
-      // boxes — очищаем sideId для «гарнирных»
+      // boxes — чистим sideId для «гарнирных»
       const cleanedBoxes = boxes
         .map((b) => {
           const allow = mainAllowsSide(b.mainId);
           return {
             mainId: b.mainId || undefined,
-            sideId: allow ? (b.sideId || undefined) : undefined, // ← ключевая строка
+            sideId: allow ? (b.sideId || undefined) : undefined,
             qty: Math.max(0, Math.floor(b.qty || 0)),
           };
         })
@@ -405,198 +401,213 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
   /* ===================== UI ===================== */
 
   return (
-    <main className="p-4 space-y-6">
-      <div className="flex justify-between items-center">
+    <main className="p-4">
+      <div className="max-w-4xl mx-auto space-y-6">
         <h2 className="text-xl font-semibold text-white">Заказ менеджера на {date || '—'}</h2>
-        <div className="flex-1" />
-        <Button variant="ghost" onClick={goBack}>
-          Назад
-        </Button>
-      </div>
 
-      <Panel title="">
-        {/* Zapekanka */}
-        <section className="space-y-2">
-          <div className="text-white font-semibold">Запеканки и блинчики</div>
-          <div className="grid gap-2">
-            {zap.map((i) => (
-              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
-                <div>
-                  <div className="text-white">{i.name}</div>
-                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
-                  value={zapekanki[i.id] || 0}
-                  onChange={(e) => setQty(zapekanki, setZapekanki, i.id, parseInt(e.target.value || '0', 10))}
-                />
-              </label>
-            ))}
-            {!zap.length && <div className="text-white/50 text-sm">Нет позиций</div>}
-          </div>
-        </section>
-
-        {/* Salad */}
-        <section className="space-y-2 pt-4">
-          <div className="text-white font-semibold">Салаты</div>
-          <div className="grid gap-2">
-            {sal.map((i) => (
-              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
-                <div>
-                  <div className="text-white">{i.name}</div>
-                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
-                  value={salads[i.id] || 0}
-                  onChange={(e) => setQty(salads, setSalads, i.id, parseInt(e.target.value || '0', 10))}
-                />
-              </label>
-            ))}
-            {!sal.length && <div className="text-white/50 text-sm">Нет позиций</div>}
-          </div>
-        </section>
-
-        {/* Soups */}
-        <section className="space-y-2 pt-4">
-          <div className="text-white font-semibold">Супы</div>
-          <div className="grid gap-2">
-            {sou.map((i) => (
-              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
-                <div>
-                  <div className="text-white">{i.name}</div>
-                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
-                  value={soups[i.id] || 0}
-                  onChange={(e) => setQty(soups, setSoups, i.id, parseInt(e.target.value || '0', 10))}
-                />
-              </label>
-            ))}
-            {!sou.length && <div className="text-white/50 text-sm">Нет позиций</div>}
-          </div>
-        </section>
-
-        {/* Pastry */}
-        <section className="space-y-2 pt-4">
-          <div className="text-white font-semibold">Выпечка</div>
-          <div className="grid gap-2">
-            {pas.map((i) => (
-              <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
-                <div>
-                  <div className="text-white">{i.name}</div>
-                  {i.description && <div className="text-xs text-white/50">{i.description}</div>}
-                </div>
-                <input
-                  type="number"
-                  min={0}
-                  className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
-                  value={pastry[i.id] || 0}
-                  onChange={(e) => setQty(pastry, setPastry, i.id, parseInt(e.target.value || '0', 10))}
-                />
-              </label>
-            ))}
-            {!pas.length && <div className="text-white/50 text-sm">Нет позиций</div>}
-          </div>
-        </section>
-
-        {/* Meal Boxes */}
-        <section className="space-y-2 pt-4">
-          <div className="text-white font-semibold">Основные блюда и гарниры</div>
-          <div className="space-y-3">
-            {boxes.map((b) => {
-              const allowSide = mainAllowsSide(b.mainId);
-              return (
-                <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
-                  <div className="md:col-span-2">
-                    <div className="text-xs text-white/60 mb-1">Основное блюдо</div>
-                    <select
-                      className="w-full bg-neutral-800 text-white rounded px-2 py-2"
-                      value={b.mainId || ''}
-                      onChange={(e) => {
-                        const newMain = e.target.value || null;
-                        const allow = mainAllowsSide(newMain);
-                        patchBox(b.key, { mainId: newMain, sideId: allow ? b.sideId : null });
-                      }}
-                      disabled={loading}
-                    >
-                      <option value="">— не выбрано —</option>
-                      {mains.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <div className="text-xs text-white/60 mb-1">Гарнир</div>
-                    <select
-                      className="w-full bg-neutral-800 text-white rounded px-2 py-2 disabled:opacity-50"
-                      value={b.sideId || ''}
-                      onChange={(e) => patchBox(b.key, { sideId: e.target.value || null })}
-                      disabled={loading || !allowSide} // ← блокируем для «гарнирных»
-                    >
-                      <option value="">— не выбрано —</option>
-                      {sides.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="md:col-span-1">
-                    <div className="text-xs text-white/60 mb-1">Кол-во</div>
-                    <input
-                      type="number"
-                      min={0}
-                      className="w-full bg-neutral-900 text-white rounded px-2 py-2 text-right"
-                      value={b.qty}
-                      onChange={(e) =>
-                        patchBox(b.key, { qty: Math.max(0, Math.floor(parseInt(e.target.value || '0', 10))) })
-                      }
-                    />
-                  </div>
-
-                  <div className="md:col-span-1 flex gap-2">
-                    <Button variant="ghost" onClick={() => removeBox(b.key)}>
-                      Удалить
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-
-            <div>
-              <Button variant="ghost" onClick={addBox}>
-              + Добавить основное блюдо
-              </Button>
-
+        <Panel title="">
+          {/* ====== Основные и гарниры — ПЕРВЫЙ блок ====== */}
+          <section className="space-y-2">
+            <div className="text-white font-semibold">
+              <span className="text-yellow-400">[ </span>
+              Основные блюда и гарниры
+              <span className="text-yellow-400"> ]</span>
             </div>
-          </div>
-        </section>
 
-        {error && <div className="text-rose-400 mt-3">{error}</div>}
-        {done && (
-          <div className="text-emerald-400 mt-3">
-            Заказ сохранён. Номер заказа: <b>{done.orderId}</b>
-          </div>
-        )}
+            <div className="space-y-3">
+              {boxes.map((b) => {
+                const allowSide = mainAllowsSide(b.mainId);
+                return (
+                  <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                    <div className="md:col-span-2">
+                      <div className="text-xs text-white/60 mb-1">Основное блюдо</div>
+                      <select
+                        className="w-full bg-neutral-800 text-white rounded px-2 py-2"
+                        value={b.mainId || ''}
+                        onChange={(e) => {
+                          const newMain = e.target.value || null;
+                          const allow = mainAllowsSide(newMain);
+                          patchBox(b.key, { mainId: newMain, sideId: allow ? b.sideId : null });
+                        }}
+                        disabled={loading}
+                      >
+                        <option value="">— не выбрано —</option>
+                        {mains.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-        <div className="pt-4">
-          <Button onClick={submit} disabled={submitting || loading}>
-            {submitting ? 'Сохраняю…' : 'Оформить заказ'}
-          </Button>
-        </div>
-      </Panel>
+                    <div className="md:col-span-2">
+                      <div className="text-xs text-white/60 mb-1">Гарнир</div>
+                      <select
+                        className="w-full bg-neutral-800 text-white rounded px-2 py-2 disabled:opacity-50"
+                        value={b.sideId || ''}
+                        onChange={(e) => patchBox(b.key, { sideId: e.target.value || null })}
+                        disabled={loading || !allowSide}
+                      >
+                        <option value="">— не выбрано —</option>
+                        {sides.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-1">
+                      <div className="text-xs text-white/60 mb-1">Кол-во</div>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full bg-neutral-900 text-white rounded px-2 py-2 text-right"
+                        value={b.qty}
+                        onChange={(e) =>
+                          patchBox(b.key, { qty: Math.max(0, Math.floor(parseInt(e.target.value || '0', 10))) })
+                        }
+                      />
+                    </div>
+
+                    <div className="md:col-span-1 flex gap-2">
+                      <Button onClick={() => removeBox(b.key)}>Удалить</Button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div>
+                <Button onClick={addBox}>+ Добавить основное блюдо</Button>
+              </div>
+            </div>
+          </section>
+
+          {/* ====== Запеканки ====== */}
+          <section className="space-y-2 pt-6">
+            <div className="text-white font-semibold">
+              <span className="text-yellow-400">[ </span>
+              Запеканки и блинчики
+              <span className="text-yellow-400"> ]</span>
+            </div>
+            <div className="grid gap-2">
+              {zap.map((i) => (
+                <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
+                  <div>
+                    <div className="text-white">{i.name}</div>
+                    {i.description && <div className="text-xs text-white/50">{i.description}</div>}
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
+                    value={zapekanki[i.id] || 0}
+                    onChange={(e) => setQty(zapekanki, setZapekanki, i.id, parseInt(e.target.value || '0', 10))}
+                  />
+                </label>
+              ))}
+              {!zap.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+            </div>
+          </section>
+
+          {/* ====== Салаты ====== */}
+          <section className="space-y-2 pt-6">
+            <div className="text-white font-semibold">
+              <span className="text-yellow-400">[ </span>
+              Салаты
+              <span className="text-yellow-400"> ]</span>
+            </div>
+            <div className="grid gap-2">
+              {sal.map((i) => (
+                <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
+                  <div>
+                    <div className="text-white">{i.name}</div>
+                    {i.description && <div className="text-xs text-white/50">{i.description}</div>}
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
+                    value={salads[i.id] || 0}
+                    onChange={(e) => setQty(salads, setSalads, i.id, parseInt(e.target.value || '0', 10))}
+                  />
+                </label>
+              ))}
+              {!sal.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+            </div>
+          </section>
+
+          {/* ====== Супы ====== */}
+          <section className="space-y-2 pt-6">
+            <div className="text-white font-semibold">
+              <span className="text-yellow-400">[ </span>
+              Супы
+              <span className="text-yellow-400"> ]</span>
+            </div>
+            <div className="grid gap-2">
+              {sou.map((i) => (
+                <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
+                  <div>
+                    <div className="text-white">{i.name}</div>
+                    {i.description && <div className="text-xs text-white/50">{i.description}</div>}
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
+                    value={soups[i.id] || 0}
+                    onChange={(e) => setQty(soups, setSoups, i.id, parseInt(e.target.value || '0', 10))}
+                  />
+                </label>
+              ))}
+              {!sou.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+            </div>
+          </section>
+
+          {/* ====== Выпечка ====== */}
+          <section className="space-y-2 pt-6">
+            <div className="text-white font-semibold">
+              <span className="text-yellow-400">[ </span>
+              Выпечка
+              <span className="text-yellow-400"> ]</span>
+            </div>
+            <div className="grid gap-2">
+              {pas.map((i) => (
+                <label key={i.id} className="flex items-center justify-between bg-neutral-800 rounded px-3 py-2">
+                  <div>
+                    <div className="text-white">{i.name}</div>
+                    {i.description && <div className="text-xs text-white/50">{i.description}</div>}
+                  </div>
+                  <input
+                    type="number"
+                    min={0}
+                    className="w-24 bg-neutral-900 text-white rounded px-2 py-1 text-right"
+                    value={pastry[i.id] || 0}
+                    onChange={(e) => setQty(pastry, setPastry, i.id, parseInt(e.target.value || '0', 10))}
+                  />
+                </label>
+              ))}
+              {!pas.length && <div className="text-white/50 text-sm">Нет позиций</div>}
+            </div>
+          </section>
+
+          {error && <div className="text-rose-400 mt-4">{error}</div>}
+          {done && (
+            <div className="text-emerald-400 mt-4">
+              Заказ сохранён. Номер заказа: <b>{done.orderId}</b>
+            </div>
+          )}
+
+          {/* Нижняя панель действий: Сохранить + Назад */}
+          <div className="pt-6 flex flex-col sm:flex-row gap-3 sm:items-center">
+            <Button onClick={submit} disabled={submitting || loading}>
+              {submitting ? 'Сохраняю…' : 'Оформить заказ'}
+            </Button>
+            <div className="flex-1" />
+            <Button onClick={goBack}>Назад</Button>
+          </div>
+        </Panel>
+      </div>
     </main>
   );
 }
