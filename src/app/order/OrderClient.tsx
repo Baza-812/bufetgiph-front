@@ -7,6 +7,7 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import HintDates from '@/components/HintDates';
 
 type SingleResp = {
   ok: boolean;
@@ -51,7 +52,7 @@ export default function OrderClient() {
     }
   }, []);
 
-  // 2) опубликованные даты
+   // 2) опубликованные даты
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -206,15 +207,10 @@ export default function OrderClient() {
           })}
         </div>
 
+        <HintDates />
+        
         {/* Легенда */}
-        <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
-          <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded bg-yellow-500" /> свободно
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded bg-white/10" /> уже заказано
-          </span>
-        </div>
+        
       </Panel>
 
       {/* Модалка со составом — показываем только когда выбран день */}
@@ -283,8 +279,7 @@ function DateModal({
       });
       onClose();
       onChanged(); // обновим «серость»
-      alert('Заказ отменён.');
-    } catch(e: unknown) {
+          } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setWorking(false); }
   }
@@ -322,24 +317,31 @@ function DateModal({
 
           <div className="flex gap-3 pt-2">
             <Button onClick={onClose}>ОК</Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                const u = new URL('/order/quiz', window.location.origin);
-                u.searchParams.set('date', iso);
-                u.searchParams.set('step', '1');
-                u.searchParams.set('org', org);
-                u.searchParams.set('employeeID', employeeID);
-                u.searchParams.set('token', token);
-                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
-                window.location.href = u.toString();
-              }}
-            >
-              Изменить
-            </Button>
-            <Button onClick={cancelOrder} variant="danger" disabled={working || !sum?.orderId}>
-              {working ? 'Отмена…' : 'Отменить'}
-            </Button>
+
+<Button
+  variant="ghost"
+  onClick={() => {
+    const u = new URL('/order/quiz', window.location.origin);
+    u.searchParams.set('date', iso);
+    u.searchParams.set('step', '1');
+    u.searchParams.set('org', org);
+    u.searchParams.set('employeeID', employeeID);
+    u.searchParams.set('token', token);
+    if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
+    window.location.href = u.toString();
+  }}
+>
+  Изменить
+</Button>
+
+<Button
+  variant="danger"
+  onClick={cancelOrder}
+  disabled={working || !sum?.orderId}
+>
+  {working ? 'Отмена…' : 'Отменить'}
+</Button>
+
           </div>
         </div>
       </div>
