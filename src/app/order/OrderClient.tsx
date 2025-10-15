@@ -321,23 +321,31 @@ function DateModal({
 
           <div className="flex gap-3 pt-2">
             <Button onClick={onClose}>ОК</Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                const u = new URL('/order/quiz', window.location.origin);
-                u.searchParams.set('date', iso);
-                u.searchParams.set('step', '1');
-                u.searchParams.set('org', org);
-                u.searchParams.set('employeeID', employeeID);
-                u.searchParams.set('token', token);
-                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
-                window.location.href = u.toString();
-              }}
-            >
-              Изменить
-            <Button variant="danger" onClick={onCancelClick} disabled={isCancelling}>
-  {isCancelling ? 'Отмена…' : 'Отменить'}
+
+<Button
+  variant="ghost"
+  onClick={() => {
+    const u = new URL('/order/quiz', window.location.origin);
+    u.searchParams.set('date', iso);
+    u.searchParams.set('step', '1');
+    u.searchParams.set('org', org);
+    u.searchParams.set('employeeID', employeeID);
+    u.searchParams.set('token', token);
+    if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
+    window.location.href = u.toString();
+  }}
+>
+  Изменить
 </Button>
+
+<Button
+  variant="danger"
+  onClick={cancelOrder}
+  disabled={working || !sum?.orderId}
+>
+  {working ? 'Отмена…' : 'Отменить'}
+</Button>
+
           </div>
         </div>
       </div>
