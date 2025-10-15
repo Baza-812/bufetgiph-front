@@ -52,9 +52,7 @@ export default function OrderClient() {
     }
   }, []);
 
-  <HintDates />
-
-  // 2) опубликованные даты
+   // 2) опубликованные даты
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -209,6 +207,8 @@ export default function OrderClient() {
           })}
         </div>
 
+         <HintDates />
+        
         {/* Легенда */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
           <span className="inline-flex items-center gap-2">
