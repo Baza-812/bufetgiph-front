@@ -283,8 +283,7 @@ function DateModal({
       });
       onClose();
       onChanged(); // обновим «серость»
-      alert('Заказ отменён.');
-    } catch(e: unknown) {
+          } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setWorking(false); }
   }
@@ -336,10 +335,9 @@ function DateModal({
               }}
             >
               Изменить
-            </Button>
-            <Button onClick={cancelOrder} variant="danger" disabled={working || !sum?.orderId}>
-              {working ? 'Отмена…' : 'Отменить'}
-            </Button>
+            <Button variant="danger" onClick={onCancelClick} disabled={isCancelling}>
+  {isCancelling ? 'Отмена…' : 'Отменить'}
+</Button>
           </div>
         </div>
       </div>
