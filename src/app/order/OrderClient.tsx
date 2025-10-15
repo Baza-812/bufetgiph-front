@@ -207,8 +207,7 @@ export default function OrderClient() {
           })}
         </div>
 
-        <br>
-         <HintDates />
+        <HintDates />
         
         {/* Легенда */}
         <div className="flex items-center gap-4 mt-4 text-xs text-white/60">
