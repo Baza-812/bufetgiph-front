@@ -195,8 +195,16 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
     const description = getDesc(fields);
     const category = getCat(fields);
 
-    const noSide = type === 'main' ? detectNoSide(fields) : false;
-
+    const noSide =
+  type === 'main'
+    ? readLookupBool(
+        fields,
+        'Garnirnoe (from Dish)',   // lookup в Menu
+        'Garnirnoe (from Dishes)', // иногда так называет Airtable
+        'Garnirnoe'                // прямой чекбокс (если прокинут)
+      )
+    : false;
+    
     out.push({ id: String(id), name, type, category, description, noSide });
   }
 
@@ -461,13 +469,12 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
                           const allow = mainAllowsSide(newMain);
                           patchBox(b.key, { mainId: newMain, sideId: allow ? b.sideId : null });
                         }}
-                        disabled={loading}
+                        disabled={loading || !allowSide}
                       >
-                        <option value="">— не выбрано —</option>
-                        {mains.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
+                        <option value="">
+    {allowSide ? '— не выбрано —' : 'Гарнир не требуется'}
+  </option>
+  {allowSide && sides.map(...)}
                         ))}
                       </select>
                     </div>
