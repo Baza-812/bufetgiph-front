@@ -77,7 +77,7 @@ async function getManagerSummary(org: string, employeeID: string, token: string,
 }
 
 /** true для checkbox/lookup-boolean Airtable (и массивов из lookup). */
-function readLookupBool(f: any, keys: string[]): boolean {
+function readLookupBool(f: any, ...keys: string[]): boolean {
   for (const k of keys) {
     const v = f?.[k];
     if (Array.isArray(v)) {
@@ -482,21 +482,23 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
                     <div className="md:col-span-2">
                       <div className="text-xs text-white/60 mb-1">Гарнир</div>
                       <select
-                        className="w-full bg-neutral-800 text-white rounded px-2 py-2 disabled:opacity-50"
-                        value={b.sideId || ''}
-                        onChange={(e) => patchBox(b.key, { sideId: e.target.value || null })}
-                        disabled={loading || !allowSide}
-                      >
-                        <option value="">
-  {allowSide ? '— не выбрано —' : 'Гарнир не требуется'}
-</option>
-
-                        {sides.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
+  className="w-full bg-neutral-800 text-white rounded px-2 py-2"
+  value={b.mainId || ''}
+  onChange={(e) => {
+    const newMain = e.target.value || null;
+    const allow = mainAllowsSide(newMain);
+    // если гарнир не нужен — сразу очищаем выбранный гарнир
+    patchBox(b.key, { mainId: newMain, sideId: allow ? b.sideId : null });
+  }}
+  disabled={loading}
+>
+  <option value="">— не выбрано —</option>
+  {mains.map((m) => (
+    <option key={m.id} value={m.id}>
+      {m.name}
+    </option>
+  ))}
+</select>
                     </div>
 
                     <div className="md:col-span-1">
