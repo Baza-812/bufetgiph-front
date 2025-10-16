@@ -461,22 +461,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
                   <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
                     <div className="md:col-span-2">
                       <div className="text-xs text-white/60 mb-1">Основное блюдо</div>
-                      <select
-                        className="w-full bg-neutral-800 text-white rounded px-2 py-2"
-                        value={b.mainId || ''}
-                        onChange={(e) => {
-                          const newMain = e.target.value || null;
-                          const allow = mainAllowsSide(newMain);
-                          patchBox(b.key, { mainId: newMain, sideId: allow ? b.sideId : null });
-                        }}
-                        disabled={loading || !allowSide}
-                      >
-                        <option value="">
-    {allowSide ? '— не выбрано —' : 'Гарнир не требуется'}
-  </option>
-  {allowSide && sides.map(...)}
-                        ))}
-                      </select>
+                      
                     </div>
 
                     <div className="md:col-span-2">
