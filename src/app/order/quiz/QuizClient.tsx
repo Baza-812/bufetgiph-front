@@ -287,14 +287,7 @@ export default function QuizClient() {
       {/* Шаг 1 — Витрина */}
       {!loading && !err && step === '1' && (
         <>
-          {/* Баннер над меню — один и тот же для всех дней */}
-          <Panel>
-            <img
-              src={QUIZ_BANNER_SRC}
-              alt="Неделя китайской кухни"
-              className="mb-2 w-full rounded-2xl border border-white/10"
-            />
-          </Panel>
+          
           
           <Showcase byCat={byCat} />
           <div className="flex gap-3">
