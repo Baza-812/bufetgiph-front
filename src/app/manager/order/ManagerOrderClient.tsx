@@ -125,13 +125,13 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
   // 1) Жёсткий приоритет — явный флаг из Airtable:
   //    чекбокс в Dishes и его lookup в Menu.
   if (
-    readLookupBool(f, [
+    readLookupBool(f, 
       'Garnirnoe (from Dish)',
       'Garnirnoe (from Dishes)',
       'Garnirnoe',              // на случай, если поле прокинуто напрямую
       'Гарнирное (из блюда)',   // если вдруг есть русская версия названия
       'Гарнирное',
-    ])
+    )
   ) {
     return true;
   }
