@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 const API_KEY = process.env.AIRTABLE_API_KEY!;
 const BASE_ID = process.env.AIRTABLE_BASE_ID!;
 const TABLE = process.env.AIRTABLE_TABLE_POLL_VOTES || 'PollVotes';
@@ -14,46 +17,63 @@ const headers = {
 
 export async function GET(req: Request) {
   try {
+    if (!API_KEY || !BASE_ID) {
+      return NextResponse.json({ ok: false, error: 'Missing Airtable env' }, { status: 500 });
+    }
     const { searchParams } = new URL(req.url);
     const pollId = searchParams.get('pollId');
     if (!pollId) return NextResponse.json({ ok: false, error: 'pollId is required' }, { status: 400 });
 
-    // Считаем агрегаты по Choice=a/b
     const filter = encodeURIComponent(`{PollId} = '${pollId}'`);
-    const url = atUrl(`?filterByFormula=${filter}&fields[]=Choice&pageSize=100`);
     let a = 0, b = 0, offset: string | undefined;
+    const baseUrl = atUrl(`?filterByFormula=${filter}&fields[]=Choice&pageSize=100`);
 
     do {
-      const r = await fetch(offset ? `${url}&offset=${offset}` : url, { headers });
-      if (!r.ok) throw new Error(`Airtable GET failed: ${r.status}`);
-      const data = await r.json();
+      const r = await fetch(offset ? `${baseUrl}&offset=${offset}` : baseUrl, { headers });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        console.error('Airtable GET failed:', r.status, txt);
+        throw new Error(`Airtable GET ${r.status}`);
+      }
+      const data: any = await r.json();
       for (const rec of data.records || []) {
-        const ch = rec.fields?.Choice;
-        if (ch === 'a') a++;
-        else if (ch === 'b') b++;
+        if (rec.fields?.Choice === 'a') a++;
+        else if (rec.fields?.Choice === 'b') b++;
       }
       offset = data.offset;
     } while (offset);
 
     return NextResponse.json({ ok: true, a, b });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e.message ?? String(e) }, { status: 500 });
+    console.error('GET /api/poll error:', e);
+    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    if (!API_KEY || !BASE_ID) {
+      return NextResponse.json({ ok: false, error: 'Missing Airtable env' }, { status: 500 });
+    }
+    const body = await req.json().catch(() => ({}));
     const { pollId, org, employeeID, choice } = body || {};
-    if (!pollId || !employeeID || !choice || !['a', 'b'].includes(choice))
-      return NextResponse.json({ ok: false, error: 'pollId, employeeID and valid choice are required' }, { status: 400 });
+    if (!pollId || !employeeID || !choice || !['a', 'b'].includes(choice)) {
+      return NextResponse.json(
+        { ok: false, error: 'pollId, employeeID and valid choice (a|b) are required' },
+        { status: 400 }
+      );
+    }
 
-    // Не дублируем голос сотрудника по этому pollId
+    // Проверка: уже голосовал?
     const filter = encodeURIComponent(`AND({PollId}='${pollId}', {EmployeeID}='${employeeID}')`);
     const checkUrl = atUrl(`?filterByFormula=${filter}&maxRecords=1&fields[]=id`);
     const checkResp = await fetch(checkUrl, { headers });
-    if (!checkResp.ok) throw new Error(`Airtable check failed: ${checkResp.status}`);
-    const checkData = await checkResp.json();
+    if (!checkResp.ok) {
+      const txt = await checkResp.text().catch(() => '');
+      console.error('Airtable check failed:', checkResp.status, txt);
+      throw new Error(`Airtable check ${checkResp.status}`);
+    }
+    const checkData: any = await checkResp.json();
     if ((checkData.records || []).length > 0) {
       return NextResponse.json({ ok: true, alreadyVoted: true });
     }
@@ -69,16 +89,22 @@ export async function POST(req: Request) {
               PollId: pollId,
               Org: org || '',
               EmployeeID: employeeID,
-              Choice: choice,
+              Choice: choice, // Single select with options: a, b
             },
           },
         ],
         typecast: true,
       }),
     });
-    if (!createResp.ok) throw new Error(`Airtable create failed: ${createResp.status}`);
+    const createText = await createResp.text().catch(() => '');
+    if (!createResp.ok) {
+      console.error('Airtable create failed:', createResp.status, createText);
+      return NextResponse.json({ ok: false, error: `Airtable create ${createResp.status}`, data: createText }, { status: 500 });
+    }
+
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e.message ?? String(e) }, { status: 500 });
+    console.error('POST /api/poll error:', e);
+    return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
   }
 }
