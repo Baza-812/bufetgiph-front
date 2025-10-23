@@ -145,7 +145,7 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
             <img
               src="/polls/greek-vs-scandi.jpg"
               alt="Скандинавская vs Греческая кухня"
-              className="max-w-full h-auto max-h-76 sm:max-h-84 object-contain rounded-xl border border-white/10 bg-black/20"
+              className="max-w-full h-auto max-h-96 sm:max-h-104 object-contain rounded-xl border border-white/10 bg-black/20"
             />
           </div>
 
