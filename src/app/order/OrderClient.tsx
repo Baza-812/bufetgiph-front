@@ -66,37 +66,60 @@ function ResultBars(props: { a: number; b: number }) {
   );
 }
 
-function PollBlock(props: { org: string; employeeID: string; token: string }) {
-  const { org, employeeID, token } = props;
+function PollBlock({ org, employeeID, token }: { org: string; employeeID: string; token: string }) {
   const [st, setSt] = useState<PollState>({ a: 0, b: 0, youVoted: null, loaded: false });
   const [submitting, setSubmitting] = useState(false);
-  const votedKey = `baza.poll.${POLL_ID}.voted`;
+
+  // 🔧 ключ локального "я голосовал" зависит от сотрудника
+  const votedKey = `baza.poll.${POLL_ID}.voted.${employeeID || 'unknown'}`;
 
   useEffect(() => {
     let ignore = false;
+
     async function load() {
       try {
-        const r = await fetchJSON<{ ok: boolean; a: number; b: number }>(`/api/poll?pollId=${encodeURIComponent(POLL_ID)}`);
+        // ❗️удалим старый общий ключ, если он остался от предыдущей версии
+        localStorage.removeItem(`baza.poll.${POLL_ID}.voted`);
+
+        const r = await fetchJSON<{ ok: boolean; a: number; b: number }>(
+          `/api/poll?pollId=${encodeURIComponent(POLL_ID)}`
+        );
+
         if (ignore) return;
-        const you = (localStorage.getItem(votedKey) as 'a' | 'b' | null) || null;
+
+        // читаем локальное "я голосовал" только когда employeeID уже известен
+        const you = employeeID
+          ? ((localStorage.getItem(votedKey) as 'a' | 'b' | null) || null)
+          : null;
+
         setSt({ a: r.a ?? 0, b: r.b ?? 0, youVoted: you, loaded: true });
-      } catch (e) {
-        const you = (localStorage.getItem(votedKey) as 'a' | 'b' | null) || null;
-        setSt({ a: 1, b: 1, youVoted: you, loaded: true, error: 'Предпросмотр без серверных данных.' });
+      } catch {
+        const you = employeeID
+          ? ((localStorage.getItem(votedKey) as 'a' | 'b' | null) || null)
+          : null;
+
+        setSt({
+          a: 1,
+          b: 1,
+          youVoted: you,
+          loaded: true,
+          error: 'Предпросмотр без серверных данных.',
+        });
       }
     }
-    load();
-    return () => {
-      ignore = true;
-    };
-  }, [votedKey]);
+
+    if (employeeID) load();        // ждём, пока придёт employeeID
+    else setSt(s => ({ ...s, loaded: true, youVoted: null })); // ещё не знаем, кто — показываем кнопки
+
+    return () => { ignore = true; };
+  }, [employeeID, votedKey]);
 
   async function vote(choice: 'a' | 'b') {
     if (isPollClosed() || st.youVoted) return;
     setSubmitting(true);
     try {
       setSt(prev => ({ ...prev, [choice]: (prev as any)[choice] + 1, youVoted: choice }));
-      localStorage.setItem(votedKey, choice);
+      if (employeeID) localStorage.setItem(votedKey, choice); // ⚠️ пишем только если знаем сотрудника
       await fetchJSON('/api/poll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -108,18 +131,20 @@ function PollBlock(props: { org: string; employeeID: string; token: string }) {
   }
 
   const closed = isPollClosed();
+  ...
+}
 
   return (
     <Panel title="Выбор недели национальной кухни · 24–28 ноября">
       <div className="max-w-2xl mx-auto w-full">
         <div className="grid gap-4">
-          <div className="w-full">
-            <img
-              src="/polls/greek-vs-scandi.jpg"
-              alt="Скандинавская vs Греческая кухня"
-              className="w-full h-48 sm:h-56 object-cover rounded-xl border border-white/10"
-            />
-          </div>
+          <div className="w-full flex justify-center">
+  <img
+    src="/polls/greek-vs-scandi.jpg"
+    alt="Скандинавская vs Греческая кухня"
+    className="max-w-full h-auto max-h-56 sm:max-h-64 object-contain rounded-xl border border-white/10 bg-black/20 p-0"
+  />
+</div>
 
           <div className="space-y-2 text-white/80">
             <p>
