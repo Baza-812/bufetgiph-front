@@ -191,26 +191,26 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
             </p>
           </div>
 
-          {!closed && !st.youVoted && (
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Button
-                onClick={() => vote('a')}
-                disabled={!st.loaded || submitting}
-                className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
-                variant="ghost"
-              >
-                Скандинавская неделя
-              </Button>
-              <Button
-                onClick={() => vote('b')}
-                disabled={!st.loaded || submitting}
-                className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
-                variant="ghost"
-              >
-                Греческая неделя
-              </Button>
-            </div>
-          )}
+          {!closed && !st.youVoted && !!employeeID && (
+  <div className="flex flex-col sm:flex-row gap-3">
+    <Button
+      onClick={() => vote('a')}
+      disabled={!st.loaded || submitting || !employeeID}
+      className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
+      variant="ghost"
+    >
+      Скандинавская неделя
+    </Button>
+    <Button
+      onClick={() => vote('b')}
+      disabled={!st.loaded || submitting || !employeeID}
+      className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
+      variant="ghost"
+    >
+      Греческая неделя
+    </Button>
+  </div>
+)}
 
           {(st.youVoted || closed) && (
             <div className="rounded-xl bg-white/5 border border-white/10 p-3 text-sm">
