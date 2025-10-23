@@ -64,21 +64,30 @@ export async function POST(req: Request) {
       );
     }
 
-    // Проверка: уже голосовал?
-    const filter = encodeURIComponent(`AND({PollId}='${pollId}', {EmployeeID}='${employeeID}')`);
-    const checkUrl = atUrl(`?filterByFormula=${filter}&maxRecords=1&fields[]=id`);
+    // безопасная обёртка в двойные кавычки
+    const dq = (v: string) => `"${String(v).replace(/"/g, '\\"')}"`;
+
+    // ✔️ ПРОВЕРКА: голосовал ли уже этот employeeID для этого pollId
+    const filterFormula = encodeURIComponent(
+      `AND({PollId} = ${dq(pollId)}, {EmployeeID} = ${dq(employeeID)})`
+    );
+    // ❌ БЫЛО: &fields[]=id — это вызывало 422, убираем
+    const checkUrl = atUrl(`?filterByFormula=${filterFormula}&maxRecords=1`);
     const checkResp = await fetch(checkUrl, { headers });
+    const checkText = await checkResp.text().catch(() => '');
     if (!checkResp.ok) {
-      const txt = await checkResp.text().catch(() => '');
-      console.error('Airtable check failed:', checkResp.status, txt);
-      throw new Error(`Airtable check ${checkResp.status}`);
+      console.error('Airtable check failed:', checkResp.status, checkText);
+      return NextResponse.json(
+        { ok: false, error: `Airtable check ${checkResp.status}`, data: checkText },
+        { status: 500 }
+      );
     }
-    const checkData: any = await checkResp.json();
+    const checkData: any = checkText ? JSON.parse(checkText) : { records: [] };
     if ((checkData.records || []).length > 0) {
       return NextResponse.json({ ok: true, alreadyVoted: true });
     }
 
-    // Создаём запись
+    // ✔️ СОЗДАНИЕ ЗАПИСИ (Choice — текстовое поле)
     const createResp = await fetch(atUrl(''), {
       method: 'POST',
       headers,
@@ -89,17 +98,20 @@ export async function POST(req: Request) {
               PollId: pollId,
               Org: org || '',
               EmployeeID: employeeID,
-              Choice: choice, // Single select with options: a, b
+              Choice: choice, // текстовое поле (Single line text)
             },
           },
         ],
-        
+        // typecast: true, // не нужно, оставляем выключенным
       }),
     });
     const createText = await createResp.text().catch(() => '');
     if (!createResp.ok) {
       console.error('Airtable create failed:', createResp.status, createText);
-      return NextResponse.json({ ok: false, error: `Airtable create ${createResp.status}`, data: createText }, { status: 500 });
+      return NextResponse.json(
+        { ok: false, error: `Airtable create ${createResp.status}`, data: createText },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ ok: true });
@@ -108,3 +120,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 500 });
   }
 }
+
