@@ -181,8 +181,7 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
               <span className="font-semibold">Греческую</span>. Ваш голос — маленький шаг к большому вкусному плану!
             </p>
             <p className="text-white/60 text-sm">
-              Приём голосов — до <span className="font-medium">31 октября</span>. Мы покажем только относительное
-              соотношение (полосы без цифр). Абсолютные результаты видит только команда кухни.
+              Приём голосов — до <span className="font-medium">31 октября</span>. После голосования вы увидите текущий результат в относительном выражении.
             </p>
           </div>
 
