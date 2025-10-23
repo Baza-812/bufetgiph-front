@@ -70,7 +70,7 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
   const [st, setSt] = useState<PollState>({ a: 0, b: 0, youVoted: null, loaded: false });
   const [submitting, setSubmitting] = useState(false);
 
-  // 🔧 ключ локального "я голосовал" зависит от сотрудника
+  // ключ «я голосовал» — персональный для сотрудника
   const votedKey = `baza.poll.${POLL_ID}.voted.${employeeID || 'unknown'}`;
 
   useEffect(() => {
@@ -78,7 +78,7 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
 
     async function load() {
       try {
-        // ❗️удалим старый общий ключ, если он остался от предыдущей версии
+        // сносим старый общий ключ (от старой версии)
         localStorage.removeItem(`baza.poll.${POLL_ID}.voted`);
 
         const r = await fetchJSON<{ ok: boolean; a: number; b: number }>(
@@ -87,7 +87,6 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
 
         if (ignore) return;
 
-        // читаем локальное "я голосовал" только когда employeeID уже известен
         const you = employeeID
           ? ((localStorage.getItem(votedKey) as 'a' | 'b' | null) || null)
           : null;
@@ -108,18 +107,24 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
       }
     }
 
-    if (employeeID) load();        // ждём, пока придёт employeeID
-    else setSt(s => ({ ...s, loaded: true, youVoted: null })); // ещё не знаем, кто — показываем кнопки
+    if (employeeID) {
+      load();
+    } else {
+      // до того как узнаем employeeID — показываем кнопки
+      setSt((s) => ({ ...s, loaded: true, youVoted: null }));
+    }
 
-    return () => { ignore = true; };
+    return () => {
+      ignore = true;
+    };
   }, [employeeID, votedKey]);
 
   async function vote(choice: 'a' | 'b') {
     if (isPollClosed() || st.youVoted) return;
     setSubmitting(true);
     try {
-      setSt(prev => ({ ...prev, [choice]: (prev as any)[choice] + 1, youVoted: choice }));
-      if (employeeID) localStorage.setItem(votedKey, choice); // ⚠️ пишем только если знаем сотрудника
+      setSt((prev) => ({ ...prev, [choice]: (prev as any)[choice] + 1, youVoted: choice }));
+      if (employeeID) localStorage.setItem(votedKey, choice);
       await fetchJSON('/api/poll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -131,20 +136,18 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
   }
 
   const closed = isPollClosed();
-  ...
-}
 
   return (
     <Panel title="Выбор недели национальной кухни · 24–28 ноября">
       <div className="max-w-2xl mx-auto w-full">
         <div className="grid gap-4">
           <div className="w-full flex justify-center">
-  <img
-    src="/polls/greek-vs-scandi.jpg"
-    alt="Скандинавская vs Греческая кухня"
-    className="max-w-full h-auto max-h-56 sm:max-h-64 object-contain rounded-xl border border-white/10 bg-black/20 p-0"
-  />
-</div>
+            <img
+              src="/polls/greek-vs-scandi.jpg"
+              alt="Скандинавская vs Греческая кухня"
+              className="max-w-full h-auto max-h-56 sm:max-h-64 object-contain rounded-xl border border-white/10 bg-black/20"
+            />
+          </div>
 
           <div className="space-y-2 text-white/80">
             <p>
@@ -194,6 +197,7 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
     </Panel>
   );
 }
+
 
 /* ===================== КОНЕЦ нового блока ===================== */
 
