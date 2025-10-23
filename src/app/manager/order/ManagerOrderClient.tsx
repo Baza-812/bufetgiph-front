@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import { useRouter } from 'next/navigation';
@@ -13,7 +13,7 @@ type MenuItem = {
   type: 'main' | 'side' | 'extra';
   category?: string | null;
   description?: string | null;
-  noSide?: boolean; // «гарнирное» основное: гарнир не положен
+  noSide?: boolean; // «гарнирное» основное
 };
 
 type MenuRespLoose = {
@@ -49,35 +49,8 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-/** Универсальная загрузка сводки заказа менеджера на дату. */
-async function getManagerSummary(org: string, employeeID: string, token: string, date: string) {
-  // 1) пробуем /order_manager
-  const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-    employeeID,
-  )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}`;
-  try {
-    const r1 = await fetch(url1, { cache: 'no-store', credentials: 'same-origin' });
-    const j1 = await r1.json().catch(() => ({}));
-    if (r1.ok && j1?.summary) return j1.summary as any;
-    if (j1?.error !== 'POST only' && r1.status !== 405 && r1.status !== 404) {
-      return null;
-    }
-  } catch {
-    /* fallthrough */
-  }
-
-  // 2) /order_summary
-  const url2 = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
-    employeeID,
-  )}&date=${encodeURIComponent(date)}`;
-  const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
-  if (!r2.ok) return null;
-  const j2 = await r2.json().catch(() => ({}));
-  return j2?.summary || null;
-}
-
-/** true для checkbox/lookup-boolean Airtable (и массивов из lookup). */
-function readLookupBool(f: any, keys: string[]): boolean {
+/** true для checkbox/lookup Airtable (включая массив из lookup) */
+function readLookupBool(f: any, ...keys: string[]): boolean {
   for (const k of keys) {
     const v = f?.[k];
     if (Array.isArray(v)) {
@@ -89,8 +62,32 @@ function readLookupBool(f: any, keys: string[]): boolean {
   return false;
 }
 
+/** Универсальная загрузка сводки заказа менеджера на дату, с деталями */
+async function getManagerSummary(org: string, employeeID: string, token: string, date: string) {
+  // 1) пробуем /order_manager (если поддерживает GET summary)
+  const url1 = `/api/order_manager?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+    employeeID,
+  )}&token=${encodeURIComponent(token)}&date=${encodeURIComponent(date)}`;
+  try {
+    const r1 = await fetch(url1, { cache: 'no-store', credentials: 'same-origin' });
+    const j1 = await r1.json().catch(() => ({}));
+    if (r1.ok && j1?.summary) return j1 as any;
+    // если 405/404 — идём на order_summary
+  } catch {
+    /* fallthrough */
+  }
 
-/** Нормализация меню + определение «гарнирного main» (noSide) */
+  // 2) /order_summary с details=1
+  const url2 = `/api/order_summary?org=${encodeURIComponent(org)}&employeeID=${encodeURIComponent(
+    employeeID,
+  )}&date=${encodeURIComponent(date)}&details=1`;
+  const r2 = await fetch(url2, { cache: 'no-store', credentials: 'same-origin' });
+  if (!r2.ok) return null;
+  const j2 = await r2.json().catch(() => ({}));
+  return j2 || null;
+}
+
+/** Нормализация меню + noSide через lookup Garnirnoe (from Dish) */
 function normMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
 
@@ -121,65 +118,10 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
     return 'extra';
   };
 
-  const detectNoSide = (f: any): boolean => {
-  // 1) Жёсткий приоритет — явный флаг из Airtable:
-  //    чекбокс в Dishes и его lookup в Menu.
-  if (
-    readLookupBool(f, [
-      'Garnirnoe (from Dish)',
-      'Garnirnoe (from Dishes)',
-      'Garnirnoe',              // на случай, если поле прокинуто напрямую
-      'Гарнирное (из блюда)',   // если вдруг есть русская версия названия
-      'Гарнирное',
-    ])
-  ) {
-    return true;
-  }
-
-  // 2) Фоллбек: любые текстовые признаки в типах/категориях/названии/описании
-  const candidates = [
-    f?.['Main Type'],
-    f?.['Group'],
-    f?.['Dish Group'],
-    f?.['Category'],
-    f?.['Dish Category'],
-    f?.['Menu Category'],
-    f?.['Extra Category'],
-    f?.Category,
-    f?.category,
-    f?.Type,
-    f?.type,
-    f?.Name,
-    f?.name,
-    f?.Title,
-    f?.title,
-    f?.Description,
-    f?.description,
-  ];
-  for (const v of candidates) {
-    if (!v) continue;
-    const s = String(v).toLowerCase();
-    if (
-      s.includes('garnirnoe') ||
-      s.includes('гарнирно') ||
-      s.includes('без гарнира') ||
-      s.includes('no side') ||
-      s.includes('without side')
-    ) {
-      return true;
-    }
-  }
-  return false;
-};
-
-
-
   const getName = (f: any) =>
     f?.Name ?? f?.name ?? f?.Title ?? f?.title ?? f?.['Dish Name'] ?? f?.['Meal Name'] ?? 'Без названия';
-
   const getDesc = (f: any) =>
     f?.Description ?? f?.description ?? f?.['Short Description'] ?? f?.['Desc'] ?? null;
-
   const getCat = (f: any) =>
     f?.Category ?? f?.category ?? f?.['Extra Category'] ?? f?.['Dish Category'] ?? f?.['Menu Category'] ?? null;
 
@@ -187,7 +129,6 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
   for (const r of items) {
     const id = r?.id || r?.recordId || r?.recId;
     const fields = r?.fields || r?.f || r;
-
     if (!id || !fields) continue;
 
     const type = detectType(fields);
@@ -195,9 +136,20 @@ function normMenu(resp: MenuRespLoose): MenuItem[] {
     const description = getDesc(fields);
     const category = getCat(fields);
 
-    const noSide = type === 'main' ? detectNoSide(fields) : false;
+    // жёстко читаем lookup-флаг «гарнирное» из Menu
+    const isNoSide =
+      type === 'main'
+        ? readLookupBool(
+            fields,
+            'Garnirnoe (from Dish)',
+            'Garnirnoe (from Dishes)',
+            'Garnirnoe',
+            'Гарнирное (из блюда)',
+            'Гарнирное',
+          )
+        : false;
 
-    out.push({ id: String(id), name, type, category, description, noSide });
+    out.push({ id: String(id), name, type, category, description, noSide: isNoSide });
   }
 
   return out;
@@ -240,12 +192,16 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
     [menu],
   );
 
-  function mainAllowsSide(mainId: string | null) {
-    if (!mainId) return true;
-    const m = mains.find((x) => x.id === mainId);
-    if (!m) return true;
-    return !m.noSide; // для «гарнирного» — гарнир запрещён
-  }
+  // быстрый доступ к признаку "гарнирное"
+  const noSideIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    noSideIdsRef.current = new Set(mains.filter((m) => m.noSide).map((m) => m.id));
+  }, [mains]);
+
+  const mainAllowsSide = useCallback((mainId?: string | null) => {
+    if (!mainId) return true; // пока не выбрано – не блокируем
+    return !noSideIdsRef.current.has(mainId);
+  }, []);
 
   /* ---------- initial menu load ---------- */
   useEffect(() => {
@@ -281,6 +237,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         const s: any = await getManagerSummary(org, employeeID, token, date);
         if (!s) return;
 
+        // boxes из summary.details (если есть)
         const bxs: BoxRow[] = [];
         if (Array.isArray(s.boxes)) {
           (s.boxes as PrefillBox[]).forEach((b: PrefillBox) => {
@@ -294,6 +251,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
             });
           });
         } else if (Array.isArray(s.lines)) {
+          // запасной вариант — если сервер шлёт lines
           (s.lines as PrefillLine[])
             .filter((l: PrefillLine) => l.type === 'box' || l.type === 'mealbox')
             .forEach((l: PrefillLine) => {
@@ -309,18 +267,12 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         }
         if (bxs.length) setBoxes(bxs);
 
-        const lines: PrefillLine[] | undefined = Array.isArray(s.extras)
-          ? (s.extras as any[]).map((e) => ({
-              type: 'extra',
-              itemId: e.itemId,
-              qty: Number(e.qty || 0),
-              category: e.category,
-            }))
-          : (s.lines as PrefillLine[] | undefined);
-
+        // extras для категорий
+        const extrasArr: PrefillLine[] =
+          Array.isArray((s as any).extras) ? (s.extras as any) : (s.lines as PrefillLine[] | undefined) || [];
         const collect = (pred: (l: PrefillLine) => boolean) => {
           const out: Record<string, number> = {};
-          (lines || []).forEach((l: PrefillLine) => {
+          (extrasArr || []).forEach((l: PrefillLine) => {
             const id = (l.itemId as string) || (l as any).extraId || (l as any).id;
             if (!id) return;
             if (pred(l)) out[id] = (out[id] || 0) + (Number(l.qty) || 0);
@@ -335,7 +287,7 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         /* no-op */
       }
     })();
-  }, [org, employeeID, token, date]);
+  }, [org, employeeID, token, date, mainAllowsSide]);
 
   /* ---------- helpers ---------- */
   function addBox() {
@@ -370,7 +322,6 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
       setSubmitting(true);
       setError(null);
 
-      // boxes — чистим sideId для «гарнирных»
       const cleanedBoxes = boxes
         .map((b) => {
           const allow = mainAllowsSide(b.mainId);
@@ -382,7 +333,6 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
         })
         .filter((b) => (b.mainId || b.sideId) && (b as any).qty > 0);
 
-      // extras — только разрешённые категории (zapekanka/salad/soup/pastry)
       const extras: Array<{ itemId: string; qty: number }> = [];
       const pushMap = (m: Record<string, number>) => {
         Object.entries(m).forEach(([id, qty]) => {
@@ -480,15 +430,13 @@ export default function ManagerOrderClient(props: { org: string; employeeID: str
                         onChange={(e) => patchBox(b.key, { sideId: e.target.value || null })}
                         disabled={loading || !allowSide}
                       >
-                        <option value="">
-  {allowSide ? '— не выбрано —' : 'Гарнир не требуется'}
-</option>
-
-                        {sides.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.name}
-                          </option>
-                        ))}
+                        <option value="">{allowSide ? '— не выбрано —' : 'Гарнир не требуется'}</option>
+                        {allowSide &&
+                          sides.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
                       </select>
                     </div>
 

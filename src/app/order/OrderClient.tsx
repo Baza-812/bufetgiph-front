@@ -9,6 +9,223 @@ import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, fmtDayLabel } from '@/lib/api';
 import HintDates from '@/components/HintDates';
 
+/* ===================== НОВОЕ: мини-опросник ===================== */
+
+const POLL_ID = 'wk-2025-11-24';
+const POLL_DEADLINE_UTC = Date.UTC(2025, 9, 31, 20, 59, 59); // 31 Oct 23:59 (Europe/Bucharest +03) = 20:59:59 UTC
+
+type PollState = {
+  a: number; // Скандинавская
+  b: number; // Греческая
+  youVoted: 'a' | 'b' | null;
+  loaded: boolean;
+  error?: string;
+};
+
+function isPollClosed(): boolean {
+  return Date.now() > POLL_DEADLINE_UTC;
+}
+
+function prettySplit(a: number, b: number) {
+  const total = Math.max(1, a + b);
+  const pa = a / total;
+  const pb = b / total;
+  return {
+    aWidth: Math.max(6, Math.round(pa * 100)),
+    bWidth: Math.max(6, Math.round(pb * 100)),
+    leader: pa === pb ? 'tie' : pa > pb ? 'a' : 'b',
+  };
+}
+
+function ResultBars(props: { a: number; b: number }) {
+  const { aWidth, bWidth, leader } = prettySplit(props.a, props.b);
+  const tag = (key: 'a' | 'b') => (leader === 'tie' ? 'идут ровно' : leader === key ? 'лидирует' : 'чуть позади');
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div>
+        <div className="flex items-center justify-between mb-1 text-sm">
+          <span className="text-white/70">Скандинавская</span>
+          <span className="text-white/40">{tag('a')}</span>
+        </div>
+        <div className="w-full h-3 rounded-full bg-white/10 overflow-hidden">
+          <div className="h-3 bg-white/70 rounded-r-full transition-all" style={{ width: `${aWidth}%` }} />
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1 text-sm">
+          <span className="text-white/70">Греческая</span>
+          <span className="text-white/40">{tag('b')}</span>
+        </div>
+        <div className="w-full h-3 rounded-full bg-white/10 overflow-hidden">
+          <div className="h-3 bg-white/50 rounded-r-full transition-all" style={{ width: `${bWidth}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PollBlock({ org, employeeID, token }: { org: string; employeeID: string; token: string }) {
+  const [st, setSt] = useState<PollState>({ a: 0, b: 0, youVoted: null, loaded: false });
+  const [submitting, setSubmitting] = useState(false);
+
+  // ключ «я голосовал» — персональный для сотрудника
+  const votedKey = `baza.poll.${POLL_ID}.voted.${employeeID || 'unknown'}`;
+
+  useEffect(() => {
+    let ignore = false;
+
+    async function load() {
+      try {
+        // сносим старый общий ключ (от старой версии)
+        localStorage.removeItem(`baza.poll.${POLL_ID}.voted`);
+
+        const r = await fetchJSON<{ ok: boolean; a: number; b: number }>(
+          `/api/poll?pollId=${encodeURIComponent(POLL_ID)}`
+        );
+
+        if (ignore) return;
+
+        const you = employeeID
+          ? ((localStorage.getItem(votedKey) as 'a' | 'b' | null) || null)
+          : null;
+
+        setSt({ a: r.a ?? 0, b: r.b ?? 0, youVoted: you, loaded: true });
+      } catch {
+        const you = employeeID
+          ? ((localStorage.getItem(votedKey) as 'a' | 'b' | null) || null)
+          : null;
+
+        setSt({
+          a: 1,
+          b: 1,
+          youVoted: you,
+          loaded: true,
+          error: 'Предпросмотр без серверных данных.',
+        });
+      }
+    }
+
+    if (employeeID) {
+      load();
+    } else {
+      // до того как узнаем employeeID — показываем кнопки
+      setSt((s) => ({ ...s, loaded: true, youVoted: null }));
+    }
+
+    return () => {
+      ignore = true;
+    };
+  }, [employeeID, votedKey]);
+
+  async function vote(choice: 'a' | 'b') {
+  if (isPollClosed() || st.youVoted || !employeeID) return;
+  setSubmitting(true);
+
+  const prev = st;
+  const optimistic = { ...prev, [choice]: (prev as any)[choice] + 1, youVoted: choice as 'a' | 'b' };
+  setSt(optimistic);
+
+  try {
+    const resp = await fetch('/api/poll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pollId: POLL_ID, org, employeeID, token, choice }),
+    });
+
+    const text = await resp.text().catch(() => '');
+    let json: any = {};
+    try { json = text ? JSON.parse(text) : {}; } catch { /* ignore */ }
+
+    if (!resp.ok || !json?.ok) {
+      console.error('Poll POST failed:', resp.status, text);
+      setSt(prev); // rollback
+      setSt(s => ({
+        ...s,
+        error: json?.error || `Ошибка голосования (${resp.status}). ${json?.data || ''}`.trim()
+      }));
+      return;
+    }
+
+    localStorage.setItem(votedKey, choice);
+  } catch (e) {
+    console.error('Poll POST exception:', e);
+    setSt(prev); // rollback
+    setSt(s => ({ ...s, error: 'Сеть недоступна. Попробуйте ещё раз.' }));
+  } finally {
+    setSubmitting(false);
+  }
+}
+
+
+
+  const closed = isPollClosed();
+
+  return (
+    <Panel title="Выбор недели национальной кухни · 24–28 ноября">
+      <div className="max-w-2xl mx-auto w-full">
+        <div className="grid gap-4">
+          <div className="w-full flex justify-center">
+            <img
+              src="/polls/greek-vs-scandi.jpg"
+              alt="Скандинавская vs Греческая кухня"
+              className="max-w-full h-auto max-h-96 sm:max-h-104 object-contain rounded-xl border border-white/10 bg-black/20"
+            />
+          </div>
+
+          <div className="space-y-2 text-white/80">
+            <p>
+              С 24–28 ноября готовим тематическую неделю национальной кухни. Помогите выбрать, что
+              устроим первой: бодрящую <span className="font-semibold">Скандинавскую</span> или солнечную{' '}
+              <span className="font-semibold">Греческую</span>. Ваш голос — маленький шаг к большому вкусному плану!
+            </p>
+            <p className="text-white/60 text-sm">
+              Приём голосов — до <span className="font-medium">31 октября</span>. После голосования вы увидите текущий результат в относительном выражении.
+            </p>
+          </div>
+
+          {!closed && !st.youVoted && !!employeeID && (
+  <div className="flex flex-col sm:flex-row gap-3">
+    <Button
+      onClick={() => vote('a')}
+      disabled={!st.loaded || submitting || !employeeID}
+      className="bg-yellow-400/80 hover:bg-yellow-400 !text-black hover:!text-black border border-yellow-500/40"
+      variant="ghost"
+    >
+      Скандинавская неделя
+    </Button>
+    <Button
+      onClick={() => vote('b')}
+      disabled={!st.loaded || submitting || !employeeID}
+      className="bg-yellow-400/80 hover:bg-yellow-400 !text-black hover:!text-black border border-yellow-500/40"
+      variant="ghost"
+    >
+      Греческая неделя
+    </Button>
+  </div>
+)}
+
+          {(st.youVoted || closed) && (
+            <div className="rounded-xl bg-white/5 border border-white/10 p-3 text-sm">
+              <div className="text-white/80">
+                {closed ? 'Голосование завершено. Спасибо всем!' : 'Спасибо за голос! Текущее соотношение ниже.'}
+              </div>
+              <ResultBars a={st.a} b={st.b} />
+            </div>
+          )}
+
+          {st.error && <div className="text-xs text-white/40">{st.error}</div>}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+
+/* ===================== КОНЕЦ нового блока ===================== */
+
+
 type SingleResp = {
   ok: boolean;
   summary: null | {
@@ -166,6 +383,9 @@ export default function OrderClient() {
           Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
         </p>
       </Panel>
+
+      {/* НОВОЕ: опросник про неделю национальной кухни */}
+      {org && employeeID && token && <PollBlock org={org} employeeID={employeeID} token={token} />}
 
       {/* креды вручную — на случай, если пришли без query */}
       {(!org || !employeeID || !token) && (
