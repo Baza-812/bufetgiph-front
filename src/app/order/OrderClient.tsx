@@ -178,26 +178,37 @@ function PollBlock({
 
   return (
     <Panel title="Выбор недели национальной кухни · 24–28 ноября">
+      <div className="max-w-2xl mx-auto w-full">
       <div className="grid gap-4">
         <img
           src="/polls/greek-vs-scandi.jpg"
           alt="Скандинавская vs Греческая кухня"
-          className="w-full h-40 object-cover rounded-xl border border-white/10"
+          className="w-full h-48 sm:h-56 object-cover rounded-xl border border-white/10"
         />
 
         <FriendlyText />
 
         {/* Кнопки выбора (если не закрыто и не голосовал) */}
         {!closed && !st.youVoted && (
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Button onClick={() => vote('a')} disabled={!st.loaded || submitting}>
-              Скандинавская неделя
-            </Button>
-            <Button variant="ghost" onClick={() => vote('b')} disabled={!st.loaded || submitting}>
-              Греческая неделя
-            </Button>
-          </div>
-        )}
+  <div className="flex flex-col sm:flex-row gap-3">
+    <Button
+      onClick={() => vote('a')}
+      disabled={!st.loaded || submitting}
+      className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
+      variant="ghost" // вариант неважен, стиль переопределяем className-ом
+    >
+      Скандинавская неделя
+    </Button>
+    <Button
+      onClick={() => vote('b')}
+      disabled={!st.loaded || submitting}
+      className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
+      variant="ghost"
+    >
+      Греческая неделя
+    </Button>
+  </div>
+)}
 
         {/* Сообщение после голосования или при закрытии */}
         {(st.youVoted || closed) && (
