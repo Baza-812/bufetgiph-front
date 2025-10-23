@@ -120,20 +120,50 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
   }, [employeeID, votedKey]);
 
   async function vote(choice: 'a' | 'b') {
-    if (isPollClosed() || st.youVoted) return;
-    setSubmitting(true);
-    try {
-      setSt((prev) => ({ ...prev, [choice]: (prev as any)[choice] + 1, youVoted: choice }));
-      if (employeeID) localStorage.setItem(votedKey, choice);
-      await fetchJSON('/api/poll', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pollId: POLL_ID, org, employeeID, token, choice }),
-      }).catch(() => void 0);
-    } finally {
-      setSubmitting(false);
+  if (isPollClosed() || st.youVoted) return;
+  setSubmitting(true);
+
+  // optimistic
+  const prev = st;
+  const optimistic = { ...prev, [choice]: (prev as any)[choice] + 1, youVoted: choice as 'a' | 'b' };
+  setSt(optimistic);
+
+  try {
+    const resp = await fetch('/api/poll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pollId: POLL_ID, org, employeeID, token, choice }),
+    });
+
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => '');
+      console.error('Poll POST failed:', resp.status, t);
+      // rollback
+      setSt(prev);
+      setSt(s => ({ ...s, error: 'Не удалось отправить голос. Попробуйте ещё раз.' }));
+      return;
     }
+
+    const json = await resp.json().catch(() => ({}));
+    if (!json?.ok) {
+      console.error('Poll POST error payload:', json);
+      // rollback
+      setSt(prev);
+      setSt(s => ({ ...s, error: 'Не удалось отправить голос. Попробуйте ещё раз.' }));
+      return;
+    }
+
+    if (employeeID) localStorage.setItem(votedKey, choice);
+  } catch (e) {
+    console.error('Poll POST exception:', e);
+    // rollback
+    setSt(prev);
+    setSt(s => ({ ...s, error: 'Сеть недоступна. Попробуйте ещё раз.' }));
+  } finally {
+    setSubmitting(false);
   }
+}
+
 
   const closed = isPollClosed();
 
