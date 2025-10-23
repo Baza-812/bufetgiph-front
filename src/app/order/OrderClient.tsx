@@ -190,7 +190,7 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
     <Button
       onClick={() => vote('a')}
       disabled={!st.loaded || submitting || !employeeID}
-      className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
+      className="bg-yellow-400/80 hover:bg-yellow-400 !text-black hover:!text-black border border-yellow-500/40"
       variant="ghost"
     >
       Скандинавская неделя
@@ -198,7 +198,7 @@ function PollBlock({ org, employeeID, token }: { org: string; employeeID: string
     <Button
       onClick={() => vote('b')}
       disabled={!st.loaded || submitting || !employeeID}
-      className="bg-yellow-400/80 hover:bg-yellow-400 text-black border border-yellow-500/40"
+      className="bg-yellow-400/80 hover:bg-yellow-400 !text-black hover:!text-black border border-yellow-500/40"
       variant="ghost"
     >
       Греческая неделя
