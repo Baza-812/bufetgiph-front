@@ -93,7 +93,7 @@ export async function POST(req: Request) {
             },
           },
         ],
-        typecast: true,
+        
       }),
     });
     const createText = await createResp.text().catch(() => '');
