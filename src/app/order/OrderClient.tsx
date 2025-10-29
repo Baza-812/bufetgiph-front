@@ -169,9 +169,7 @@ export default function OrderClient() {
         </p>
       </Panel>
 
-      {/* НОВОЕ: опросник про неделю национальной кухни */}
-      {org && employeeID && token && <PollBlock org={org} employeeID={employeeID} token={token} />}
-
+     
       {/* креды вручную — на случай, если пришли без query */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
