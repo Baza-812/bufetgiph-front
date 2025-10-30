@@ -15,11 +15,12 @@ export async function POST(req: NextRequest) {
     if (!dishId) return NextResponse.json({ error:'dishId required' }, { status: 400 });
     if (!file || !('name' in file)) return NextResponse.json({ error:'file required' }, { status: 400 });
 
-    const buf = await file.arrayBuffer();
-    const blob = await put(`kitchen/${dishId}/${file.name}`, new Uint8Array(buf), {
+    // ✅ передаём сам File (или можно использовать new Blob([await file.arrayBuffer()]))
+    const blob = await put(`kitchen/${dishId}/${file.name}`, file, {
       access: 'public',
       addRandomSuffix: true,
       contentType: file.type,
+      token: process.env.VERCEL_BLOB_READ_WRITE_TOKEN, // на всякий случай явно
     });
 
     // получить текущие вложения, чтобы не стереть
