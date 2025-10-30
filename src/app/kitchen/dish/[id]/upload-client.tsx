@@ -31,7 +31,9 @@ export default function UploadClient({ dishId }: { dishId: string }) {
     <form onSubmit={onUpload} className="space-y-2">
       <input type="file" accept="image/*" onChange={e=>setFile(e.target.files?.[0]||null)} />
       <div>
-        <Button type="submit" disabled={!file || busy}>{busy ? 'Загрузка…' : (file ? 'Загрузить' : 'Выберите файл')}</Button>
+        <Button type="submit" disabled={!file || busy}>
+          {busy ? 'Загрузка…' : (file ? 'Загрузить' : 'Выберите файл')}
+        </Button>
       </div>
       {msg && <div className="text-white/70 text-sm">{msg}</div>}
     </form>
