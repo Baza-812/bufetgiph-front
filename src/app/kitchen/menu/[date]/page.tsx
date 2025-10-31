@@ -77,24 +77,61 @@ export default function KitchenMenuByDate({ params }: { params: { date: string }
     return m;
   }, [items]);
 
-  function openDish(it: any) {
-  const key = new URLSearchParams(window.location.search).get('key') || '';
-  // пытаемся взять «правильный» id блюда из возможных полей
-  const dishId =
-    it.dishId ??
-    it.dish_id ??
-    it.dish ??
-    it.dishRecId ??
-    it.dishRecordId ??
-    it.dishRecord ??
-    it.id; // как крайний случай — то, что есть сейчас
+  function extractDishIdFromItem(it: any): string | null {
+  // 1) самое желанное поле
+  if (typeof it.dishId === 'string') return it.dishId;
 
-  const u = new URL(`/kitchen/dish/${dishId}`, window.location.origin);
+  // 2) частые варианты линков на Dishes
+  const candFields = [
+    'Dish', 'DishId', 'DishID', 'DishRecId', 'DishRecordId', 'DishRecord',
+    'Dishes', 'Dish (linked)', 'Dish (from Dishes)', 'Dish (from Dish)',
+    'Main Dish', 'Linked Dish',
+  ];
+  for (const f of candFields) {
+    const v = it[f];
+    if (typeof v === 'string' && v.startsWith('rec')) return v;
+    if (Array.isArray(v) && v[0] && typeof v[0] === 'string' && v[0].startsWith('rec')) return v[0];
+  }
+
+  // 3) иногда объект лежит внутри raw/record/airtable/fields
+  const nested = it.raw || it.record || it.airtable || {};
+  const deep = nested.fields || nested;
+  for (const f of candFields) {
+    const v = deep?.[f];
+    if (typeof v === 'string' && v.startsWith('rec')) return v;
+    if (Array.isArray(v) && v[0] && typeof v[0] === 'string' && v[0].startsWith('rec')) return v[0];
+  }
+
+  return null;
+}
+
+async function openDish(it: any) {
+  const key = new URLSearchParams(window.location.search).get('key') || '';
+  const name = it.name || it.Name || '';
+
+  // попробуем вытащить DishID на клиенте
+  let dishId = extractDishIdFromItem(it);
+
+  if (!dishId) {
+    // резолвим на сервере (по любому rec id, который у нас есть)
+    const anyId = it.id || it.recordId || it.recId || '';
+    if (anyId) {
+      const u = new URL('/api/dish/resolve', window.location.origin);
+      u.searchParams.set('anyId', anyId);
+      if (name) u.searchParams.set('name', name);
+      const r = await fetch(u.toString(), { cache: 'no-store' }).then(x=>x.json());
+      if (r?.ok && r?.dishId) dishId = r.dishId;
+    }
+  }
+
+  // финально: если нашли DishID — открываем по нему, иначе попробуем по тому, что есть + name
+  const pathId = dishId || it.id;
+  const u = new URL(`/kitchen/dish/${pathId}`, window.location.origin);
   if (key) u.searchParams.set('key', key);
-  // передадим имя как фолбэк для поиска на сервере
-  if (it.name) u.searchParams.set('name', it.name);
+  if (name) u.searchParams.set('name', name);
   window.location.href = u.toString();
 }
+
 
 
   return (
@@ -119,7 +156,7 @@ export default function KitchenMenuByDate({ params }: { params: { date: string }
                         <div className="font-semibold text-white">{it.name}</div>
                         {it.description && <div className="text-white/70 text-xs leading-relaxed">{it.description}</div>}
                         <div className="mt-2">
-                          <Button onClick={()=>openDish(it)}>Открыть блюдо</Button>
+                          <Button onClick={() => openDish(it)}>Открыть блюдо</Button>
                         </div>
                       </li>
                     ))}
