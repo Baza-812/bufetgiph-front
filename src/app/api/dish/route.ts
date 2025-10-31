@@ -4,133 +4,147 @@ const API = process.env.AIRTABLE_API_URL || 'https://api.airtable.com/v0';
 const BASE = process.env.AIRTABLE_BASE!;
 const TOKEN = process.env.AIRTABLE_TOKEN!;
 
-// Таблицы, через которые чаще всего можно дотянуться до блюда
-function lookupTables(): string[] {
-  const fromEnv = (process.env.KITCHEN_DISH_LOOKUP_TABLES || '')
+function headers() {
+  return { Authorization: `Bearer ${TOKEN}` };
+}
+
+async function atGet(path: string) {
+  const r = await fetch(`${API}/${BASE}/${path}`, { headers: headers(), cache: 'no-store' });
+  const text = await r.text();
+  return { ok: r.ok, status: r.status, json: text ? JSON.parse(text) : null, text };
+}
+
+async function getDishById(dishId: string) {
+  const r = await atGet(`Dishes/${encodeURIComponent(dishId)}`);
+  if (!r.ok) {
+    const err: any = new Error(`Airtable ${r.status} ${r.text}`);
+    err.status = r.status;
+    throw err;
+  }
+  return r.json;
+}
+
+/** Попытаться понять блюдо из записи Menu/{menuRecId} */
+async function tryDishFromMenu(menuRecId: string, dishNameHint?: string) {
+  const r = await atGet(`Menu/${encodeURIComponent(menuRecId)}`);
+  if (!r.ok) return null;
+
+  const f = r.json?.fields || {};
+  // 1) самые вероятные поля-ссылки на блюдо
+  const candidateFields = (process.env.KITCHEN_MENU_DISH_FIELD_LIST || '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
-  if (fromEnv.length) return fromEnv;
 
-  // дефолтный список-кроссфит (можете сузить под свой бэйс)
-  return [
-    'Menu',
-    'Menu Items',
-    'MenuItems',
-    'Meal Boxes',
-    'Order Lines',
-    'Menu Records',
-    'Items',
-    'MenuLines',
-    'Daily Menu',
-    'Menu Dishes',
+  const defaultCandidates = [
+    'Dish','Dishes','DishId','DishID','DishRecId','DishRecordId','Dish (linked)','Linked Dish',
+    // категории как линк-поля:
+    'Zapekanka','Salad','Soup','Main','Side',
   ];
-}
 
-async function fetchAirtableJson(url: string, init?: RequestInit) {
-  const r = await fetch(url, {
-    ...init,
-    headers: { Authorization: `Bearer ${TOKEN}`, ...(init?.headers || {}) },
-    cache: 'no-store',
-  });
-  return { ok: r.ok, status: r.status, text: await r.text() };
-}
+  const fieldsToCheck = [...candidateFields, ...defaultCandidates];
 
-async function getDishRecordById(id: string) {
-  const { ok, status, text } = await fetchAirtableJson(`${API}/${BASE}/Dishes/${id}`);
-  if (!ok) {
-    const err: any = new Error(`Airtable ${status} ${text}`);
-    err.status = status;
-    throw err;
+  // собрать все recID из перечисленных полей
+  const found: string[] = [];
+  for (const key of fieldsToCheck) {
+    const v = f[key];
+    if (!v) continue;
+    if (typeof v === 'string' && v.startsWith('rec')) found.push(v);
+    else if (Array.isArray(v)) {
+      for (const x of v) if (typeof x === 'string' && x.startsWith('rec')) found.push(x);
+    }
   }
-  return JSON.parse(text);
+
+  if (found.length === 0) return null;
+
+  // если один кандидат — готово
+  if (found.length === 1 && !dishNameHint) return found[0];
+
+  // если несколько — попробуем выбрать по имени
+  if (dishNameHint) {
+    const safeHint = dishNameHint.toLowerCase().trim();
+    for (const id of found) {
+      const d = await atGet(`Dishes/${encodeURIComponent(id)}`);
+      if (!d.ok) continue;
+      const name = (d.json?.fields?.Name || '').toLowerCase().trim();
+      if (name === safeHint) return id;
+    }
+    // мягкое совпадение (contains)
+    for (const id of found) {
+      const d = await atGet(`Dishes/${encodeURIComponent(id)}`);
+      if (!d.ok) continue;
+      const name = (d.json?.fields?.Name || '').toLowerCase();
+      if (name.includes(safeHint)) return id;
+    }
+  }
+
+  // иначе берём первый
+  return found[0];
 }
 
-async function tryResolveDishIdViaTables(anyId: string): Promise<string | null> {
-  const tables = lookupTables();
-  const dishFields = [
-    'Dish','Dishes','DishId','DishID','DishRecId','DishRecordId',
-    'Dish (linked)','Dish (from Dishes)','Main Dish','Linked Dish',
-  ];
+function normalizeStr(s: string) {
+  return s.toLowerCase().replace(/[.,;:!?"'«»(){}\[\]/\\|+=_*^%$#@~`<>-]/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
-  for (const tbl of tables) {
-    const { ok, text } = await fetchAirtableJson(`${API}/${BASE}/${encodeURIComponent(tbl)}/${anyId}`);
-    if (!ok) continue;
-    const rec = JSON.parse(text);
-    const f = rec.fields || {};
-
-    // Сначала пробуем «типичные» поля
-    for (const k of dishFields) {
-      const v = f[k];
-      if (typeof v === 'string' && v.startsWith('rec')) return v;
-      if (Array.isArray(v) && typeof v[0] === 'string' && v[0].startsWith('rec')) return v[0];
-    }
-    // Затем — перебор всех полей на предмет rec-строки
-    for (const v of Object.values(f)) {
-      if (typeof v === 'string' && v.startsWith('rec')) return v;
-      if (Array.isArray(v) && typeof v[0] === 'string' && v[0].startsWith('rec')) return v[0];
-    }
+async function searchDishByName(name: string) {
+  if (!name) return null;
+  const exact = name.replace(/'/g, "''");
+  // 1) exact
+  {
+    const r = await atGet(`Dishes?filterByFormula=${encodeURIComponent(`{Name}='${exact}'`)}&maxRecords=1`);
+    if (r.ok && r.json?.records?.[0]) return r.json.records[0];
+  }
+  // 2) contains (LOWER)
+  {
+    const r = await atGet(
+      `Dishes?filterByFormula=${encodeURIComponent(`SEARCH(LOWER('${exact}'), LOWER({Name}))`)}&maxRecords=1`
+    );
+    if (r.ok && r.json?.records?.[0]) return r.json.records[0];
+  }
+  // 3) fuzzy (нормализуем запрос)
+  const fuzzy = normalizeStr(name).replace(/'/g, "''");
+  if (fuzzy) {
+    const r = await atGet(
+      `Dishes?filterByFormula=${encodeURIComponent(`SEARCH(LOWER('${fuzzy}'), LOWER({Name}))`)}&maxRecords=1`
+    );
+    if (r.ok && r.json?.records?.[0]) return r.json.records[0];
   }
   return null;
 }
 
-async function tryResolveDishIdByName(name: string): Promise<string | null> {
-  if (!name) return null;
-  const safe = name.replace(/'/g, "''");
-  const formula = encodeURIComponent(`{Name}='${safe}'`);
-  const { ok, text } = await fetchAirtableJson(`${API}/${BASE}/Dishes?filterByFormula=${formula}&maxRecords=1`);
-  if (!ok) return null;
-  const j = JSON.parse(text);
-  const rec = j.records?.[0];
-  return rec?.id ?? null;
-}
-
 export async function GET(req: NextRequest) {
   try {
-    const id   = req.nextUrl.searchParams.get('id') || '';   // может быть не-Dishes rec
-    const name = req.nextUrl.searchParams.get('name') || ''; // фолбэк
+    const id   = req.nextUrl.searchParams.get('id') || '';   // может быть Menu recId или Dish recId
+    const name = req.nextUrl.searchParams.get('name') || ''; // подсказка
 
     if (!id && !name) {
-      return NextResponse.json({ ok: false, error: 'id or name required' }, { status: 400 });
+      return NextResponse.json({ ok:false, error:'id or name required' }, { status: 400 });
     }
 
     let dishRec: any | null = null;
 
-    // 1) Пытаемся как будто это уже DishID
+    // 1) Сначала считаем, что это DishID
     if (id) {
       try {
-        dishRec = await getDishRecordById(id);
+        dishRec = await getDishById(id);
       } catch (e: any) {
-        // если 404 — пробуем резолвить через связки
-        if (e?.status === 404) {
-          const viaLinked = await tryResolveDishIdViaTables(id);
-          if (viaLinked) {
-            dishRec = await getDishRecordById(viaLinked);
-          } else {
-            // последняя попытка — поиск по имени
-            const viaName = await tryResolveDishIdByName(name);
-            if (viaName) {
-              dishRec = await getDishRecordById(viaName);
-            } else {
-              throw new Error('Dish not found by id, links, or name');
-            }
-          }
-        } else {
-          throw e;
+        if (e?.status !== 404) throw e; // иная ошибка — пробрасываем
+        // 2) Если 404 — пробуем трактовать id как Menu/{id} и достать линк на блюдо
+        const dishIdFromMenu = await tryDishFromMenu(id, name);
+        if (dishIdFromMenu) {
+          dishRec = await getDishById(dishIdFromMenu);
         }
       }
     }
 
-    // 2) Если id не было, но есть name — пробуем по имени
+    // 3) Если всё ещё нет — ищем в Dishes по имени
     if (!dishRec && name) {
-      const viaName = await tryResolveDishIdByName(name);
-      if (viaName) {
-        dishRec = await getDishRecordById(viaName);
-      }
+      const byName = await searchDishByName(name);
+      if (byName) dishRec = await getDishById(byName.id);
     }
 
     if (!dishRec) {
-      return NextResponse.json({ ok:false, error: 'Dish not resolvable' }, { status: 404 });
+      return NextResponse.json({ ok:false, error:'Dish not found by id (Dish or Menu), or by name' }, { status: 404 });
     }
 
     const f = dishRec.fields || {};
@@ -143,8 +157,8 @@ export async function GET(req: NextRequest) {
       photos: Array.isArray(f.Photo) ? f.Photo.map((p:any)=>({ url:p.url, filename:p.filename, id:p.id })) : [],
     };
 
-    return NextResponse.json({ ok: true, dish });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e.message || String(e) }, { status: 500 });
+    return NextResponse.json({ ok:true, dish });
+  } catch (e:any) {
+    return NextResponse.json({ ok:false, error: e.message || String(e) }, { status: 500 });
   }
 }
