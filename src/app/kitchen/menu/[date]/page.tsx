@@ -77,12 +77,25 @@ export default function KitchenMenuByDate({ params }: { params: { date: string }
     return m;
   }, [items]);
 
-  function openDish(id: string) {
-    const u = new URL(`/kitchen/dish/${id}`, window.location.origin);
-    const key = new URLSearchParams(window.location.search).get('key') || '';
-    if (key) u.searchParams.set('key', key);
-    window.location.href = u.toString();
-  }
+  function openDish(it: any) {
+  const key = new URLSearchParams(window.location.search).get('key') || '';
+  // пытаемся взять «правильный» id блюда из возможных полей
+  const dishId =
+    it.dishId ??
+    it.dish_id ??
+    it.dish ??
+    it.dishRecId ??
+    it.dishRecordId ??
+    it.dishRecord ??
+    it.id; // как крайний случай — то, что есть сейчас
+
+  const u = new URL(`/kitchen/dish/${dishId}`, window.location.origin);
+  if (key) u.searchParams.set('key', key);
+  // передадим имя как фолбэк для поиска на сервере
+  if (it.name) u.searchParams.set('name', it.name);
+  window.location.href = u.toString();
+}
+
 
   return (
     <main>
@@ -106,7 +119,7 @@ export default function KitchenMenuByDate({ params }: { params: { date: string }
                         <div className="font-semibold text-white">{it.name}</div>
                         {it.description && <div className="text-white/70 text-xs leading-relaxed">{it.description}</div>}
                         <div className="mt-2">
-                          <Button onClick={()=>openDish(it.id)}>Открыть блюдо</Button>
+                          <Button onClick={()=>openDish(it)}>Открыть блюдо</Button>
                         </div>
                       </li>
                     ))}
