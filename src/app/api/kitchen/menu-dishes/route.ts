@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// ---- ENV (под ваши имена) ----
+// ---- ENV (ваши имена) ----
 const API   = process.env.AIRTABLE_API_URL || 'https://api.airtable.com/v0';
 const BASE  = process.env.AIRTABLE_BASE_ID || process.env.AIRTABLE_BASE || '';   // ваша переменная
 const TOKEN = process.env.AIRTABLE_API_KEY || process.env.AIRTABLE_TOKEN || '';  // ваша переменная
@@ -12,20 +12,15 @@ const DISHES_TID = (process.env.KITCHEN_DISHES_TABLE_ID || '').trim();   // tblY
 const MENU_LABEL   = 'Menu';
 const DISHES_LABEL = 'Dishes';
 
-// Какие ISO-поля пробуем в Menu (строки вида YYYY-MM-DD)
+// Какие ISO-поля пробуем в Menu (строки вида YYYY-MM-DD) — на случай, если добавите DateISO
 const ISO_FIELDS = (process.env.KITCHEN_MENU_DATEISO_FIELDS || 'DateISO,MenuDateISO,OrderDateISO')
   .split(',').map(s=>s.trim()).filter(Boolean);
 
-// Категории в Menu (линк-поля на Dishes)
-const CAT_KEYS: Array<{ key: string; title: 'Zapekanka'|'Salad'|'Soup'|'Main'|'Side' }> = [
-  { key: 'Zapekanka', title: 'Zapekanka' },
-  { key: 'Salad',     title: 'Salad'     },
-  { key: 'Soup',      title: 'Soup'      },
-  { key: 'Main',      title: 'Main'      },
-  { key: 'Side',      title: 'Side'      },
-];
+// Нормализованные категории, которые ждёт фронт
+type Cat = 'Zapekanka'|'Salad'|'Soup'|'Main'|'Side';
+const CANON: Cat[] = ['Zapekanka','Salad','Soup','Main','Side'] as const;
 
-// ---- Fail-fast: нет критичных env ----
+// ---- Fail-fast: проверь env ----
 function missingEnv() {
   const miss: string[] = [];
   if (!BASE)  miss.push('AIRTABLE_BASE_ID');
@@ -33,16 +28,10 @@ function missingEnv() {
   return miss;
 }
 
-function authHeaders() {
-  return { Authorization: `Bearer ${TOKEN}` };
-}
+function authHeaders() { return { Authorization: `Bearer ${TOKEN}` }; }
 
-function menuPath(suffix: string) {
-  return `${MENU_TID ? MENU_TID : encodeURIComponent(MENU_LABEL)}/${suffix}`;
-}
-function dishesPath(suffix: string) {
-  return `${DISHES_TID ? DISHES_TID : encodeURIComponent(DISHES_LABEL)}/${suffix}`;
-}
+function menuPath(suffix: string)   { return `${MENU_TID   ? MENU_TID   : encodeURIComponent(MENU_LABEL)}/${suffix}`; }
+function dishesPath(suffix: string) { return `${DISHES_TID ? DISHES_TID : encodeURIComponent(DISHES_LABEL)}/${suffix}`; }
 
 async function at(path: string) {
   const r = await fetch(`${API}/${BASE}/${path}`, { headers: authHeaders(), cache: 'no-store' });
@@ -50,60 +39,82 @@ async function at(path: string) {
   return { ok: r.ok, status: r.status, json: text ? JSON.parse(text) : null, text };
 }
 
-// Формулы для поиска записи Menu на день
+// ---- Формулы поиска по дате ----
 function buildFormulaByISO(dateISO: string) {
   const ors = ISO_FIELDS.map(f => `{${f}}='${dateISO.replace(/'/g, "''")}'`);
   return ors.length === 1 ? ors[0] : `OR(${ors.join(',')})`;
 }
-function f_IS_SAME(dateISO: string) {
-  return `IS_SAME({Date}, DATETIME_PARSE('${dateISO}'), 'day')`;
-}
-function f_FMT(dateISO: string) {
-  return `DATETIME_FORMAT({Date}, 'YYYY-MM-DD')='${dateISO}'`;
-}
-function f_EQ(dateISO: string) {
-  return `{Date}='${dateISO}'`;
+function f_IS_SAME(dateISO: string) { return `IS_SAME({Date}, DATETIME_PARSE('${dateISO}'), 'day')`; }
+function f_FMT(dateISO: string)     { return `DATETIME_FORMAT({Date}, 'YYYY-MM-DD')='${dateISO}'`; }
+function f_EQ(dateISO: string)      { return `{Date}='${dateISO}'`; }
+
+/** Вытащить ВСЕ записи Menu за день (с пагинацией) по формуле */
+async function getAllMenuRecordsByFormula(formula: string, max = 1000) {
+  let recs: any[] = [];
+  let offset: string | undefined;
+  do {
+    const q = `?filterByFormula=${encodeURIComponent(formula)}&pageSize=100${offset ? `&offset=${encodeURIComponent(offset)}` : ''}`;
+    const r = await at(menuPath(q));
+    if (!r.ok) return { ok:false, status:r.status, text:r.text, records:recs };
+    recs = recs.concat(r.json?.records || []);
+    offset = r.json?.offset;
+  } while (offset && recs.length < max);
+  return { ok:true, status:200, text:'', records:recs };
 }
 
-async function getMenuByDate(dateISO: string) {
-  // 1) ISO-поля (строгое равенство строки)
-  {
-    const formula = encodeURIComponent(buildFormulaByISO(dateISO));
-    const r = await at(`${menuPath(`?filterByFormula=${formula}&maxRecords=1`)}`);
-    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'iso_fields', path: menuPath('') };
+/** Главная функция: достать записи Menu за дату (все), пробуя несколько формул по очереди */
+async function getMenuRecordsForDate(dateISO: string) {
+  // 1) ISO-поля (если есть)
+  if (ISO_FIELDS.length) {
+    const r = await getAllMenuRecordsByFormula(buildFormulaByISO(dateISO));
+    if (r.ok && r.records.length) return { records: r.records, how: 'iso_fields', path: menuPath('') };
   }
   // 2) IS_SAME
   {
-    const formula = encodeURIComponent(f_IS_SAME(dateISO));
-    const r = await at(`${menuPath(`?filterByFormula=${formula}&maxRecords=1`)}`);
-    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'is_same', path: menuPath('') };
+    const r = await getAllMenuRecordsByFormula(f_IS_SAME(dateISO));
+    if (r.ok && r.records.length) return { records: r.records, how: 'is_same', path: menuPath('') };
   }
-  // 3) DATETIME_FORMAT
+  // 3) FORMAT
   {
-    const formula = encodeURIComponent(f_FMT(dateISO));
-    const r = await at(`${menuPath(`?filterByFormula=${formula}&maxRecords=1`)}`);
-    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'date_fmt', path: menuPath('') };
+    const r = await getAllMenuRecordsByFormula(f_FMT(dateISO));
+    if (r.ok && r.records.length) return { records: r.records, how: 'date_fmt', path: menuPath('') };
   }
-  // 4) прямое равенство
+  // 4) EQ
   {
-    const formula = encodeURIComponent(f_EQ(dateISO));
-    const r = await at(`${menuPath(`?filterByFormula=${formula}&maxRecords=1`)}`);
-    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'date_eq', path: menuPath('') };
+    const r = await getAllMenuRecordsByFormula(f_EQ(dateISO));
+    if (r.ok && r.records.length) return { records: r.records, how: 'date_eq', path: menuPath('') };
   }
-
-  return { rec: null as any, how: 'not_found' as const, path: menuPath('') };
+  return { records: [] as any[], how: 'not_found' as const, path: menuPath('') };
 }
 
+/** Забрать записи Dishes по массиву recID (batch) */
 async function getDishesByIds(ids: string[]) {
   if (!ids?.length) return [];
-  const params = ids.map(id => `records[]=${encodeURIComponent(id)}`).join('&');
-  const r = await at(`${dishesPath(`?${params}`)}`);
-  if (!r.ok) return [];
-  return r.json?.records ?? [];
+  // делим на чанки по 100 (лимит Airtable)
+  const out: any[] = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const params = chunk.map(id => `records[]=${encodeURIComponent(id)}`).join('&');
+    const r = await at(dishesPath(`?${params}`));
+    if (!r.ok) continue;
+    out.push(...(r.json?.records || []));
+  }
+  return out;
+}
+
+function normalizeCategory(raw: any): Cat {
+  const s = String(raw || '').trim();
+  if (CANON.includes(s as Cat)) return s as Cat;
+  // простая нормализация на всякий случай (нижний регистр, без пробелов)
+  const n = s.toLowerCase().replace(/\s+/g, '');
+  if (n.includes('zapek')) return 'Zapekanka';
+  if (n === 'salad' || n.includes('salat')) return 'Salad';
+  if (n === 'soup'  || n.includes('sup'))   return 'Soup';
+  if (n === 'side'  || n.includes('garn'))  return 'Side';
+  return 'Main';
 }
 
 export async function GET(req: NextRequest) {
-  // fail-fast, чтобы сразу подсветить неподготовленную среду
   const miss = missingEnv();
   if (miss.length) {
     return NextResponse.json(
@@ -117,9 +128,10 @@ export async function GET(req: NextRequest) {
     const debug = req.nextUrl.searchParams.get('debug') === '1';
     if (!date) return NextResponse.json({ ok:false, error:'date required' }, { status:400 });
 
-    const { rec: menu, how, path } = await getMenuByDate(date);
+    // 1) Тянем ВСЕ записи Menu на данную дату
+    const { records: menuRows, how, path } = await getMenuRecordsForDate(date);
 
-    if (!menu) {
+    if (!menuRows.length) {
       return NextResponse.json({
         ok: true,
         dishes: [],
@@ -136,29 +148,47 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const f = menu.fields || {};
-    const perCatIds: Record<string, string[]> = {};
-    for (const { key } of CAT_KEYS) {
-      const v = f[key];
-      if (Array.isArray(v)) perCatIds[key] = v.filter((x:any)=> typeof x === 'string' && x.startsWith('rec'));
-      else if (typeof v === 'string' && v.startsWith('rec')) perCatIds[key] = [v];
-      else perCatIds[key] = [];
+    // 2) Собираем пары (dishId, category) из Menu
+    type Pair = { id: string; category: Cat };
+    const pairs: Pair[] = [];
+    for (const row of menuRows) {
+      const f = row.fields || {};
+      // Dish — это линк-поле; может быть строкой rec… или массивом rec…
+      const link = f.Dish;
+      const cat  = normalizeCategory(f.Category);
+
+      const pushId = (id: any) => {
+        if (typeof id === 'string' && id.startsWith('rec')) {
+          pairs.push({ id, category: cat });
+        }
+      };
+
+      if (Array.isArray(link)) { link.forEach(pushId); }
+      else { pushId(link); }
     }
 
-    const allIds = [...new Set(Object.values(perCatIds).flat())];
-    const recs   = await getDishesByIds(allIds);
+    const uniqueIds = [...new Set(pairs.map(p => p.id))];
+
+    // 3) Пакетно тянем Dishes и делаем словарь
+    const dishRecs = await getDishesByIds(uniqueIds);
     const byId: Record<string, any> = {};
-    for (const r of recs) byId[r.id] = r;
+    for (const r of dishRecs) byId[r.id] = r;
 
-    const dishes = CAT_KEYS.flatMap(({ key, title }) =>
-      (perCatIds[key] || []).map(id => {
-        const d = byId[id];
-        const name  = d?.fields?.Name ?? 'Без названия';
-        const descr = d?.fields?.Description ?? '';
-        return { id, name, description: descr, category: title };
-      })
-    );
+    // 4) Формируем ответ
+    const dishes = pairs.map(p => {
+      const d = byId[p.id];
+      const name  = d?.fields?.Name ?? 'Без названия';
+      const descr = d?.fields?.Description ?? '';
+      return { id: p.id, name, description: descr, category: p.category as Cat };
+    });
 
+    // Можно по желанию отсортировать внутри категории по алфавиту
+    dishes.sort((a, b) => {
+      if (a.category !== b.category) return CANON.indexOf(a.category) - CANON.indexOf(b.category);
+      return a.name.localeCompare(b.name, 'ru');
+    });
+
+    // 5) Ответ
     return NextResponse.json({
       ok: true,
       dishes,
@@ -166,12 +196,11 @@ export async function GET(req: NextRequest) {
         how,
         date,
         base: BASE,
-        menuId: menu.id,
+        menuCount: menuRows.length,
         menuPathUsed: path,
         menuTableId: MENU_TID || null,
         dishesTableId: DISHES_TID || null,
-        fieldsPresent: Object.keys(f),
-        perCatCounts: Object.fromEntries(CAT_KEYS.map(({ key }) => [key, perCatIds[key]?.length ?? 0])),
+        categoriesFound: Array.from(new Set(dishes.map(d => d.category))),
       } : undefined,
     });
   } catch (e:any) {
