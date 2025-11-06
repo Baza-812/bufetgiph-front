@@ -148,24 +148,30 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // 2) Собираем пары (dishId, category) из Menu
-    type Pair = { id: string; category: Cat };
-    const pairs: Pair[] = [];
-    for (const row of menuRows) {
-      const f = row.fields || {};
-      // Dish — это линк-поле; может быть строкой rec… или массивом rec…
-      const link = f.Dish;
-      const cat  = normalizeCategory(f.Category);
+    // 2) Собираем пары (dishId, category, displayName) из Menu
+type Pair = { id: string; category: Cat; displayName?: string; description?: string };
+const pairs: Pair[] = [];
+for (const row of menuRows) {
+  const f = row.fields || {};
+  const link = f.Dish;                 // линк на блюдо
+  const cat  = normalizeCategory(f.Category);
+  // пытаемся взять читаемое имя из строки Menu
+  const displayName =
+    f['Dish Name (from Dish)'] ||
+    f['Item'] ||
+    undefined;
+  const description = f['Description (from Dish)'] || undefined;
 
-      const pushId = (id: any) => {
-        if (typeof id === 'string' && id.startsWith('rec')) {
-          pairs.push({ id, category: cat });
-        }
-      };
-
-      if (Array.isArray(link)) { link.forEach(pushId); }
-      else { pushId(link); }
+  const pushId = (id: any) => {
+    if (typeof id === 'string' && id.startsWith('rec')) {
+      pairs.push({ id, category: cat, displayName, description });
     }
+  };
+
+  if (Array.isArray(link)) link.forEach(pushId);
+  else pushId(link);
+}
+
 
     const uniqueIds = [...new Set(pairs.map(p => p.id))];
 
@@ -175,12 +181,13 @@ export async function GET(req: NextRequest) {
     for (const r of dishRecs) byId[r.id] = r;
 
     // 4) Формируем ответ
-    const dishes = pairs.map(p => {
-      const d = byId[p.id];
-      const name  = d?.fields?.Name ?? 'Без названия';
-      const descr = d?.fields?.Description ?? '';
-      return { id: p.id, name, description: descr, category: p.category as Cat };
-    });
+const dishes = pairs.map(p => {
+  const d = byId[p.id];
+  const nameFromDishes = d?.fields?.Name;
+  const name = (nameFromDishes || p.displayName || 'Без названия') as string;
+  const descr = (d?.fields?.Description || p.description || '') as string;
+  return { id: p.id, name, description: descr, category: p.category as Cat };
+});
 
     // Можно по желанию отсортировать внутри категории по алфавиту
     dishes.sort((a, b) => {
