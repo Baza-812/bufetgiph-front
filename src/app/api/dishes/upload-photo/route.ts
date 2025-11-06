@@ -2,29 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { put } from '@vercel/blob';
 
 const API   = process.env.AIRTABLE_API_URL || 'https://api.airtable.com/v0';
-const BASE  = process.env.AIRTABLE_BASE_ID || process.env.AIRTABLE_BASE || '';
-const TOKEN = process.env.AIRTABLE_API_KEY || process.env.AIRTABLE_TOKEN || '';
-const DISHES_TID = (process.env.KITCHEN_DISHES_TABLE_ID || '').trim();
-const DISHES_LABEL = 'Dishes';
+const BASE  = process.env.AIRTABLE_BASE || process.env.AIRTABLE_BASE_ID || '';
+const TOKEN = process.env.AIRTABLE_TOKEN || process.env.AIRTABLE_API_KEY || '';
 
-// требуются права на запись в Blob: BLOB_READ_WRITE_TOKEN в Vercel env
-function dishesPath(suffix: string) {
-  return `${DISHES_TID ? DISHES_TID : encodeURIComponent(DISHES_LABEL)}/${suffix}`;
-}
-
-async function atPatch(path: string, body: any) {
-  const r = await fetch(`${API}/${BASE}/${path}`, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    cache: 'no-store',
-    body: JSON.stringify(body),
-  });
-  const text = await r.text();
-  return { ok: r.ok, status: r.status, json: text ? JSON.parse(text) : null, text };
-}
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,35 +13,45 @@ export async function POST(req: NextRequest) {
     const dishId = String(form.get('dishId') || '');
     const file = form.get('file') as File | null;
 
-    if (!dishId || !file) {
-      return NextResponse.json({ ok:false, error:'dishId and file required' }, { status:400 });
-    }
+    if (!dishId) return NextResponse.json({ ok:false, error:'dishId required' }, { status: 400 });
+    if (!file || !('name' in file)) return NextResponse.json({ ok:false, error:'file required' }, { status: 400 });
+    if (!BASE || !TOKEN) return NextResponse.json({ ok:false, error:'Missing env: AIRTABLE_BASE/AIRTABLE_TOKEN' }, { status:500 });
 
-    // грузим как File — так корректно для @vercel/blob
+    // ВАЖНО: передаём сам File, а не Uint8Array — так `put` принимает корректно в Edge/Node
     const blob = await put(`kitchen/${dishId}/${file.name}`, file, {
       access: 'public',
       addRandomSuffix: true,
       contentType: file.type || 'application/octet-stream',
     });
 
-    // добавляем в Airtable в поле Photo
-    const patch = await atPatch(dishesPath(encodeURIComponent(dishId)), {
-      records: [{
-        id: dishId,
-        fields: {
-          Photo: [{ url: blob.url, filename: file.name }]
-        }
-      }]
+    // Подхватим текущие вложения, чтобы не стереть их
+    const getR = await fetch(`${API}/${BASE}/Dishes/${dishId}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      cache: 'no-store',
     });
+    if (!getR.ok) throw new Error(`Airtable GET ${getR.status} ${await getR.text()}`);
+    const cur = await getR.json();
+    const existing = Array.isArray(cur.fields?.Photo) ? cur.fields.Photo : [];
 
-    if (!patch.ok) {
-      return NextResponse.json({ ok:false, error:`Airtable patch failed: ${patch.text}` }, { status:500 });
-    }
+    const patchR = await fetch(`${API}/${BASE}/Dishes/${dishId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fields: {
+          Photo: [
+            ...existing,
+            { url: blob.url, filename: file.name },
+          ],
+        },
+      }),
+    });
+    if (!patchR.ok) throw new Error(`Airtable PATCH ${patchR.status} ${await patchR.text()}`);
 
     return NextResponse.json({ ok:true, url: blob.url });
   } catch (e:any) {
-    return NextResponse.json({ ok:false, error: e.message || String(e) }, { status:500 });
+    return NextResponse.json({ ok:false, error: e.message || String(e) }, { status: 500 });
   }
 }
-
-export const runtime = 'nodejs'; // не edge, т.к. используем @vercel/blob put
