@@ -104,8 +104,7 @@ async function getDishesByIds(ids: string[]) {
 
 function normalizeCategory(raw: any): Cat {
   const s = String(raw || '').trim();
-  if (CANON.includes(s as Cat)) return s as Cat;
-  // простая нормализация на всякий случай (нижний регистр, без пробелов)
+  if ((CANON as readonly string[]).includes(s)) return s as Cat;
   const n = s.toLowerCase().replace(/\s+/g, '');
   if (n.includes('zapek')) return 'Zapekanka';
   if (n === 'salad' || n.includes('salat')) return 'Salad';
@@ -148,30 +147,30 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // 2) Собираем пары (dishId, category, displayName) из Menu
-type Pair = { id: string; category: Cat; displayName?: string; description?: string };
-const pairs: Pair[] = [];
-for (const row of menuRows) {
-  const f = row.fields || {};
-  const link = f.Dish;                 // линк на блюдо
-  const cat  = normalizeCategory(f.Category);
-  // пытаемся взять читаемое имя из строки Menu
-  const displayName =
-    f['Dish Name (from Dish)'] ||
-    f['Item'] ||
-    undefined;
-  const description = f['Description (from Dish)'] || undefined;
+    // 2) Собираем пары (dishId, category, displayName, description) из Menu
+    type Pair = { id: string; category: Cat; displayName?: string; description?: string };
+    const pairs: Pair[] = [];
+    for (const row of menuRows) {
+      const f = row.fields || {};
+      const link = f.Dish;                 // линк на блюдо (строка rec… или массив)
+      const cat  = normalizeCategory(f.Category);
 
-  const pushId = (id: any) => {
-    if (typeof id === 'string' && id.startsWith('rec')) {
-      pairs.push({ id, category: cat, displayName, description });
+      // фолбэки имени/описания из строки Menu
+      const displayName =
+        f['Dish Name (from Dish)'] ||
+        f['Item'] ||
+        undefined;
+      const description = f['Description (from Dish)'] || undefined;
+
+      const pushId = (id: any) => {
+        if (typeof id === 'string' && id.startsWith('rec')) {
+          pairs.push({ id, category: cat, displayName, description });
+        }
+      };
+
+      if (Array.isArray(link)) { link.forEach(pushId); }
+      else { pushId(link); }
     }
-  };
-
-  if (Array.isArray(link)) link.forEach(pushId);
-  else pushId(link);
-}
-
 
     const uniqueIds = [...new Set(pairs.map(p => p.id))];
 
@@ -180,22 +179,27 @@ for (const row of menuRows) {
     const byId: Record<string, any> = {};
     for (const r of dishRecs) byId[r.id] = r;
 
-    // 4) Формируем ответ
-const dishes = pairs.map(p => {
-  const d = byId[p.id];
-  const nameFromDishes = d?.fields?.Name;
-  const name = (nameFromDishes || p.displayName || 'Без названия') as string;
-  const descr = (d?.fields?.Description || p.description || '') as string;
-  return { id: p.id, name, description: descr, category: p.category as Cat };
-});
-
-    // Можно по желанию отсортировать внутри категории по алфавиту
-    dishes.sort((a, b) => {
-      if (a.category !== b.category) return CANON.indexOf(a.category) - CANON.indexOf(b.category);
-      return a.name.localeCompare(b.name, 'ru');
+    // 4) Формируем ответ с жёстким приведением к строкам
+    const dishes = pairs.map(p => {
+      const d = byId[p.id];
+      const nameFromDishes = d?.fields?.Name;
+      const nameRaw = (nameFromDishes ?? p.displayName ?? 'Без названия');
+      const name = String(nameRaw);
+      const descr = String(d?.fields?.Description ?? p.description ?? '');
+      return { id: p.id, name, description: descr, category: p.category as Cat };
     });
 
-    // 5) Ответ
+    // 5) Безопасная сортировка
+    dishes.sort((a, b) => {
+      if (a.category !== b.category) {
+        return CANON.indexOf(a.category as Cat) - CANON.indexOf(b.category as Cat);
+      }
+      const an = String(a.name || '');
+      const bn = String(b.name || '');
+      return an.localeCompare(bn, 'ru', { sensitivity: 'base' });
+    });
+
+    // 6) Ответ
     return NextResponse.json({
       ok: true,
       dishes,
