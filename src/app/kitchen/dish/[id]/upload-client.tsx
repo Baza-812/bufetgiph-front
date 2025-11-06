@@ -1,41 +1,38 @@
 'use client';
 import { useState } from 'react';
-import Button from '@/components/ui/Button';
 
-export default function UploadClient({ dishId }: { dishId: string }) {
-  const [file, setFile] = useState<File|null>(null);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string| null>(null);
+export default function UploadClient({ dishId, onUploaded }: { dishId: string; onUploaded?: (url:string)=>void }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  async function onUpload(e: React.FormEvent) {
-    e.preventDefault();
+  async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
     if (!file) return;
-    setBusy(true); setMsg(null);
+    setLoading(true);
+    setErr(null);
     try {
       const fd = new FormData();
-      fd.append('file', file);
       fd.append('dishId', dishId);
+      fd.append('file', file);
       const res = await fetch('/api/dishes/upload-photo', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Upload failed');
-      setMsg('Фото загружено. Обновите страницу, чтобы увидеть результат.');
-      setFile(null);
-    } catch (err:any) {
-      setMsg(`Ошибка: ${err.message || String(err)}`);
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'upload failed');
+      onUploaded?.(j.url);
+    } catch (e:any) {
+      setErr(e.message || String(e));
     } finally {
-      setBusy(false);
+      setLoading(false);
+      e.currentTarget.value = '';
     }
   }
 
   return (
-    <form onSubmit={onUpload} className="space-y-2">
-      <input type="file" accept="image/*" onChange={e=>setFile(e.target.files?.[0]||null)} />
-      <div>
-        <Button type="submit" disabled={!file || busy}>
-          {busy ? 'Загрузка…' : (file ? 'Загрузить' : 'Выберите файл')}
-        </Button>
-      </div>
-      {msg && <div className="text-white/70 text-sm">{msg}</div>}
-    </form>
+    <div className="flex items-center gap-3">
+      <label className="inline-flex items-center px-4 py-2 rounded-2xl bg-yellow-400 text-black cursor-pointer hover:opacity-90">
+        {loading ? 'Загрузка...' : 'Загрузить фото'}
+        <input type="file" accept="image/*" onChange={onChange} className="hidden" />
+      </label>
+      {err && <span className="text-red-600 text-sm">{err}</span>}
+    </div>
   );
 }
