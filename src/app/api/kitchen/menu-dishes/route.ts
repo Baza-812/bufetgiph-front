@@ -13,6 +13,14 @@ const CAT_KEYS: Array<{ key: string; title: 'Zapekanka'|'Salad'|'Soup'|'Main'|'S
   { key: 'Side',      title: 'Side'      },
 ];
 
+/** Поля с уже сформированной ISO-датой (строка YYYY-MM-DD) — можно переопределить через env */
+function isoDateFields(): string[] {
+  const fromEnv = (process.env.KITCHEN_MENU_DATEISO_FIELDS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const defaults = ['DateISO', 'MenuDateISO', 'OrderDateISO'];
+  return [...fromEnv, ...defaults].filter((v, i, a) => v && a.indexOf(v) === i);
+}
+
 async function at(path: string) {
   const r = await fetch(`${API}/${BASE}/${path}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
@@ -22,27 +30,47 @@ async function at(path: string) {
   return { ok: r.ok, status: r.status, json: text ? JSON.parse(text) : null, text };
 }
 
-/** Основная формула: точное совпадение дня по полю Date (без времени) */
-function buildFormulaByDate(dateISO: string) {
-  // Срабатывает независимо от TZ/формата
-  return encodeURIComponent(
-    `IS_SAME({Date}, DATETIME_PARSE('${dateISO}'), 'day')`
-  );
+/** Формула по ISO-полям: OR({DateISO}='2025-11-07', {MenuDateISO}='…', …) */
+function buildFormulaByISO(dateISO: string) {
+  const flds = isoDateFields();
+  const ors = flds.map(f => `{${f}}='${dateISO.replace(/'/g, "''")}'`);
+  if (!ors.length) return '';
+  return encodeURIComponent(ors.length === 1 ? ors[0] : `OR(${ors.join(',')})`);
+}
+
+/** Резервные формулы по полю Date (тип Date, без времени) */
+function buildFormulaByDate_IS_SAME(dateISO: string) {
+  return encodeURIComponent(`IS_SAME({Date}, DATETIME_PARSE('${dateISO}'), 'day')`);
+}
+function buildFormulaByDate_FMT(dateISO: string) {
+  return encodeURIComponent(`DATETIME_FORMAT({Date}, 'YYYY-MM-DD')='${dateISO}'`);
+}
+function buildFormulaByDate_EQ(dateISO: string) {
+  return encodeURIComponent(`{Date}='${dateISO}'`);
 }
 
 /** Поиск записи Menu на заданную дату */
 async function getMenuByDate(dateISO: string) {
-  // 1) Надёжный путь — IS_SAME
-  let r = await at(`Menu?filterByFormula=${buildFormulaByDate(dateISO)}&maxRecords=1`);
-  if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'is_same' as const };
+  // 1) По ISO-полям (строгое равенство строки)
+  const iso = buildFormulaByISO(dateISO);
+  if (iso) {
+    let r = await at(`Menu?filterByFormula=${iso}&maxRecords=1`);
+    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'iso_fields' as const };
+  }
 
-  // 2) Запасной — форматированием в YYYY-MM-DD
-  r = await at(`Menu?filterByFormula=${encodeURIComponent(`DATETIME_FORMAT({Date}, 'YYYY-MM-DD')='${dateISO}'`)}&maxRecords=1`);
-  if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'date_fmt' as const };
-
-  // 3) Последний шанс — прямое равенство (если вдруг поле действительно хранится как строка даты)
-  r = await at(`Menu?filterByFormula=${encodeURIComponent(`{Date}='${dateISO}'`)}&maxRecords=1`);
-  if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'date_eq' as const };
+  // 2) Резерв — по Date
+  {
+    let r = await at(`Menu?filterByFormula=${buildFormulaByDate_IS_SAME(dateISO)}&maxRecords=1`);
+    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'is_same' as const };
+  }
+  {
+    let r = await at(`Menu?filterByFormula=${buildFormulaByDate_FMT(dateISO)}&maxRecords=1`);
+    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'date_fmt' as const };
+  }
+  {
+    let r = await at(`Menu?filterByFormula=${buildFormulaByDate_EQ(dateISO)}&maxRecords=1`);
+    if (r.ok && r.json?.records?.[0]) return { rec: r.json.records[0], how: 'date_eq' as const };
+  }
 
   return { rec: null, how: 'not_found' as const };
 }
@@ -71,7 +99,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         dishes: [],
-        debug: debug ? { reason: 'menu_not_found', how, date, base: BASE } : undefined,
+        debug: debug ? {
+          reason: 'menu_not_found',
+          how,
+          date,
+          base: BASE,
+          isoFieldsTried: isoDateFields(),
+        } : undefined,
       });
     }
 
