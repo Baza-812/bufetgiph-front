@@ -1,6 +1,6 @@
 'use client';
+import { Suspense, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useMemo } from 'react';
 
 function formatISO(d: Date) {
   const y = d.getFullYear();
@@ -9,7 +9,7 @@ function formatISO(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
-export default function KitchenClient() {
+function Inner() {
   const router = useRouter();
   const sp = useSearchParams();
   const key = sp.get('key') || 'kitchen_o555';
@@ -37,7 +37,9 @@ export default function KitchenClient() {
           <button
             key={d.iso}
             className="rounded-2xl border border-neutral-300 px-4 py-3 hover:border-yellow-400"
-            onClick={() => router.push(`/kitchen/menu?date=${d.iso}&key=${encodeURIComponent(key)}`)}
+            onClick={() =>
+              router.push(`/kitchen/menu?date=${d.iso}&key=${encodeURIComponent(key)}`)
+            }
           >
             <div className="text-sm text-neutral-500">{d.label.split(',')[0]}</div>
             <div className="text-lg font-semibold">{d.label.split(',')[1]}</div>
@@ -45,5 +47,13 @@ export default function KitchenClient() {
         ))}
       </div>
     </div>
+  );
+}
+
+export default function KitchenClient() {
+  return (
+    <Suspense fallback={<div className="p-6">Загрузка…</div>}>
+      <Inner />
+    </Suspense>
   );
 }
