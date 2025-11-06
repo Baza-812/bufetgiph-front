@@ -1,62 +1,46 @@
 'use client';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
 
-import { useEffect, useState } from 'react';
-import Panel from '@/components/ui/Panel';
-import Button from '@/components/ui/Button';
-import { fetchJSON, fmtDayLabel } from '@/lib/api';
+function formatISO(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 
-export default function KitchenDayPicker() {
-  const [org, setOrg] = useState('');
-  const [dates, setDates] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState('');
+export default function KitchenIndex() {
+  const router = useRouter();
+  const sp = useSearchParams();
+  const key = sp.get('key') || 'kitchen_o555'; // «ключ-доступ» как вы и хотели
+  const [current, setCurrent] = useState<Date>(new Date());
 
-  useEffect(() => {
-    // org берём как у вас: из query/localStorage, но для кухни достаточно org из localStorage
-    const o = new URLSearchParams(window.location.search).get('org')
-         || localStorage.getItem('baza.org')
-         || '';
-    setOrg(o);
+  const days = useMemo(() => {
+    // 14 дней от сегодня
+    const list: {label:string; iso:string; date:Date}[] = [];
+    for (let i=0;i<14;i++) {
+      const d = new Date();
+      d.setDate(d.getDate()+i);
+      list.push({ label: d.toLocaleDateString('ru-RU', { weekday:'short', day:'2-digit', month:'2-digit' }), iso: formatISO(d), date:d });
+    }
+    return list;
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      if (!org) return;
-      try {
-        setLoading(true); setErr('');
-        const r = await fetchJSON<{ ok: boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
-        setDates(r.dates || []);
-      } catch (e: unknown) {
-        setErr(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [org]);
-
-  function openDate(d: string) {
-    const u = new URL(`/kitchen/menu/${d}`, window.location.origin);
-    // прокинем org и key, чтобы не терять доступ
-    const key = new URLSearchParams(window.location.search).get('key') || '';
-    if (org) u.searchParams.set('org', org);
-    if (key) u.searchParams.set('key', key);
-    window.location.href = u.toString();
-  }
-
   return (
-    <main>
-      <Panel title="Выберите дату">
-        {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
-        {err && <div className="text-red-400 text-sm">Ошибка: {err}</div>}
-
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {dates.map(d => (
-            <Button key={d} onClick={() => openDate(d)} className="w-full">
-              {fmtDayLabel(d)}
-            </Button>
-          ))}
-        </div>
-      </Panel>
-    </main>
+    <div className="max-w-3xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-4">Выбор дня</h1>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {days.map(d => (
+          <button
+            key={d.iso}
+            className="rounded-2xl border border-neutral-300 px-4 py-3 hover:border-yellow-400"
+            onClick={() => router.push(`/kitchen/menu?date=${d.iso}&key=${encodeURIComponent(key)}`)}
+          >
+            <div className="text-sm text-neutral-500">{d.label.split(',')[0]}</div>
+            <div className="text-lg font-semibold">{d.label.split(',')[1]}</div>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
