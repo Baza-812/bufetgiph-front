@@ -1,6 +1,7 @@
-import dynamicImport from 'next/dynamic';
+'use client';
 
-const KitchenClient = dynamicImport(() => import('./KitchenClient'), { ssr: false });
+import KitchenClient from './KitchenClient';
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
