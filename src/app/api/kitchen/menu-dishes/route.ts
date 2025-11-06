@@ -212,37 +212,39 @@ export async function GET(req: NextRequest) {
       return { id: p.id, name, description: descr, category: p.category as Cat };
     });
 
-    // 5) Сортировка: по нашему порядку категорий, затем по алфавиту.
-    const catRank = (c: string) => {
-      const idx = CANON_ORDER.indexOf(c as Cat);
-      return idx === -1 ? 999 : idx;
-    };
-    dishes.sort((a, b) => {
-      const ra = catRank(a.category);
-      const rb = catRank(b.category);
-      if (ra !== rb) return ra - rb;
-      const an = String(a.name || '');
-      const bn = String(b.name || '');
-      return an.localeCompare(bn, 'ru', { sensitivity: 'base' });
-    });
+    // 4.5) Фильтрация только базовых категорий для поварского портала
+let filtered = dishes.filter(d => ALLOWED_CATS.includes(d.category as Cat));
 
-    // 6) Ответ
-    return NextResponse.json({
-      ok: true,
-      dishes,
-      debug: debug ? {
-        how,
-        date,
-        base: BASE,
-        menuCount: menuRows.length,
-        menuPathUsed: path,
-        menuTableId: MENU_TID || null,
-        dishesTableId: DISHES_TID || null,
-        categoriesFound: Array.from(new Set(dishes.map(d => d.category))).sort(
-          (a,b) => catRank(a) - catRank(b) || a.localeCompare(b, 'ru', {sensitivity:'base'})
-        ),
-      } : undefined,
-    });
+
+   // 5) Сортировка
+const catRank = (c: string) => {
+  const idx = ALLOWED_CATS.indexOf(c as Cat);
+  return idx === -1 ? 999 : idx;
+};
+filtered.sort((a, b) => {
+  const ra = catRank(a.category);
+  const rb = catRank(b.category);
+  if (ra !== rb) return ra - rb;
+  const an = String(a.name || '');
+  const bn = String(b.name || '');
+  return an.localeCompare(bn, 'ru', { sensitivity: 'base' });
+});
+
+// 6) Ответ
+return NextResponse.json({
+  ok: true,
+  dishes: filtered,
+  debug: debug ? {
+    how,
+    date,
+    base: BASE,
+    menuCount: menuRows.length,
+    menuPathUsed: path,
+    menuTableId: MENU_TID || null,
+    dishesTableId: DISHES_TID || null,
+    categoriesFound: Array.from(new Set(filtered.map(d => d.category))),
+  } : undefined,
+});
   } catch (e:any) {
     return NextResponse.json({ ok:false, error: e.message || String(e) }, { status:500 });
   }
