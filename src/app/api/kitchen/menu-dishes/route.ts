@@ -27,11 +27,13 @@ type Cat =
   | 'Fruit'
   | 'Drink';
 
-// Базовый порядок секций: сначала привычные 5, затем Pastry/Fruit/Drink.
-// Любые остальные встреченные категории пойдут в конец по алфавиту.
+// Базовый порядок секций
 const CANON_ORDER: Cat[] = [
   'Zapekanka','Salad','Soup','Main','Side','Pastry','Fruit','Drink'
 ] as const;
+
+// Разрешённые для поварского портала
+const ALLOWED_CATS: Cat[] = ['Zapekanka','Salad','Soup','Main','Side'];
 
 function missingEnv() {
   const miss: string[] = [];
@@ -128,7 +130,7 @@ function normalizeCategory(raw: any): Cat {
   if (n === 'soup'  || n.includes('sup'))   return 'Soup';
   if (n === 'side'  || n.includes('garn') || n.includes('гарнир')) return 'Side';
 
-  // Новые категории:
+  // Дополнительные:
   if (n.includes('pastry') || n.includes('выпеч') || n.includes('пирож')) return 'Pastry';
   if (n.includes('fruit')  || n.includes('фрукт') || n === 'banana' || n === 'банан') return 'Fruit';
   if (n.includes('drink')  || n.includes('napit') || n.includes('напит') || n.includes('сок')) return 'Drink';
@@ -203,7 +205,7 @@ export async function GET(req: NextRequest) {
     for (const r of dishRecs) byId[r.id] = r;
 
     // 4) Формируем ответ (строгие строки)
-    const dishes = pairs.map(p => {
+    const dishesFull = pairs.map(p => {
       const d = byId[p.id];
       const nameFromDishes = d?.fields?.Name;
       const nameRaw = (nameFromDishes ?? p.displayName ?? 'Без названия');
@@ -213,38 +215,37 @@ export async function GET(req: NextRequest) {
     });
 
     // 4.5) Фильтрация только базовых категорий для поварского портала
-let filtered = dishes.filter(d => ALLOWED_CATS.includes(d.category as Cat));
+    let dishes = dishesFull.filter(d => ALLOWED_CATS.includes(d.category as Cat));
 
+    // 5) Сортировка: по порядку ALLOWED_CATS, затем по алфавиту.
+    const catRank = (c: string) => {
+      const idx = ALLOWED_CATS.indexOf(c as Cat);
+      return idx === -1 ? 999 : idx;
+    };
+    dishes.sort((a, b) => {
+      const ra = catRank(a.category);
+      const rb = catRank(b.category);
+      if (ra !== rb) return ra - rb;
+      const an = String(a.name || '');
+      const bn = String(b.name || '');
+      return an.localeCompare(bn, 'ru', { sensitivity: 'base' });
+    });
 
-   // 5) Сортировка
-const catRank = (c: string) => {
-  const idx = ALLOWED_CATS.indexOf(c as Cat);
-  return idx === -1 ? 999 : idx;
-};
-filtered.sort((a, b) => {
-  const ra = catRank(a.category);
-  const rb = catRank(b.category);
-  if (ra !== rb) return ra - rb;
-  const an = String(a.name || '');
-  const bn = String(b.name || '');
-  return an.localeCompare(bn, 'ru', { sensitivity: 'base' });
-});
-
-// 6) Ответ
-return NextResponse.json({
-  ok: true,
-  dishes: filtered,
-  debug: debug ? {
-    how,
-    date,
-    base: BASE,
-    menuCount: menuRows.length,
-    menuPathUsed: path,
-    menuTableId: MENU_TID || null,
-    dishesTableId: DISHES_TID || null,
-    categoriesFound: Array.from(new Set(filtered.map(d => d.category))),
-  } : undefined,
-});
+    // 6) Ответ
+    return NextResponse.json({
+      ok: true,
+      dishes,
+      debug: debug ? {
+        how,
+        date,
+        base: BASE,
+        menuCount: menuRows.length,
+        menuPathUsed: path,
+        menuTableId: MENU_TID || null,
+        dishesTableId: DISHES_TID || null,
+        categoriesFound: Array.from(new Set(dishes.map(d => d.category))),
+      } : undefined,
+    });
   } catch (e:any) {
     return NextResponse.json({ ok:false, error: e.message || String(e) }, { status:500 });
   }
