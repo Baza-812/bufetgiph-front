@@ -1,5 +1,4 @@
 'use client';
-
 import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -10,26 +9,15 @@ function formatISO(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
-function getQueryParam(name: string, fallback = ''): string {
-  if (typeof window === 'undefined') return fallback;
-  const sp = new URLSearchParams(window.location.search);
-  return sp.get(name) ?? fallback;
-}
-
-export default function KitchenClient() {
+export default function KitchenClient({ accessKey }: { accessKey: string }) {
   const router = useRouter();
-  const key = getQueryParam('key', 'kitchen_o555');
 
   const days = useMemo(() => {
     const list: { label: string; iso: string }[] = [];
     for (let i = 0; i < 14; i++) {
       const d = new Date();
       d.setDate(d.getDate() + i);
-      const label = d.toLocaleDateString('ru-RU', {
-        weekday: 'short',
-        day: '2-digit',
-        month: '2-digit',
-      });
+      const label = d.toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' });
       list.push({ label, iso: formatISO(d) });
     }
     return list;
@@ -43,9 +31,7 @@ export default function KitchenClient() {
           <button
             key={d.iso}
             className="rounded-2xl border border-neutral-300 px-4 py-3 hover:border-yellow-400"
-            onClick={() =>
-              router.push(`/kitchen/menu?date=${d.iso}&key=${encodeURIComponent(key)}`)
-            }
+            onClick={() => router.push(`/kitchen/menu?date=${d.iso}&key=${encodeURIComponent(accessKey)}`)}
           >
             <div className="text-sm text-neutral-500">{d.label.split(',')[0]}</div>
             <div className="text-lg font-semibold">{d.label.split(',')[1]}</div>
