@@ -1,20 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// ---- ENV (под ваши имена) ----
 const API   = process.env.AIRTABLE_API_URL || 'https://api.airtable.com/v0';
-const BASE  = process.env.AIRTABLE_BASE!;
-const TOKEN = process.env.AIRTABLE_TOKEN!;
+const BASE  = process.env.AIRTABLE_BASE_ID || process.env.AIRTABLE_BASE || '';   // ваша переменная
+const TOKEN = process.env.AIRTABLE_API_KEY || process.env.AIRTABLE_TOKEN || '';  // ваша переменная
 
-// ЯВНЫЕ tableId (желательно задать в .env)
+// ЯВНЫЕ tableId (желательно задать в .env, но не обязательно)
 const MENU_TID   = (process.env.KITCHEN_MENU_TABLE_ID   || '').trim();   // tblXXXXXXXXXXXXXX
 const DISHES_TID = (process.env.KITCHEN_DISHES_TABLE_ID || '').trim();   // tblYYYYYYYYYYYY
 
 const MENU_LABEL   = 'Menu';
 const DISHES_LABEL = 'Dishes';
 
+// Какие ISO-поля пробуем в Menu (строки вида YYYY-MM-DD)
 const ISO_FIELDS = (process.env.KITCHEN_MENU_DATEISO_FIELDS || 'DateISO,MenuDateISO,OrderDateISO')
   .split(',').map(s=>s.trim()).filter(Boolean);
 
-// категории в Menu (линки на блюда)
+// Категории в Menu (линк-поля на Dishes)
 const CAT_KEYS: Array<{ key: string; title: 'Zapekanka'|'Salad'|'Soup'|'Main'|'Side' }> = [
   { key: 'Zapekanka', title: 'Zapekanka' },
   { key: 'Salad',     title: 'Salad'     },
@@ -23,13 +25,19 @@ const CAT_KEYS: Array<{ key: string; title: 'Zapekanka'|'Salad'|'Soup'|'Main'|'S
   { key: 'Side',      title: 'Side'      },
 ];
 
-// ---------- helpers ----------
+// ---- Fail-fast: нет критичных env ----
+function missingEnv() {
+  const miss: string[] = [];
+  if (!BASE)  miss.push('AIRTABLE_BASE_ID');
+  if (!TOKEN) miss.push('AIRTABLE_API_KEY');
+  return miss;
+}
+
 function authHeaders() {
   return { Authorization: `Bearer ${TOKEN}` };
 }
 
 function menuPath(suffix: string) {
-  // если задан tableId — используем его, иначе имя
   return `${MENU_TID ? MENU_TID : encodeURIComponent(MENU_LABEL)}/${suffix}`;
 }
 function dishesPath(suffix: string) {
@@ -42,6 +50,7 @@ async function at(path: string) {
   return { ok: r.ok, status: r.status, json: text ? JSON.parse(text) : null, text };
 }
 
+// Формулы для поиска записи Menu на день
 function buildFormulaByISO(dateISO: string) {
   const ors = ISO_FIELDS.map(f => `{${f}}='${dateISO.replace(/'/g, "''")}'`);
   return ors.length === 1 ? ors[0] : `OR(${ors.join(',')})`;
@@ -56,9 +65,8 @@ function f_EQ(dateISO: string) {
   return `{Date}='${dateISO}'`;
 }
 
-// ---------- core ----------
 async function getMenuByDate(dateISO: string) {
-  // 1) ISO-поля
+  // 1) ISO-поля (строгое равенство строки)
   {
     const formula = encodeURIComponent(buildFormulaByISO(dateISO));
     const r = await at(`${menuPath(`?filterByFormula=${formula}&maxRecords=1`)}`);
@@ -95,6 +103,15 @@ async function getDishesByIds(ids: string[]) {
 }
 
 export async function GET(req: NextRequest) {
+  // fail-fast, чтобы сразу подсветить неподготовленную среду
+  const miss = missingEnv();
+  if (miss.length) {
+    return NextResponse.json(
+      { ok:false, error:`Missing env: ${miss.join(', ')}`, hint:'set these in Vercel → Environment Variables' },
+      { status: 500 }
+    );
+  }
+
   try {
     const date  = req.nextUrl.searchParams.get('date') || '';
     const debug = req.nextUrl.searchParams.get('debug') === '1';
@@ -111,8 +128,9 @@ export async function GET(req: NextRequest) {
           date,
           how,
           base: BASE,
-          menuPathTried: path,      // покажет, по имени или по tbl…
+          menuPathTried: path,
           menuTableId: MENU_TID || null,
+          dishesTableId: DISHES_TID || null,
           isoFields: ISO_FIELDS,
         } : undefined,
       });
