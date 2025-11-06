@@ -1,6 +1,7 @@
 'use client';
-import { Suspense, useMemo } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+
+import { useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 
 function formatISO(d: Date) {
   const y = d.getFullYear();
@@ -9,10 +10,15 @@ function formatISO(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
-function Inner() {
+function getQueryParam(name: string, fallback = ''): string {
+  if (typeof window === 'undefined') return fallback;
+  const sp = new URLSearchParams(window.location.search);
+  return sp.get(name) ?? fallback;
+}
+
+export default function KitchenClient() {
   const router = useRouter();
-  const sp = useSearchParams();
-  const key = sp.get('key') || 'kitchen_o555';
+  const key = getQueryParam('key', 'kitchen_o555');
 
   const days = useMemo(() => {
     const list: { label: string; iso: string }[] = [];
@@ -47,13 +53,5 @@ function Inner() {
         ))}
       </div>
     </div>
-  );
-}
-
-export default function KitchenClient() {
-  return (
-    <Suspense fallback={<div className="p-6">Загрузка…</div>}>
-      <Inner />
-    </Suspense>
   );
 }
