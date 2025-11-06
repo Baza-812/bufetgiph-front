@@ -17,7 +17,11 @@ export default function KitchenClient({ accessKey }: { accessKey: string }) {
     for (let i = 0; i < 14; i++) {
       const d = new Date();
       d.setDate(d.getDate() + i);
-      const label = d.toLocaleDateString('ru-RU', { weekday: 'short', day: '2-digit', month: '2-digit' });
+      const label = d.toLocaleDateString('ru-RU', {
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit',
+      });
       list.push({ label, iso: formatISO(d) });
     }
     return list;
@@ -31,7 +35,9 @@ export default function KitchenClient({ accessKey }: { accessKey: string }) {
           <button
             key={d.iso}
             className="rounded-2xl border border-neutral-300 px-4 py-3 hover:border-yellow-400"
-            onClick={() => router.push(`/kitchen/menu?date=${d.iso}&key=${encodeURIComponent(accessKey)}`)}
+            onClick={() =>
+              router.push(`/kitchen/menu?date=${d.iso}&key=${encodeURIComponent(accessKey)}`)
+            }
           >
             <div className="text-sm text-neutral-500">{d.label.split(',')[0]}</div>
             <div className="text-lg font-semibold">{d.label.split(',')[1]}</div>
