@@ -10,7 +10,20 @@ type Summary = {
   orderId?: string;
   status?: string;
   date?: string;
+  // лучше, если бэк вернёт ids
   lines?: string[];
+  items?: Array<{
+    type: 'box' | 'extra';
+    mainId?: string | null;
+    mainName?: string | null;
+    sideId?: string | null;
+    sideName?: string | null;
+    qtyStandard?: number;
+    qtyUpsized?: number;
+    extraId?: string | null;
+    extraName?: string | null;
+    qty?: number;
+  }>;
 };
 
 type SummaryResp = { ok: boolean; summary: Summary | null };
@@ -46,18 +59,15 @@ export default function ManagerDatesClient() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>('');
 
-  // карта «занят/свободен»
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<Record<string, { has: boolean; orderId?: string }>>({});
   const [busyReady, setBusyReady] = useState(false);
 
-  // модалка
   const [modalOpen, setModalOpen] = useState(false);
   const [modalDate, setModalDate] = useState<string | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [modalSummary, setModalSummary] = useState<Summary | null>(null);
 
-  // 1) окно дат (для менеджера — as=hr, чтобы включать «сегодня» до HR cutoff)
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -73,12 +83,11 @@ export default function ManagerDatesClient() {
     })();
   }, [org]);
 
-  // 2) «серость» считаем строго по /api/order_summary scope=org
   const reloadBusy = useCallback(async () => {
     if (!org || dates.length === 0) return;
     setBusyReady(false);
     try {
-      const map: Record<string, boolean> = {};
+      const map: Record<string, { has: boolean; orderId?: string }> = {};
       await Promise.all(
         dates.map(async (d) => {
           try {
@@ -86,9 +95,9 @@ export default function ManagerDatesClient() {
             const s = await fetchJSON<SummaryResp>(u);
             const st = String(s?.summary?.status || '').toLowerCase();
             const cancelled = st === 'cancelled' || st === 'canceled';
-            map[d] = Boolean(s?.summary?.orderId) && !cancelled;
+            map[d] = { has: Boolean(s?.summary?.orderId) && !cancelled, orderId: s?.summary?.orderId || undefined };
           } catch {
-            map[d] = false;
+            map[d] = { has: false };
           }
         }),
       );
@@ -100,23 +109,25 @@ export default function ManagerDatesClient() {
 
   useEffect(() => { reloadBusy(); }, [reloadBusy]);
 
-  // после возврата со страницы заказа — обновим
   useEffect(() => {
     const onFocus = () => reloadBusy();
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [reloadBusy]);
 
-  function toOrderPage(date: string) {
+  function toOrderPage(date: string, mode?: 'edit', orderId?: string) {
     const u = new URL('/manager/order', window.location.origin);
     if (org) u.searchParams.set('org', org);
     if (employeeID) u.searchParams.set('employeeID', employeeID);
     if (token) u.searchParams.set('token', token);
     u.searchParams.set('date', date);
+    if (mode === 'edit' && orderId) {
+      u.searchParams.set('mode', 'edit');
+      u.searchParams.set('orderId', orderId);
+    }
     router.push(u.toString());
   }
 
-  // открыть модалку: сразу просим with=lines, чтобы показать состав
   async function openModalFor(date: string) {
     setModalOpen(true);
     setModalDate(date);
@@ -124,7 +135,7 @@ export default function ManagerDatesClient() {
     setModalError(null);
     setModalLoading(true);
     try {
-      const u = `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}&scope=org&with=lines`;
+      const u = `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}&scope=org&with=lines,ids`;
       const j = await fetchJSON<SummaryResp>(u);
       setModalSummary(j.summary || null);
     } catch (e: any) {
@@ -156,7 +167,7 @@ export default function ManagerDatesClient() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) throw new Error(j?.error || 'Ошибка отмены');
 
-      if (modalDate) setBusy((m) => ({ ...m, [modalDate]: false })); // «разжёлтим»
+      if (modalDate) setBusy((m) => ({ ...m, [modalDate]: { has: false, orderId: undefined } }));
       closeModal();
     } catch (e: any) {
       setModalError(e?.message || String(e));
@@ -167,12 +178,14 @@ export default function ManagerDatesClient() {
 
   function editOrder() {
     if (!modalDate) return;
-    toOrderPage(modalDate);
+    const id = modalSummary?.orderId || (modalDate ? busy[modalDate]?.orderId : undefined);
+    toOrderPage(modalDate, 'edit', id);
   }
 
   function onPick(d: string) {
     if (!busyReady) return;
-    if (busy[d]) openModalFor(d);
+    const cell = busy[d];
+    if (cell?.has) openModalFor(d);
     else toOrderPage(d);
   }
 
@@ -184,7 +197,7 @@ export default function ManagerDatesClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map((d) => {
-            const has = !!busy[d]; // true → серый, false → жёлтый
+            const has = !!busy[d]?.has;
             const label = fmtDayLabel(d);
             const cls = has
               ? 'w-full rounded-lg px-3 py-2 bg-neutral-700 text-white'
@@ -198,13 +211,9 @@ export default function ManagerDatesClient() {
           })}
         </div>
 
-      {/* Подсказка над кнопками дат */}
-      <HintDates isManager />
-        
-        
+        <HintDates isManager />
       </Panel>
 
-      {/* Модалка */}
       {modalOpen && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/60" onClick={closeModal} />

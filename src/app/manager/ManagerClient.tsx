@@ -1,19 +1,18 @@
-// src/app/manager/ManagerClient.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
+import { useSearchParams } from 'next/navigation';
 
 type DatesResp = { ok: boolean; dates: string[] };
 
-// Универсальный элемент меню
 type MenuItem = {
   id: string;
   name: string;
   type: 'main' | 'side' | 'extra';
   category?: string | null;
-  isGarnirnoe?: boolean; // ← добавили
+  isGarnirnoe?: boolean;
 };
 
 type MenuRespLoose =
@@ -28,10 +27,7 @@ type BoxRow = {
   qtyUpsized: number;
 };
 
-type ExtraPick = {
-  itemId: string | null;
-  qty: number;
-};
+type ExtraPick = { itemId: string | null; qty: number };
 
 function uuid() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
@@ -47,14 +43,12 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// утилита нормализации булевых значений из Airtable
 function toBool(v: any): boolean {
   if (v === true || v === 1 || v === '1') return true;
   const s = String(v ?? '').trim().toLowerCase();
   return s === 'true' || s === 'yes' || s === 'y' || s === 'да' || s === 'истина';
 }
 
-// нормализация элементов меню из разных схем
 function normalizeMenu(resp: MenuRespLoose): MenuItem[] {
   const out: MenuItem[] = [];
   const push = (arr: any[] | undefined, type: MenuItem['type']) => {
@@ -68,7 +62,6 @@ function normalizeMenu(resp: MenuRespLoose): MenuItem[] {
       const cat =
         f?.Category || f?.category || f?.['Extra Category'] || f?.['Dish Category'] || null;
 
-      // попытка считать флаг «гарнирное»
       const isG =
         toBool(f?.IsGarnirnoe) ||
         toBool(f?.Garnirnoe) ||
@@ -136,7 +129,7 @@ function normalizeMenu(resp: MenuRespLoose): MenuItem[] {
   return out;
 }
 
-// Небольшой степпер для кол-ва (лучше на мобилках)
+// Явные кнопки –/+, хорошо видны на мобильных
 function QtyStepper({
   value,
   min = 0,
@@ -149,11 +142,11 @@ function QtyStepper({
   const dec = () => onChange(Math.max(min, (value || 0) - 1));
   const inc = () => onChange((value || 0) + 1);
   return (
-    <div className="flex items-stretch border border-white/10 rounded overflow-hidden">
+    <div className="flex items-stretch rounded-lg overflow-hidden border border-white/15 bg-neutral-850">
       <button
         type="button"
         onClick={dec}
-        className="px-3 bg-neutral-800 text-white hover:bg-neutral-700"
+        className="px-4 py-2 text-lg bg-neutral-800 text-white active:scale-95"
         aria-label="Decrease"
       >
         −
@@ -162,14 +155,14 @@ function QtyStepper({
         type="number"
         inputMode="numeric"
         min={min}
-        className="w-16 text-center bg-neutral-900 text-white"
+        className="w-20 text-center bg-neutral-900 text-white py-2"
         value={value}
         onChange={(e) => onChange(Math.max(min, parseInt(e.target.value || '0', 10)))}
       />
       <button
         type="button"
         onClick={inc}
-        className="px-3 bg-neutral-800 text-white hover:bg-neutral-700"
+        className="px-4 py-2 text-lg bg-neutral-800 text-white active:scale-95"
         aria-label="Increase"
       >
         +
@@ -178,11 +171,18 @@ function QtyStepper({
   );
 }
 
-export default function ManagerClient(props: { org: string; employeeID: string; token: string }) {
-  const { org, employeeID, token } = props;
+export default function ManagerClient() {
+  const sp = useSearchParams();
+
+  const org = sp.get('org') || '';
+  const employeeID = sp.get('employeeID') || '';
+  const token = sp.get('token') || '';
+  const initialDate = sp.get('date') || '';
+  const mode = sp.get('mode') || ''; // '' | 'edit'
+  const orderId = sp.get('orderId') || '';
 
   const [dates, setDates] = useState<string[]>([]);
-  const [date, setDate] = useState<string>('');
+  const [date, setDate] = useState<string>(initialDate);
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loadingDates, setLoadingDates] = useState(false);
   const [loadingMenu, setLoadingMenu] = useState(false);
@@ -190,18 +190,16 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ orderId: string } | null>(null);
 
-  // динамические боксы
   const [boxes, setBoxes] = useState<BoxRow[]>([
     { key: uuid(), mainId: null, sideId: null, qtyStandard: 1, qtyUpsized: 0 },
   ]);
 
-  // два extra (каждый с qty)
   const [extra1, setExtra1] = useState<ExtraPick>({ itemId: null, qty: 0 });
   const [extra2, setExtra2] = useState<ExtraPick>({ itemId: null, qty: 0 });
 
   const mains = useMemo(() => menu.filter((i) => i.type === 'main'), [menu]);
   const sides = useMemo(() => menu.filter((i) => i.type === 'side'), [menu]);
-  // extras только категории Salad, Soup, Zapekanka
+
   const ALLOWED = new Set(['salad', 'soup', 'zapekanka', 'салат', 'суп', 'запеканка']);
   const extras = useMemo(
     () =>
@@ -214,7 +212,7 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
     [menu],
   );
 
-  // даты (HR-окно, чтобы было «сегодня»)
+  // даты
   useEffect(() => {
     if (!org || !employeeID || !token) return;
     setLoadingDates(true);
@@ -224,12 +222,12 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
       .finally(() => setLoadingDates(false));
   }, [org, employeeID, token]);
 
-  // автоподставим первую дату
+  // если даты пришли, а дата пуста — подставим первую
   useEffect(() => {
     if (!date && dates.length) setDate(dates[0]);
   }, [dates, date]);
 
-  // загрузка меню
+  // меню
   useEffect(() => {
     if (!org || !date) return;
     setLoadingMenu(true);
@@ -237,70 +235,86 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
     setMenu([]);
 
     fetchJSON<MenuRespLoose>(`/api/menu?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}`)
-      .then((resp) => {
-        const norm = normalizeMenu(resp);
-        setMenu(norm);
-      })
+      .then((resp) => setMenu(normalizeMenu(resp)))
       .catch((e) => setError(e.message))
       .finally(() => setLoadingMenu(false));
   }, [org, date]);
 
-  // попытка предзаполнить форму из summary (после клика «Изменить»)
+  // helper
+  const isMainGarnirnoe = (mainId: string | null) => {
+    if (!mainId) return false;
+    const item = menu.find((i) => i.id === mainId);
+    return Boolean(item?.isGarnirnoe);
+  };
+
+  // предзаполнение при режиме edit
   useEffect(() => {
-    if (!org || !date) return;
+    if (!org || !date || !menu.length || mode !== 'edit' || !orderId) return;
     (async () => {
       try {
-        const s = await fetchJSON<{ ok: boolean; summary?: { lines?: string[] } }>(
-          `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}&scope=org&with=lines`,
+        const s = await fetchJSON<{
+          ok: boolean;
+          summary?: {
+            items?: Array<{
+              type: 'box' | 'extra';
+              mainId?: string | null;
+              mainName?: string | null;
+              sideId?: string | null;
+              sideName?: string | null;
+              qtyStandard?: number;
+              qtyUpsized?: number;
+              extraId?: string | null;
+              extraName?: string | null;
+              qty?: number;
+            }>;
+            lines?: string[];
+          };
+        }>(
+          `/api/order_summary?org=${encodeURIComponent(org)}&date=${encodeURIComponent(date)}&scope=org&with=lines,ids&orderId=${encodeURIComponent(orderId)}`,
         );
-        const lines = s?.summary?.lines || [];
-        if (!lines.length || menu.length === 0) return;
 
-        // простая эвристика: ищем по названиям
+        const items = s?.summary?.items || [];
+
         const newBoxes: BoxRow[] = [];
-        const foundExtras: { name: string; qty: number }[] = [];
+        const foundExtras: Array<{ itemId: string | null; name?: string; qty: number }> = [];
 
-        for (const raw of lines) {
-          const txt = String(raw || '');
-          // пытаемся вытащить количество вида "× 3" в конце строки
-          const qtyMatch = txt.match(/x|\×\s*(\d+)/i);
-          const qty = qtyMatch && qtyMatch[1] ? parseInt(qtyMatch[1], 10) : 1;
+        for (const it of items) {
+          if (it.type === 'box') {
+            const m =
+              (it.mainId && mains.find((x) => x.id === it.mainId)) ||
+              (it.mainName && mains.find((x) => x.name === it.mainName)) ||
+              null;
+            const sd =
+              (it.sideId && sides.find((x) => x.id === it.sideId)) ||
+              (it.sideName && sides.find((x) => x.name === it.sideName)) ||
+              null;
 
-          // разбиваем "Main + Side" на части по " + "
-          const [left, right] = txt.split(' + ').map((s) => s.trim());
-
-          // сначала пробуем мэчить на main/side
-          const m = left ? mains.find((i) => i.name === left) || mains.find((i) => left && i.name.includes(left)) : null;
-          const sd = right ? sides.find((i) => i.name === right) || sides.find((i) => right && i.name.includes(right)) : null;
-
-          if (m || sd) {
             newBoxes.push({
               key: uuid(),
               mainId: m ? m.id : null,
-              sideId: sd ? sd.id : null,
-              qtyStandard: qty,
-              qtyUpsized: 0,
+              sideId: m && m.isGarnirnoe ? null : sd ? sd.id : null, // страховка
+              qtyStandard: Math.max(0, it.qtyStandard ?? 0),
+              qtyUpsized: Math.max(0, it.qtyUpsized ?? 0),
             });
-            continue;
+          } else if (it.type === 'extra') {
+            const ex =
+              (it.extraId && extras.find((x) => x.id === it.extraId)) ||
+              (it.extraName && extras.find((x) => x.name === it.extraName)) ||
+              null;
+            if (ex) foundExtras.push({ itemId: ex.id, qty: Math.max(0, it.qty ?? 0) || 1 });
           }
-
-          // иначе считаем строку экстрой
-          const ex = extras.find((i) => txt.includes(i.name));
-          if (ex) foundExtras.push({ name: ex.name, qty });
         }
 
         if (newBoxes.length) setBoxes(newBoxes);
         if (foundExtras.length) {
-          const ex1 = extras.find((e) => e.name === foundExtras[0]?.name);
-          const ex2 = extras.find((e) => e.name === foundExtras[1]?.name);
-          if (ex1) setExtra1({ itemId: ex1.id, qty: foundExtras[0]?.qty || 1 });
-          if (ex2) setExtra2({ itemId: ex2.id, qty: foundExtras[1]?.qty || 1 });
+          setExtra1(foundExtras[0] || { itemId: null, qty: 0 });
+          setExtra2(foundExtras[1] || { itemId: null, qty: 0 });
         }
       } catch {
-        // тихо игнорируем, если не вышло предзаполнить
+        // тихо игнорируем, если не удалось предзаполнить
       }
     })();
-  }, [org, date, menu]); // ждём меню, чтобы было что мэчить
+  }, [org, date, menu, mode, orderId, mains, sides, extras]);
 
   function addBox() {
     setBoxes((prev) => [...prev, { key: uuid(), mainId: null, sideId: null, qtyStandard: 1, qtyUpsized: 0 }]);
@@ -329,12 +343,15 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
     }
 
     const cleanedBoxes = boxes
-      .map((b) => ({
-        mainId: b.mainId ?? null,        // ← всегда отправляем ключ
-        sideId: b.sideId ?? null,        // ← всегда отправляем ключ
-        qtyStandard: Math.max(0, Math.floor(b.qtyStandard || 0)),
-        qtyUpsized: Math.max(0, Math.floor(b.qtyUpsized || 0)),
-      }))
+      .map((b) => {
+        const mainIsG = isMainGarnirnoe(b.mainId);
+        return {
+          mainId: b.mainId ?? null,
+          sideId: mainIsG ? null : (b.sideId ?? null), // жёсткая защита
+          qtyStandard: Math.max(0, Math.floor(b.qtyStandard || 0)),
+          qtyUpsized: Math.max(0, Math.floor(b.qtyUpsized || 0)),
+        };
+      })
       .filter((b) => (b.mainId || b.sideId) && (b.qtyStandard + b.qtyUpsized) > 0);
 
     const cleanedExtras = [extra1, extra2]
@@ -346,7 +363,7 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
       return;
     }
 
-    const body = {
+    const body: any = {
       employeeID,
       org,
       token,
@@ -356,6 +373,9 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
       clientToken: uuid(),
     };
 
+    // режим замены существующего заказа
+    if (mode === 'edit' && orderId) body.replaceOrderId = orderId;
+
     try {
       setSubmitting(true);
       const resp = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(`/api/order_manager`, {
@@ -364,7 +384,7 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
         body: JSON.stringify(body),
       });
       if (!resp.ok) throw new Error(resp.error || 'Ошибка при сохранении заказа');
-      setDone({ orderId: resp.orderId || '—' });
+      setDone({ orderId: resp.orderId || orderId || '—' });
     } catch (e: any) {
       setError(e.message || String(e));
     } finally {
@@ -374,7 +394,7 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
 
   return (
     <main className="p-4 space-y-6">
-      <Panel title="Заказ для менеджера (несколько боксов)">
+      <Panel title={`Заказ для менеджера ${mode === 'edit' ? '(редактирование)' : ''}`}>
         <div className="space-y-4">
           <div className="flex flex-wrap gap-3 items-end">
             <div>
@@ -392,9 +412,11 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
                 ))}
               </select>
             </div>
-            <div className="text-white/60 text-sm">
-              Доступные даты формируются с учётом HR Cutoff для «сегодня».
-            </div>
+            {mode === 'edit' && orderId && (
+              <div className="text-xs text-emerald-400">
+                Режим редактирования заказа <b>{orderId}</b>
+              </div>
+            )}
           </div>
 
           <div className="border-t border-white/10 pt-4">
@@ -404,7 +426,7 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
               {boxes.map((b, idx) => {
                 const mainIsG = isMainGarnirnoe(b.mainId);
                 return (
-                  <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center">
+                  <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-center">
                     <div className="md:col-span-2">
                       <div className="text-xs text-white/60 mb-1">Основное</div>
                       <select
@@ -412,11 +434,11 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
                         value={b.mainId || ''}
                         onChange={(e) => {
                           const newMain = e.target.value || null;
-                          // если выбранное основное — «гарнирное», чистим и блокируем гарнир
-                          if (newMain && isMainGarnirnoe(newMain)) {
-                            updateBox(b.key, { mainId: newMain, sideId: null });
+                          if (newMain) {
+                            const isG = isMainGarnirnoe(newMain);
+                            updateBox(b.key, { mainId: newMain, sideId: isG ? null : b.sideId });
                           } else {
-                            updateBox(b.key, { mainId: newMain });
+                            updateBox(b.key, { mainId: null });
                           }
                         }}
                         disabled={loadingMenu}
@@ -435,9 +457,17 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
                       <select
                         className="w-full bg-neutral-800 text-white rounded px-2 py-2 disabled:opacity-50"
                         value={b.sideId || ''}
-                        onChange={(e) => updateBox(b.key, { sideId: e.target.value || null })}
-                        disabled={loadingMenu || mainIsG}
-                        title={mainIsG ? 'К гарнирному блюду гарнир не добавляется' : undefined}
+                        onChange={(e) => {
+                          const val = e.target.value || null;
+                          // двойная защита
+                          if (isMainGarnirnoe(b.mainId)) {
+                            updateBox(b.key, { sideId: null });
+                          } else {
+                            updateBox(b.key, { sideId: val });
+                          }
+                        }}
+                        disabled={loadingMenu || isMainGarnirnoe(b.mainId)}
+                        title={isMainGarnirnoe(b.mainId) ? 'К гарнирному блюду гарнир не добавляется' : undefined}
                       >
                         <option value="">— не выбрано —</option>
                         {sides.map((s) => (
@@ -485,7 +515,7 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
           </div>
 
           <div className="border-t border-white/10 pt-4">
-            <div className="mb-2 text-white/90 font-semibold">Дополнительно (только Salad, Soup, Zapekanka)</div>
+            <div className="mb-2 text-white/90 font-semibold">Дополнительно (Salad / Soup / Zapekanka)</div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {[{ label: 'Extra 1', state: extra1, set: setExtra1 }, { label: 'Extra 2', state: extra2, set: setExtra2 }].map(
@@ -524,25 +554,16 @@ export default function ManagerClient(props: { org: string; employeeID: string; 
           {error && <div className="text-rose-400">{error}</div>}
           {done && (
             <div className="text-emerald-400">
-              Заказ сохранён. Номер заказа: <b>{done.orderId}</b>
+              Заказ {mode === 'edit' ? 'обновлён' : 'сохранён'}. Номер заказа: <b>{done.orderId}</b>
             </div>
           )}
 
           <div className="pt-2">
             <Button onClick={submit} disabled={submitting || !date || (loadingMenu && !menu.length)}>
-              {submitting ? 'Сохраняю…' : 'Оформить заказ'}
+              {submitting ? (mode === 'edit' ? 'Обновляю…' : 'Сохраняю…') : (mode === 'edit' ? 'Обновить заказ' : 'Оформить заказ')}
             </Button>
           </div>
         </div>
-      </Panel>
-
-      <Panel title="Подсказки">
-        <ul className="list-disc list-inside text-white/70 space-y-1">
-          <li>«Сегодня» доступно до HR Cutoff; остальные даты — по обычному cutoff.</li>
-          <li>Несколько боксов: выберите пары (основное+гарнир) и задайте количество для каждого типа.</li>
-          <li>Дополнительно: выберите до двух позиций и укажите количество (только категории Salad, Soup, Zapekanka).</li>
-          <li>Повторная отправка с тем же клиентским токеном не создаст дубликат (идемпотентность).</li>
-        </ul>
       </Panel>
     </main>
   );
