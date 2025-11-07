@@ -1,8 +1,20 @@
+// next.config.js
 /** @type {import('next').NextConfig} */
 const isProd = process.env.VERCEL_ENV === 'production';
 const API_HOST = isProd
   ? 'https://bufetgiph-api.vercel.app'
   : 'https://dev-bufetgiph-api.vercel.app';
+
+// СЮДА добавляем все локальные ветки фронта, которые НЕ должны уходить наружу.
+// Удобно держать списком — меньше шансов забыть.
+const LOCAL_API_PREFIXES = [
+  '/api/kitchen',
+  '/api/dishes',
+  '/api/debug',
+  '/api/_debug',
+  '/api/ping',        // тех.проверка, можно удалить после
+  // добавишь новые — просто допиши сюда строку
+];
 
 const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
@@ -10,16 +22,13 @@ const nextConfig = {
 
   async rewrites() {
     return {
-      // 1) Локальные API, которые НЕ надо проксировать наружу
-      beforeFiles: [
-        // поварский портал
-        { source: '/api/kitchen/:path*', destination: '/api/kitchen/:path*' },
-        { source: '/api/dishes/:path*', destination: '/api/dishes/:path*' },
-        { source: '/api/debug/:path*',  destination: '/api/debug/:path*' },
-        { source: '/api/_debug/:path*', destination: '/api/_debug/:path*' },
-      ],
+      // 1) Локальные API: оставляем внутри фронта
+      beforeFiles: LOCAL_API_PREFIXES.map((p) => ({
+        source: `${p}/:path*`,
+        destination: `${p}/:path*`,
+      })),
 
-      // 2) Всё остальное /api/* — как и раньше в ваш отдельный API-проект
+      // 2) Всё остальное /api/* — наружу (внешний API-проект)
       fallback: [
         {
           source: '/api/:path*',
