@@ -240,12 +240,11 @@ export default function ManagerClient() {
       .finally(() => setLoadingMenu(false));
   }, [org, date]);
 
-  // helper
-  const isMainGarnirnoe = (mainId: string | null) => {
-    if (!mainId) return false;
-    const item = menu.find((i) => i.id === mainId);
-    return Boolean(item?.isGarnirnoe);
-  };
+  const isMainGarnirnoeFlag = (mainId: string | null) => {
+  if (!mainId) return false;
+  const item = menu.find((i) => i.id === mainId);
+  return Boolean(item?.isGarnirnoe);
+};
 
   // предзаполнение при режиме edit
   useEffect(() => {
@@ -327,7 +326,7 @@ export default function ManagerClient() {
   }
 
   // помогающее: проверка «выбранное основное — гарнирное?»
-  const isMainGarnirnoe = (mainId: string | null) => {
+  const isMainGarnirnoeFlag = (mainId: string | null) => {
     if (!mainId) return false;
     const item = menu.find((i) => i.id === mainId);
     return Boolean(item?.isGarnirnoe);
@@ -344,7 +343,7 @@ export default function ManagerClient() {
 
     const cleanedBoxes = boxes
       .map((b) => {
-        const mainIsG = isMainGarnirnoe(b.mainId);
+        const mainIsG = isMainGarnirnoeFlag(b.mainId);
         return {
           mainId: b.mainId ?? null,
           sideId: mainIsG ? null : (b.sideId ?? null), // жёсткая защита
@@ -424,7 +423,7 @@ export default function ManagerClient() {
 
             <div className="space-y-3">
               {boxes.map((b, idx) => {
-                const mainIsG = isMainGarnirnoe(b.mainId);
+                const mainIsG = isMainGarnirnoeFlag(b.mainId);
                 return (
                   <div key={b.key} className="grid grid-cols-1 md:grid-cols-6 gap-3 items-center">
                     <div className="md:col-span-2">
@@ -435,7 +434,7 @@ export default function ManagerClient() {
                         onChange={(e) => {
                           const newMain = e.target.value || null;
                           if (newMain) {
-                            const isG = isMainGarnirnoe(newMain);
+                            const isG = isMainGarnirnoeFlag(newMain);
                             updateBox(b.key, { mainId: newMain, sideId: isG ? null : b.sideId });
                           } else {
                             updateBox(b.key, { mainId: null });
@@ -460,14 +459,14 @@ export default function ManagerClient() {
                         onChange={(e) => {
                           const val = e.target.value || null;
                           // двойная защита
-                          if (isMainGarnirnoe(b.mainId)) {
+                          if (isMainGarnirnoeFlag(b.mainId)) {
                             updateBox(b.key, { sideId: null });
                           } else {
                             updateBox(b.key, { sideId: val });
                           }
                         }}
-                        disabled={loadingMenu || isMainGarnirnoe(b.mainId)}
-                        title={isMainGarnirnoe(b.mainId) ? 'К гарнирному блюду гарнир не добавляется' : undefined}
+                        disabled={loadingMenu || isMainGarnirnoeFlag(b.mainId)}
+                        title={isMainGarnirnoeFlag(b.mainId) ? 'К гарнирному блюду гарнир не добавляется' : undefined}
                       >
                         <option value="">— не выбрано —</option>
                         {sides.map((s) => (
