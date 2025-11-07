@@ -326,6 +326,13 @@ export default function ManagerClient() {
     setBoxes((prev) => prev.map((b) => (b.key === key ? { ...b, ...patch } : b)));
   }
 
+  // помогающее: проверка «выбранное основное — гарнирное?»
+  const isMainGarnirnoe = (mainId: string | null) => {
+    if (!mainId) return false;
+    const item = menu.find((i) => i.id === mainId);
+    return Boolean(item?.isGarnirnoe);
+  };
+
   async function submit() {
     setError(null);
     setDone(null);
