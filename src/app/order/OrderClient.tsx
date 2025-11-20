@@ -163,6 +163,8 @@ export default function OrderClient() {
 
   return (
     <main>
+      {/* НОВОЕ: общий контейнер, чтобы не тянуться на всю ширину на десктопе */}
+    <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8">
       <Panel title="Добро пожаловать!">
         <p className="text-white/80">
           Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
@@ -243,6 +245,7 @@ export default function OrderClient() {
           onChanged={reloadBusy}
         />
       )}
+      </div>
     </main>
   );
 }
