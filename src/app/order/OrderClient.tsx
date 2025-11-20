@@ -179,7 +179,7 @@ export default function OrderClient() {
         src="/scandi.jpg"           // файл лежит в /public/scandi.jpg
         alt="Неделя скандинавской кухни 24–28 ноября"
         loading="lazy"
-        className="max-w-full h-auto max-h-64 sm:max-h-80 object-contain rounded-xl border border-white/10 bg-black/10"
+        className="max-w-full h-auto max-h-124 sm:max-h-140 object-contain rounded-xl border border-white/10 bg-black/10"
       />
     </div>
   </div>
