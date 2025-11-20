@@ -163,11 +163,28 @@ export default function OrderClient() {
 
   return (
     <main>
+      {/* НОВОЕ: общий контейнер, чтобы не тянуться на всю ширину на десктопе */}
+    <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8">
       <Panel title="Добро пожаловать!">
         <p className="text-white/80">
           Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
         </p>
       </Panel>
+
+      {/* Промо: неделя скандинавской кухни */}
+<Panel title="Неделя скандинавской кухни · 24–28 ноября">
+  <div className="max-w-2xl mx-auto w-full">
+    <div className="w-full flex justify-center">
+      <img
+        src="/scandi.jpg"           // файл лежит в /public/scandi.jpg
+        alt="Неделя скандинавской кухни 24–28 ноября"
+        loading="lazy"
+        className="max-w-full h-auto max-h-124 sm:max-h-140 object-contain rounded-xl border border-white/10 bg-black/10"
+      />
+    </div>
+  </div>
+</Panel>
+
 
      
       {/* креды вручную — на случай, если пришли без query */}
@@ -228,6 +245,7 @@ export default function OrderClient() {
           onChanged={reloadBusy}
         />
       )}
+      </div>
     </main>
   );
 }
