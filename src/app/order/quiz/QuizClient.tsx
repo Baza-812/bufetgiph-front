@@ -716,12 +716,13 @@ function SaladStep({
       )}
 
       {onSkip && (
-        <div className="mt-3">
-          <Button variant="secondary" onClick={onSkip}>
-            Без салата (лёгкий обед)
-          </Button>
-        </div>
-      )}
+  <div className="mt-3">
+    <Button variant="ghost" onClick={onSkip}>
+      Без салата (лёгкий обед)
+    </Button>
+  </div>
+)}
+
 
       <div className="mt-4">
         <Button variant="ghost" onClick={onBack}>
@@ -923,27 +924,28 @@ function ConfirmStep({
       )}
 
       <div className="mt-4 flex flex-wrap gap-3">
-        {isStarshiy && isKomanda ? (
-          <>
-            <Button onClick={() => onSubmit('online')}>Оплатить онлайн</Button>
-            <Button
-              variant="secondary"
-              onClick={() => onSubmit('cash')}
-            >
-              Оплатить наличными Старшему
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => onSubmit('later')}
-            >
-              Заказать ещё один день
-            </Button>
-          </>
-        ) : (
-          <Button onClick={() => onSubmit('later')}>
-            Подтвердить заказ
-          </Button>
-        )}
+       {isStarshiy && isKomanda ? (
+  <>
+    <Button onClick={() => onSubmit('online')}>Оплатить онлайн</Button>
+    <Button
+      variant="ghost"
+      onClick={() => onSubmit('cash')}
+    >
+      Оплатить наличными Старшему
+    </Button>
+    <Button
+      variant="ghost"
+      onClick={() => onSubmit('later')}
+    >
+      Заказать ещё один день
+    </Button>
+  </>
+) : (
+  <Button onClick={() => onSubmit('later')}>
+    Подтвердить заказ
+  </Button>
+)}
+
         <Button variant="ghost" onClick={onBack}>
           Назад
         </Button>
