@@ -18,32 +18,19 @@ type SingleResp = {
     extra1: string;
     extra2: string;
     orderId: string;
-    status?: string;
-    employeePayableAmount?: number;
   };
 };
 
-interface OrgMeta {
+type OrgInfo = {
   ok: boolean;
-  vidDogovora?: string;
-  minTeamSize?: number | null;
-  freeDeliveryMinOrders?: number | null;
-  priceFull?: number | null;
-  priceLight?: number | null;
-  bank?: {
+  org?: {
     name: string;
-    legalName: string;
-    bankName: string;
-    inn: string;
-    kpp: string;
-    account: string;
-    bic: string;
-    contactPhone?: string;
-    contactEmail?: string;
-    footerText?: string;
-    acquiringProvider?: string;
-  } | null;
-}
+    vidDogovora?: string;
+    priceFull?: number | null;
+    priceLight?: number | null;
+    footerText?: string | null;
+  };
+};
 
 export default function OrderClient() {
   const router = useRouter();
@@ -52,6 +39,10 @@ export default function OrderClient() {
   const [org, setOrg] = useState('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
+  const [role, setRole] = useState('');
+
+  // данные организации
+  const [orgInfo, setOrgInfo] = useState<OrgInfo | null>(null);
 
   // данные
   const [dates, setDates] = useState<string[]>([]);
@@ -62,31 +53,39 @@ export default function OrderClient() {
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState('');
 
-  const [orgMeta, setOrgMeta] = useState<OrgMeta | null>(null);
-
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
-    setOrg(o); setEmployeeID(e); setToken(t);
+    const r = q.get('role') || localStorage.getItem('baza.role') || '';
+    
+    setOrg(o); 
+    setEmployeeID(e); 
+    setToken(t);
+    setRole(r);
+    
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
       localStorage.setItem('baza.employeeID', e);
       localStorage.setItem('baza.token', t);
     }
+    if (r) {
+      localStorage.setItem('baza.role', r);
+    }
   }, []);
 
-  // Загрузка метаданных организации
+  // 1.5) загружаем информацию об организации
   useEffect(() => {
     (async () => {
       if (!org) return;
       try {
-        const r = await fetchJSON<OrgMeta>(`/api/org_meta?org=${encodeURIComponent(org)}`);
-        if (r.ok) setOrgMeta(r);
+        const r = await fetchJSON<OrgInfo>(`/api/org_info?org=${encodeURIComponent(org)}`);
+        console.log('🔍 org_info response:', r);
+        setOrgInfo(r);
       } catch (e) {
-        console.error('Failed to load org meta:', e);
+        console.error('❌ Failed to load org info:', e);
       }
     })();
   }, [org]);
@@ -96,7 +95,8 @@ export default function OrderClient() {
     (async () => {
       if (!org) return;
       try {
-        setLoading(true); setError('');
+        setLoading(true); 
+        setError('');
         const r = await fetchJSON<{ ok: boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
         setDates(r.dates || []);
       } catch (e: unknown) {
@@ -144,6 +144,11 @@ export default function OrderClient() {
   }, [reloadBusy]);
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
+
+  // Проверка программы "Старший"
+  const isStarshiy = orgInfo?.org?.vidDogovora === 'Starshiy';
+  const isKomanda = role?.toLowerCase() === 'komanda';
+  const needsStarshiy = isStarshiy && isKomanda;
 
   // 4) клик по дате
   async function handlePickDate(d: string) {
@@ -203,7 +208,65 @@ export default function OrderClient() {
           </p>
         </Panel>
 
-        {/* креды вручную */}
+        {/* Информация о сотруднике и программе "Старший" */}
+        {orgInfo?.org && (
+          <Panel title="Информация о сотруднике">
+            <div className="space-y-2 text-sm">
+              <div>
+                Организация: <span className="font-semibold">{orgInfo.org.name}</span>
+              </div>
+              {role && (
+                <div>
+                  Роль: <span className="font-semibold">{role}</span>
+                </div>
+              )}
+              {needsStarshiy && (
+                <div className="mt-4 p-3 bg-yellow-400/10 border border-yellow-400/30 rounded-xl">
+                  <div className="text-yellow-400 font-bold">🌟 Программа "Старший" активна</div>
+                </div>
+              )}
+            </div>
+          </Panel>
+        )}
+
+        {/* Тарифы программы Старший */}
+        {needsStarshiy && orgInfo?.org && (
+          <Panel title="Тарифы">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+                <div className="text-lg font-bold text-yellow-400 mb-2">Полный обед</div>
+                <div className="text-2xl font-bold text-white mb-2">
+                  {orgInfo.org.priceFull != null ? `${orgInfo.org.priceFull} ₽` : '—'}
+                </div>
+                <div className="text-sm text-white/70">Салат + Суп + Основное + Гарнир</div>
+              </div>
+
+              <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+                <div className="text-lg font-bold text-yellow-400 mb-2">Лёгкий обед</div>
+                <div className="text-2xl font-bold text-white mb-2">
+                  {orgInfo.org.priceLight != null ? `${orgInfo.org.priceLight} ₽` : '—'}
+                </div>
+                <div className="text-sm text-white/70">Салат + Основное + Гарнир</div>
+              </div>
+            </div>
+          </Panel>
+        )}
+
+        {/* Промо: неделя скандинавской кухни */}
+        <Panel title="Неделя скандинавской кухни · 24–28 ноября">
+          <div className="max-w-2xl mx-auto w-full">
+            <div className="w-full flex justify-center">
+              <img
+                src="/scandi.jpg"
+                alt="Неделя скандинавской кухни 24–28 ноября"
+                loading="lazy"
+                className="max-w-full h-auto max-h-124 sm:max-h-140 object-contain rounded-xl border border-white/10 bg-black/10"
+              />
+            </div>
+          </div>
+        </Panel>
+
+        {/* креды вручную — на случай, если пришли без query */}
         {(!org || !employeeID || !token) && (
           <Panel title="Данные доступа">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -246,7 +309,7 @@ export default function OrderClient() {
           <HintDates />
         </Panel>
 
-        {/* Модалка */}
+        {/* Модалка со составом */}
         {selected && (
           <DateModal
             iso={selected}
@@ -256,44 +319,37 @@ export default function OrderClient() {
             info={busy[selected]}
             onClose={() => setSelected(null)}
             onChanged={reloadBusy}
-            orgMeta={orgMeta}
+            needsStarshiy={needsStarshiy}
+            orgInfo={orgInfo}
           />
         )}
 
-        {/* Футер с реквизитами */}
-        {orgMeta?.bank && (
-          <Panel title="">
-            <div className="space-y-2 text-xs text-white/60">
-              <div className="border-t border-white/10 pt-3">
-                <p className="font-semibold text-white/80 mb-2">{orgMeta.bank.name}</p>
-                <p><strong>Юридическое название:</strong> {orgMeta.bank.legalName}</p>
-                <p><strong>Банк:</strong> {orgMeta.bank.bankName}</p>
-                <p><strong>ИНН:</strong> {orgMeta.bank.inn}</p>
-                {orgMeta.bank.kpp && <p><strong>КПП:</strong> {orgMeta.bank.kpp}</p>}
-                <p><strong>Расчётный счёт:</strong> {orgMeta.bank.account}</p>
-                <p><strong>БИК:</strong> {orgMeta.bank.bic}</p>
-                {orgMeta.bank.contactPhone && <p><strong>Телефон:</strong> {orgMeta.bank.contactPhone}</p>}
-                {orgMeta.bank.contactEmail && <p><strong>Email:</strong> {orgMeta.bank.contactEmail}</p>}
-                {orgMeta.bank.footerText && (
-                  <p className="mt-2 text-white/50 italic">{orgMeta.bank.footerText}</p>
-                )}
-              </div>
+        {/* Футер с реквизитами из Banks.FooterText */}
+        {needsStarshiy && orgInfo?.org?.footerText && (
+          <footer className="mt-8 p-4 bg-black/20 border border-white/10 rounded-xl">
+            <div className="text-xs text-white/60 whitespace-pre-line">
+              {orgInfo.org.footerText}
             </div>
-          </Panel>
+          </footer>
         )}
       </div>
     </main>
   );
 }
 
-/* Модалка */
+/* ——— Модалка: состав + действия ——— */
 function DateModal({
-  iso, employeeID, org, token, info, onClose, onChanged, orgMeta
+  iso, employeeID, org, token, info, onClose, onChanged, needsStarshiy, orgInfo
 }: {
   iso: string;
-  employeeID: string; org: string; token: string;
-  info?: SingleResp; onClose: ()=>void; onChanged: ()=>void;
-  orgMeta: OrgMeta | null;
+  employeeID: string; 
+  org: string; 
+  token: string;
+  info?: SingleResp; 
+  onClose: ()=>void; 
+  onChanged: ()=>void;
+  needsStarshiy: boolean;
+  orgInfo: OrgInfo | null;
 }) {
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
@@ -340,37 +396,6 @@ function DateModal({
     } finally { setWorking(false); }
   }
 
-  async function handlePayment() {
-    if (!sum?.orderId || !sum.employeePayableAmount) return;
-    try {
-      setWorking(true); setErr('');
-      const payRes = await fetchJSON<{
-        ok: boolean;
-        paymentLink?: string;
-        error?: string;
-      }>('/api/payment_create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          employeeID, org, token,
-          orderIds: [sum.orderId],
-          amount: sum.employeePayableAmount,
-          paymentMethod: 'Online',
-        }),
-      });
-
-      if (payRes.ok && payRes.paymentLink) {
-        window.location.href = payRes.paymentLink;
-      } else {
-        throw new Error(payRes.error || 'Не удалось создать платёж');
-      }
-    } catch(e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally { setWorking(false); }
-  }
-
-  const needsPayment = sum?.status === 'AwaitingPayment' && sum.employeePayableAmount && sum.employeePayableAmount > 0;
-
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
       <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-4">
@@ -390,27 +415,22 @@ function DateModal({
                 <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
                 <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
                 <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
-                {sum.status && (
-                  <div className="mt-2 pt-2 border-t border-white/10">
-                    <span className="text-white/60">Статус:</span>{' '}
-                    <span className={`font-semibold ${sum.status === 'AwaitingPayment' ? 'text-yellow-400' : 'text-green-400'}`}>
-                      {sum.status === 'AwaitingPayment' ? 'Ожидает оплаты' : sum.status}
-                    </span>
-                  </div>
-                )}
-                {sum.employeePayableAmount !== undefined && (
-                  <div>
-                    <span className="text-white/60">Сумма к оплате:</span>{' '}
-                    <span className="font-bold text-lg">{sum.employeePayableAmount} ₽</span>
-                  </div>
-                )}
               </div>
 
-              {needsPayment && (
-                <div className="mt-3">
-                  <Button onClick={handlePayment} disabled={working} className="w-full">
-                    {working ? 'Создание платежа…' : 'Оплатить онлайн'}
-                  </Button>
+              {/* Показываем тарифы в модалке для программы "Старший" */}
+              {needsStarshiy && orgInfo?.org && (
+                <div className="mt-3 p-3 bg-yellow-400/10 border border-yellow-400/30 rounded-xl">
+                  <div className="text-yellow-400 font-bold mb-2">🌟 Программа "Старший"</div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <div className="text-white/60">Полный обед:</div>
+                      <div className="font-bold">{orgInfo.org.priceFull != null ? `${orgInfo.org.priceFull} ₽` : '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-white/60">Лёгкий обед:</div>
+                      <div className="font-bold">{orgInfo.org.priceLight != null ? `${orgInfo.org.priceLight} ₽` : '—'}</div>
+                    </div>
+                  </div>
                 </div>
               )}
             </>
@@ -449,23 +469,6 @@ function DateModal({
               disabled={working || !sum?.orderId}
             >
               {working ? 'Отмена…' : 'Отменить'}
-            </Button>
-          </div>
-
-          {/* Кнопка "Сделать заказ на еще один день" */}
-          <div className="mt-4 pt-3 border-t border-white/10">
-            <Button
-              variant="ghost"
-              onClick={() => {
-                const u = new URL('/order', window.location.origin);
-                u.searchParams.set('org', org);
-                u.searchParams.set('employeeID', employeeID);
-                u.searchParams.set('token', token);
-                window.location.href = u.toString();
-              }}
-              className="w-full"
-            >
-              Сделать заказ на еще один день
             </Button>
           </div>
         </div>
