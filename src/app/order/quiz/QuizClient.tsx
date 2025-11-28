@@ -1,4 +1,4 @@
-// src/app/order/quiz/QuizClient.tsx 
+// src/app/order/quiz/QuizClient.tsx
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -12,29 +12,35 @@ import { loadDraft, saveDraft } from '@/lib/draft';
 type RawMenu = { id: string; fields?: Record<string, unknown> };
 type MenuAPIResponse = { ok?: boolean; items?: RawMenu[]; records?: RawMenu[]; menu?: RawMenu[] };
 
-/** Для салатов */
 const SALAD_CATS = ['Salad'];
-/** Для «замена салата/супа на …» */
 const SWAP_CATS = ['Zapekanka', 'Pastry', 'Fruit', 'Drink'];
-/** Для супов */
 const SOUP_CATS = ['Soup'];
-/** Для основных и гарниров */
 const MAIN_CATS = ['Main'];
 const SIDE_CATS = ['Side'];
 
-/** Путь к баннеру в /public */
 const QUIZ_BANNER_SRC = '/china_banner.jpg';
 
-/** Черновик, который хранится в localStorage (у вас дата обязательна) */
 type Draft = {
   date: string;
   saladId?: string; saladName?: string; saladIsSwap?: boolean;
   soupId?: string;  soupName?: string;  soupIsSwap?: boolean;
   mainId?: string;  mainName?: string;  mainGarnirnoe?: boolean;
   sideId?: string;  sideName?: string | null;
+  tariffCode?: 'Full' | 'Light';
 };
 
-// у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
+interface OrgMeta {
+  ok: boolean;
+  vidDogovora?: string;
+  priceFull?: number | null;
+  priceLight?: number | null;
+}
+
+interface EmployeeMeta {
+  ok: boolean;
+  role: string;
+}
+
 const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
 export default function QuizClient() {
@@ -59,30 +65,57 @@ export default function QuizClient() {
 
   const [draft, setDraft] = useState<Draft>(() => {
     const saved = loadDraft(date) || {};
-    return { date, ...(saved as Partial<Draft>) };
+    return { date, tariffCode: 'Full', ...(saved as Partial<Draft>) };
   });
 
-  // если дата в URL поменялась — синхронизируем черновик
+  // Новое: метаданные
+  const [orgMeta, setOrgMeta] = useState<OrgMeta | null>(null);
+  const [employeeMeta, setEmployeeMeta] = useState<EmployeeMeta | null>(null);
+
   useEffect(() => {
-    setDraft(() => ({ date, ...(loadDraft(date) as Partial<Draft>) }));
+    setDraft(() => ({ date, tariffCode: 'Full', ...(loadDraft(date) as Partial<Draft>) }));
   }, [date]);
 
-  // Подтянуть креды из localStorage, если не пришли в query
   useEffect(() => {
     if (!org)  setOrg(localStorage.getItem('baza.org') || '');
     if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
     if (!token) setToken(localStorage.getItem('baza.token') || '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Сохранить креды
   useEffect(() => {
     if (org)  localStorage.setItem('baza.org', org);
     if (employeeID) localStorage.setItem('baza.employeeID', employeeID);
     if (token) localStorage.setItem('baza.token', token);
   }, [org, employeeID, token]);
 
-  // Грузим меню
+  // Новое: загрузка метаданных организации
+  useEffect(() => {
+    (async () => {
+      if (!org) return;
+      try {
+        const r = await fetchJSON<OrgMeta>(`/api/org_meta?org=${encodeURIComponent(org)}`);
+        if (r.ok) setOrgMeta(r);
+      } catch (e) {
+        console.error('Failed to load org meta:', e);
+      }
+    })();
+  }, [org]);
+
+  // Новое: загрузка метаданных сотрудника
+  useEffect(() => {
+    (async () => {
+      if (!employeeID || !org || !token) return;
+      try {
+        const r = await fetchJSON<EmployeeMeta>(
+          `/api/employee_meta?employeeID=${encodeURIComponent(employeeID)}&org=${encodeURIComponent(org)}&token=${encodeURIComponent(token)}`
+        );
+        if (r.ok) setEmployeeMeta(r);
+      } catch (e) {
+        console.error('Failed to load employee meta:', e);
+      }
+    })();
+  }, [employeeID, org, token]);
+
   useEffect(() => {
     (async () => {
       if (!date || !org) return;
@@ -104,7 +137,6 @@ export default function QuizClient() {
     })();
   }, [date, org]);
 
-  // Нормализация категорий
   const byCat = useMemo(() => {
     const NORM: Record<string, string> = {
       Casseroles: 'Zapekanka',
@@ -136,7 +168,6 @@ export default function QuizClient() {
     router.push(u.pathname + '?' + u.searchParams.toString());
   }
 
-  // ===== Actions
   function pickSalad(it: MenuItem, isSwap=false) {
     const d: Draft = { ...draft, date, saladId: it.id, saladName: it.name, saladIsSwap: isSwap };
     setDraft(d); saveDraft(d);
@@ -165,89 +196,112 @@ export default function QuizClient() {
     go('6');
   }
 
-  async function submitOrder() {
-  try {
-    setLoading(true); setErr('');
+  async function submitOrder(paymentMethod?: 'Online' | 'Cash') {
+    try {
+      setLoading(true); setErr('');
 
-    // extras: максимум 2 — используем салат и суп
-    const extras: string[] = [];
-    if (draft.saladId) extras.push(draft.saladId);
-    if (draft.soupId)  extras.push(draft.soupId);
+      const extras: string[] = [];
+      if (draft.saladId) extras.push(draft.saladId);
+      if (draft.soupId)  extras.push(draft.soupId);
 
-    // общее тело
-    const included = {
-      mainId: draft.mainId || undefined,
-      sideId: draft.sideId || undefined,
-      extras: extras.slice(0, 2),
-    };
-
-    // если в URL есть orderId — делаем UPDATE
-    if (qOrderId) {
-      const bodyUpd: Record<string, unknown> = {
-        employeeID, org, token,
-        orderId: qOrderId,
-        included,
+      const included = {
+        mainId: draft.mainId || undefined,
+        sideId: draft.sideId || undefined,
+        extras: extras.slice(0, 2),
       };
-      // если HR редактирует за сотрудника — прокидываем цель
-      if (qFor) bodyUpd.forEmployeeID = qFor;
 
-      const r = await fetchJSON<{ ok: boolean; error?: string }>(
-        '/api/order_update',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bodyUpd),
+      if (qOrderId) {
+        const bodyUpd: Record<string, unknown> = {
+          employeeID, org, token,
+          orderId: qOrderId,
+          included,
+        };
+        if (draft.tariffCode) bodyUpd.tariffCode = draft.tariffCode;
+        if (qFor) bodyUpd.forEmployeeID = qFor;
+
+        const r = await fetchJSON<{ ok: boolean; error?: string }>(
+          '/api/order_update',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyUpd),
+          }
+        );
+
+        if (!r?.ok) throw new Error(r?.error || 'Не удалось обновить заказ');
+      } else {
+        const bodyCreate: Record<string, unknown> = {
+          employeeID, org, token, date,
+          included,
+          clientToken: crypto.randomUUID(),
+        };
+        if (draft.tariffCode) bodyCreate.tariffCode = draft.tariffCode;
+        if (paymentMethod) bodyCreate.paymentMethod = paymentMethod;
+        if (qFor) bodyCreate.forEmployeeID = qFor;
+
+        const r = await fetchJSON<{ ok: boolean; orderId?: string; orderStatus?: string; employeePayableAmount?: number; error?: string }>(
+          '/api/order',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyCreate),
+          }
+        );
+
+        if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
+
+        // Если статус AwaitingPayment и метод Online — создаём платёж
+        if (r.orderStatus === 'AwaitingPayment' && paymentMethod === 'Online' && r.orderId) {
+          const payRes = await fetchJSON('/api/payment_create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              employeeID, org, token,
+              orderIds: [r.orderId],
+              amount: r.employeePayableAmount || 0,
+              paymentMethod: 'Online',
+            }),
+          });
+
+          if (payRes.ok && payRes.paymentLink) {
+            window.location.href = payRes.paymentLink;
+            return;
+          }
         }
-      );
+      }
 
-      if (!r?.ok) throw new Error(r?.error || 'Не удалось обновить заказ');
-    } else {
-      // иначе — CREATE
-      const bodyCreate: Record<string, unknown> = {
-        employeeID, org, token, date,
-        included,
-        clientToken: crypto.randomUUID(),
-      };
-      if (qFor) bodyCreate.forEmployeeID = qFor;
+      saveDraft({ date } as Draft);
 
-      const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(
-        '/api/order',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bodyCreate),
-        }
-      );
+      const backTo = sp.get('back') || '';
+      if (backTo) {
+        const u = new URL(backTo, window.location.origin);
+        u.searchParams.set('org', org);
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('token', token);
+        return router.push(u.toString());
+      }
 
-      if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
-    }
-
-    // очистить черновик этой даты
-    saveDraft({ date } as Draft);
-
-    // редирект обратно в консоль, если пришли из неё
-    const backTo = sp.get('back') || '';
-    if (backTo) {
-      const u = new URL(backTo, window.location.origin);
-      u.searchParams.set('org', org);
+      const u = new URL('/order', window.location.origin);
       u.searchParams.set('employeeID', employeeID);
+      u.searchParams.set('org', org);
       u.searchParams.set('token', token);
-      return router.push(u.toString());
+      router.push(u.toString());
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
     }
-
-    // иначе — на страницу выбора дат
-    const u = new URL('/order', window.location.origin);
-    u.searchParams.set('employeeID', employeeID);
-    u.searchParams.set('org', org);
-    u.searchParams.set('token', token);
-    router.push(u.toString());
-  } catch (e: unknown) {
-    setErr(e instanceof Error ? e.message : String(e));
-  } finally {
-    setLoading(false);
   }
-}
+
   const niceDate = formatRuDate(date);
+  const isStarshiy = orgMeta?.vidDogovora === 'Starshiy';
+  const role = employeeMeta?.role || 'Employee';
+  const isKomanda = role === 'Komanda';
+  const isAmbassador = role === 'Ambassador';
+
+  const currentPrice = isStarshiy && isKomanda
+    ? (draft.tariffCode === 'Light' ? orgMeta?.priceLight : orgMeta?.priceFull)
+    : null;
 
   return (
     <main>
@@ -284,11 +338,8 @@ export default function QuizClient() {
       {loading && <Panel title="Загрузка"><div className="text-white/70">Загрузка…</div></Panel>}
       {err && <Panel title="Ошибка"><div className="text-red-400 text-sm">{err}</div></Panel>}
 
-      {/* Шаг 1 — Витрина */}
       {!loading && !err && step === '1' && (
         <>
-          
-          
           <Showcase byCat={byCat} />
           <div className="flex gap-3">
             <Button onClick={()=>go('2')}>Далее</Button>
@@ -297,7 +348,6 @@ export default function QuizClient() {
         </>
       )}
 
-      {/* Шаг 2 — Салат */}
       {!loading && !err && step === '2' && (
         <SaladStep
           byCat={byCat}
@@ -308,7 +358,6 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 2a — Замена салата на … */}
       {!loading && !err && step === '2a' && (
         <SwapStep
           title="Хочу заменить салат на …"
@@ -319,7 +368,6 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 3 — Суп */}
       {!loading && !err && step === '3' && (
         <SoupStep
           byCat={byCat}
@@ -331,7 +379,6 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 3s — Замена супа на салат (без «заменить салат на …») */}
       {!loading && !err && step === '3s' && (
         <SaladStep
           byCat={byCat}
@@ -341,7 +388,6 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 3a — Замена супа на … */}
       {!loading && !err && step === '3a' && (
         <SwapStep
           title="Хочу заменить суп на …"
@@ -352,7 +398,6 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 4 — Основное блюдо */}
       {!loading && !err && step === '4' && (
         <ListStep
           title="Выберите основное блюдо"
@@ -364,7 +409,6 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 5 — Гарнир */}
       {!loading && !err && step === '5' && (
         <ListStep
           title="Выберите гарнир"
@@ -381,9 +425,22 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 6 — Подтверждение */}
       {!loading && !err && step === '6' && (
-        <ConfirmStep draft={draft} onSubmit={submitOrder} onBack={()=>go(draft.mainGarnirnoe ? '4' : '5')} />
+        <ConfirmStep
+          draft={draft}
+          onSubmit={submitOrder}
+          onBack={()=>go(draft.mainGarnirnoe ? '4' : '5')}
+          isStarshiy={isStarshiy}
+          isKomanda={isKomanda}
+          isAmbassador={isAmbassador}
+          orgMeta={orgMeta}
+          currentPrice={currentPrice}
+          onTariffChange={(t) => {
+            const d = { ...draft, tariffCode: t };
+            setDraft(d);
+            saveDraft(d);
+          }}
+        />
       )}
     </main>
   );
@@ -396,7 +453,6 @@ function cxStep(current:string, me:string) {
   }`;
 }
 
-/* Шаг 1. Витрина меню */
 function Showcase({ byCat }:{ byCat: Record<string, MenuItem[]> }) {
   const ORDER = ['Zapekanka', 'Salad', 'Soup', 'Main', 'Side'];
   const ordered = ORDER.filter(c => byCat[c]?.length);
@@ -427,7 +483,6 @@ function Showcase({ byCat }:{ byCat: Record<string, MenuItem[]> }) {
   );
 }
 
-/* Шаг 2. Салат */
 function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
   byCat: Record<string, MenuItem[]>;
   onPick: (it: MenuItem)=>void;
@@ -472,7 +527,6 @@ function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
   );
 }
 
-/* Универсальная «замена на …» */
 function SwapStep({ title, byCat, cats, onPick, onBack }:{
   title: string;
   byCat: Record<string, MenuItem[]>;
@@ -504,7 +558,6 @@ function SwapStep({ title, byCat, cats, onPick, onBack }:{
   );
 }
 
-/* Шаг 3. Суп */
 function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
   byCat: Record<string, MenuItem[]>;
   onPick: (it: MenuItem)=>void;
@@ -547,7 +600,6 @@ function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
   );
 }
 
-/* Универсальный листинг (Основное/Гарнир) */
 function ListStep({ title, byCat, cats, onPick, emptyText, extraFooter }:{
   title: string;
   byCat: Record<string, MenuItem[]>;
@@ -576,11 +628,16 @@ function ListStep({ title, byCat, cats, onPick, emptyText, extraFooter }:{
   );
 }
 
-/* Подтверждение */
-function ConfirmStep({ draft, onSubmit, onBack }:{
+function ConfirmStep({ draft, onSubmit, onBack, isStarshiy, isKomanda, isAmbassador, orgMeta, currentPrice, onTariffChange }:{
   draft: Draft;
-  onSubmit: ()=>void;
+  onSubmit: (paymentMethod?: 'Online' | 'Cash')=>void;
   onBack: ()=>void;
+  isStarshiy: boolean;
+  isKomanda: boolean;
+  isAmbassador: boolean;
+  orgMeta: OrgMeta | null;
+  currentPrice: number | null | undefined;
+  onTariffChange: (t: 'Full' | 'Light')=>void;
 }) {
   return (
     <Panel title="Подтверждение заказа">
@@ -591,8 +648,65 @@ function ConfirmStep({ draft, onSubmit, onBack }:{
         <div>Гарнир: <span className="font-semibold">{draft.sideName ?? '—'}</span></div>
       </div>
 
-      <div className="mt-4 flex gap-3">
-        <Button onClick={onSubmit}>Подтвердить заказ</Button>
+      {isStarshiy && isKomanda && (
+        <div className="mt-4 p-4 rounded-xl bg-yellow-400/10 border border-yellow-400/20">
+          <h3 className="font-semibold mb-2 text-white">Выберите тариф:</h3>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-white/80 cursor-pointer">
+              <input
+                type="radio"
+                name="tariff"
+                value="Full"
+                checked={draft.tariffCode === 'Full'}
+                onChange={() => onTariffChange('Full')}
+              />
+              <span>Полный обед ({orgMeta?.priceFull} ₽)</span>
+            </label>
+            <label className="flex items-center gap-2 text-white/80 cursor-pointer">
+              <input
+                type="radio"
+                name="tariff"
+                value="Light"
+                checked={draft.tariffCode === 'Light'}
+                onChange={() => onTariffChange('Light')}
+              />
+              <span>Лёгкий обед ({orgMeta?.priceLight} ₽)</span>
+            </label>
+          </div>
+          {currentPrice !== null && currentPrice !== undefined && (
+            <p className="mt-2 text-lg font-bold text-white">Сумма к оплате: {currentPrice} ₽</p>
+          )}
+        </div>
+      )}
+
+      {isStarshiy && isAmbassador && (
+        <div className="mt-4 p-4 rounded-xl bg-green-400/10 border border-green-400/20">
+          <p className="text-green-400 font-semibold">Бесплатный обед для амбассадора</p>
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-col gap-2">
+        {isStarshiy && isKomanda && (
+          <>
+            <Button
+              onClick={() => onSubmit('Online')}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              Оплатить онлайн
+            </Button>
+            <Button
+              onClick={() => onSubmit('Cash')}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Оплатить наличными
+            </Button>
+          </>
+        )}
+
+        {(!isStarshiy || isAmbassador) && (
+          <Button onClick={() => onSubmit()}>Подтвердить заказ</Button>
+        )}
+
         <Button variant="ghost" onClick={onBack}>Назад</Button>
       </div>
     </Panel>
