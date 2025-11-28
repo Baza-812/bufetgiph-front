@@ -19,47 +19,51 @@ type SingleResp = {
     extra2: string;
     orderId: string;
     status?: string;
-    paymentMethod?: string;
-    paymentLink?: string;
+    employeePayableAmount?: number;
+    tariffCode?: string;
+    programType?: string;
   };
 };
 
-type OrgMeta = {
+interface OrgMeta {
   ok: boolean;
-  org?: {
-    id: string;
+  vidDogovora?: string;
+  minTeamSize?: number | null;
+  freeDeliveryMinOrders?: number | null;
+  priceFull?: number | null;
+  priceLight?: number | null;
+  bank?: {
     name: string;
-    vidDogovora?: string;
-    bankName?: string;
-    bankLegalName?: string;
-    bankINN?: string;
-    bankKPP?: string;
-    bankAccount?: string;
-    bankBIC?: string;
-    bankContactPhone?: string;
-    bankContactEmail?: string;
-    bankFooterText?: string;
-    priceFull?: number;
-    priceLight?: number;
-  };
-};
+    legalName: string;
+    bankName: string;
+    inn: string;
+    kpp: string;
+    account: string;
+    bic: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    footerText?: string;
+    acquiringProvider?: string;
+  } | null;
+}
 
-type EmployeeMeta = {
+interface EmployeeMeta {
   ok: boolean;
-  employee?: {
-    id: string;
-    fullName: string;
-    role?: string;
-  };
-};
+  employeeID: string;
+  role: string;
+  fullName: string;
+  organization: string;
+}
 
 export default function OrderClient() {
   const router = useRouter();
 
+  // креды
   const [org, setOrg] = useState('');
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
 
+  // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
   const [busyReady, setBusyReady] = useState(false);
@@ -68,11 +72,11 @@ export default function OrderClient() {
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState('');
 
-  // Метаданные организации и сотрудника
-  const [orgMeta, setOrgMeta] = useState<OrgMeta['org'] | null>(null);
-  const [empMeta, setEmpMeta] = useState<EmployeeMeta['employee'] | null>(null);
+  // Новое: метаданные
+  const [orgMeta, setOrgMeta] = useState<OrgMeta | null>(null);
+  const [employeeMeta, setEmployeeMeta] = useState<EmployeeMeta | null>(null);
 
-  // 1) Креды из query/localStorage
+  // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const o = q.get('org') || localStorage.getItem('baza.org') || '';
@@ -86,34 +90,7 @@ export default function OrderClient() {
     }
   }, []);
 
-  // 2) Загрузка метаданных организации
-  useEffect(() => {
-    (async () => {
-      if (!org) return;
-      try {
-        const r = await fetchJSON<OrgMeta>(`/api/org_meta?org=${encodeURIComponent(org)}`);
-        if (r.ok && r.org) setOrgMeta(r.org);
-      } catch (e) {
-        console.error('Failed to load org meta:', e);
-      }
-    })();
-  }, [org]);
-
-  // 3) Загрузка метаданных сотрудника
-  useEffect(() => {
-    (async () => {
-      if (!employeeID || !org || !token) return;
-      try {
-        const qs = new URLSearchParams({ employeeID, org, token });
-        const r = await fetchJSON<EmployeeMeta>(`/api/employee_meta?${qs.toString()}`);
-        if (r.ok && r.employee) setEmpMeta(r.employee);
-      } catch (e) {
-        console.error('Failed to load employee meta:', e);
-      }
-    })();
-  }, [employeeID, org, token]);
-
-  // 4) Опубликованные даты
+  // 2) опубликованные даты
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -129,7 +106,35 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // 5) Перезагрузка занятости
+  // Новое: загрузка метаданных организации
+  useEffect(() => {
+    (async () => {
+      if (!org) return;
+      try {
+        const r = await fetchJSON<OrgMeta>(`/api/org_meta?org=${encodeURIComponent(org)}`);
+        if (r.ok) setOrgMeta(r);
+      } catch (e) {
+        console.error('Failed to load org meta:', e);
+      }
+    })();
+  }, [org]);
+
+  // Новое: загрузка метаданных сотрудника
+  useEffect(() => {
+    (async () => {
+      if (!employeeID || !org || !token) return;
+      try {
+        const r = await fetchJSON<EmployeeMeta>(
+          `/api/employee_meta?employeeID=${encodeURIComponent(employeeID)}&org=${encodeURIComponent(org)}&token=${encodeURIComponent(token)}`
+        );
+        if (r.ok) setEmployeeMeta(r);
+      } catch (e) {
+        console.error('Failed to load employee meta:', e);
+      }
+    })();
+  }, [employeeID, org, token]);
+
+  // Перезагрузка «занятости» одним запросом /api/busy
   const reloadBusy = useCallback(async () => {
     if (!employeeID || !org || !token || dates.length === 0) return;
     setBusyReady(false);
@@ -155,8 +160,10 @@ export default function OrderClient() {
     }
   }, [dates, employeeID, org, token]);
 
+  // первичная загрузка busy
   useEffect(() => { reloadBusy(); }, [reloadBusy]);
 
+  // обновлять при возвращении на вкладку (после квиза)
   useEffect(() => {
     const onFocus = () => { reloadBusy(); };
     window.addEventListener('focus', onFocus);
@@ -165,7 +172,7 @@ export default function OrderClient() {
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
-  // 6) Клик по дате
+  // 4) клик по дате
   async function handlePickDate(d: string) {
     if (!busyReady) {
       try {
@@ -215,6 +222,7 @@ export default function OrderClient() {
   }
 
   const isStarshiy = orgMeta?.vidDogovora === 'Starshiy';
+  const role = employeeMeta?.role || 'Employee';
 
   return (
     <main>
@@ -223,14 +231,69 @@ export default function OrderClient() {
           <p className="text-white/80">
             Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
           </p>
-          {empMeta && (
-            <div className="mt-3 text-sm text-white/60">
-              Сотрудник: <span className="font-semibold text-white">{empMeta.fullName}</span>
-            </div>
-          )}
         </Panel>
 
-        {/* Промо */}
+        {/* Новое: информация о сотруднике */}
+        {employeeMeta && (
+          <Panel title="Информация о сотруднике">
+            <div className="space-y-1 text-sm text-white/80">
+              <p><strong>Сотрудник:</strong> {employeeMeta.fullName}</p>
+              <p><strong>Роль:</strong> {role}</p>
+            </div>
+          </Panel>
+        )}
+
+        {/* Новое: программа «Старший» */}
+        {isStarshiy && orgMeta && (
+          <Panel title="Программа «Старший»">
+            <div className="space-y-2 text-sm text-white/80">
+              {role === 'Komanda' && (
+                <>
+                  <p><strong>Полный обед:</strong> {orgMeta.priceFull} ₽</p>
+                  <p><strong>Лёгкий обед:</strong> {orgMeta.priceLight} ₽</p>
+                </>
+              )}
+              {role === 'Ambassador' && (
+                <p className="text-green-400 font-semibold">Бесплатные обеды для амбассадоров</p>
+              )}
+              {orgMeta.minTeamSize && (
+                <p className="text-white/60">
+                  Минимальный размер команды: {orgMeta.minTeamSize} человек
+                </p>
+              )}
+              {orgMeta.freeDeliveryMinOrders && (
+                <p className="text-white/60">
+                  Бесплатная доставка от {orgMeta.freeDeliveryMinOrders} заказов
+                </p>
+              )}
+            </div>
+          </Panel>
+        )}
+
+        {/* Новое: реквизиты банка */}
+        {isStarshiy && orgMeta?.bank && (
+          <Panel title="Реквизиты для оплаты">
+            <div className="space-y-1 text-sm text-white/80">
+              <p><strong>Организация:</strong> {orgMeta.bank.legalName}</p>
+              <p><strong>ИНН:</strong> {orgMeta.bank.inn}</p>
+              <p><strong>КПП:</strong> {orgMeta.bank.kpp}</p>
+              <p><strong>Банк:</strong> {orgMeta.bank.bankName}</p>
+              <p><strong>Расчётный счёт:</strong> {orgMeta.bank.account}</p>
+              <p><strong>БИК:</strong> {orgMeta.bank.bic}</p>
+              {orgMeta.bank.contactPhone && (
+                <p><strong>Телефон:</strong> {orgMeta.bank.contactPhone}</p>
+              )}
+              {orgMeta.bank.contactEmail && (
+                <p><strong>Email:</strong> {orgMeta.bank.contactEmail}</p>
+              )}
+              {orgMeta.bank.footerText && (
+                <p className="mt-2 text-xs text-white/60">{orgMeta.bank.footerText}</p>
+              )}
+            </div>
+          </Panel>
+        )}
+
+        {/* Промо: неделя скандинавской кухни */}
         <Panel title="Неделя скандинавской кухни · 24–28 ноября">
           <div className="max-w-2xl mx-auto w-full">
             <div className="w-full flex justify-center">
@@ -244,6 +307,7 @@ export default function OrderClient() {
           </div>
         </Panel>
 
+        {/* креды вручную — на случай, если пришли без query */}
         {(!org || !employeeID || !token) && (
           <Panel title="Данные доступа">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -286,27 +350,7 @@ export default function OrderClient() {
           <HintDates />
         </Panel>
 
-        {/* ФУТЕР с реквизитами для программы "Старший" */}
-        {isStarshiy && orgMeta && (
-          <Panel title="Реквизиты для оплаты">
-            <div className="space-y-2 text-sm text-white/80">
-              {orgMeta.bankFooterText && (
-                <div className="whitespace-pre-wrap">{orgMeta.bankFooterText}</div>
-              )}
-              {orgMeta.bankName && <div><strong>Банк:</strong> {orgMeta.bankName}</div>}
-              {orgMeta.bankLegalName && <div><strong>Получатель:</strong> {orgMeta.bankLegalName}</div>}
-              {orgMeta.bankINN && <div><strong>ИНН:</strong> {orgMeta.bankINN}</div>}
-              {orgMeta.bankKPP && <div><strong>КПП:</strong> {orgMeta.bankKPP}</div>}
-              {orgMeta.bankAccount && <div><strong>Расчётный счёт:</strong> {orgMeta.bankAccount}</div>}
-              {orgMeta.bankBIC && <div><strong>БИК:</strong> {orgMeta.bankBIC}</div>}
-              {orgMeta.bankContactPhone && <div><strong>Телефон:</strong> {orgMeta.bankContactPhone}</div>}
-              {orgMeta.bankContactEmail && <div><strong>Email:</strong> {orgMeta.bankContactEmail}</div>}
-              {orgMeta.priceFull && <div><strong>Полный обед:</strong> {orgMeta.priceFull} ₽</div>}
-              {orgMeta.priceLight && <div><strong>Лёгкий обед:</strong> {orgMeta.priceLight} ₽</div>}
-            </div>
-          </Panel>
-        )}
-
+        {/* Модалка со составом */}
         {selected && (
           <DateModal
             iso={selected}
@@ -316,7 +360,6 @@ export default function OrderClient() {
             info={busy[selected]}
             onClose={() => setSelected(null)}
             onChanged={reloadBusy}
-            isStarshiy={isStarshiy}
           />
         )}
       </div>
@@ -324,19 +367,18 @@ export default function OrderClient() {
   );
 }
 
+/* Модалка: состав + действия */
 function DateModal({
-  iso, employeeID, org, token, info, onClose, onChanged, isStarshiy
+  iso, employeeID, org, token, info, onClose, onChanged,
 }: {
   iso: string;
   employeeID: string; org: string; token: string;
   info?: SingleResp; onClose: ()=>void; onChanged: ()=>void;
-  isStarshiy: boolean;
 }) {
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
   const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
 
   useEffect(() => {
     let ignore = false;
@@ -360,7 +402,7 @@ function DateModal({
       }
     })();
     return () => { ignore = true; };
-  }, [iso, employeeID, org, token]);
+  }, [iso, employeeID, org, token, info]);
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
@@ -378,11 +420,41 @@ function DateModal({
     } finally { setWorking(false); }
   }
 
-  function orderAnother() {
-    onClose();
+  async function handlePayOnline() {
+    if (!sum?.orderId) return;
+    try {
+      setWorking(true); setErr('');
+      const amount = sum.employeePayableAmount || 0;
+      
+      const res = await fetchJSON<{
+        ok: boolean;
+        paymentLink?: string;
+        error?: string;
+      }>('/api/payment_create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeID, org, token,
+          orderIds: [sum.orderId],
+          amount,
+          paymentMethod: 'Online',
+        }),
+      });
+      
+      if (res.ok && res.paymentLink) {
+        window.location.href = res.paymentLink;
+      } else {
+        throw new Error(res.error || 'Не удалось создать платёж');
+      }
+    } catch(e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setWorking(false); }
   }
 
-  const needsPayment = isStarshiy && sum?.status === 'AwaitingPayment';
+  const status = sum?.status || '';
+  const needsPayment = status === 'AwaitingPayment';
+  const amount = sum?.employeePayableAmount;
+  const tariff = sum?.tariffCode;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
@@ -403,17 +475,29 @@ function DateModal({
                 <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
                 <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
                 <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
-                {sum.status && <div><span className="text-white/60">Статус:</span> {sum.status}</div>}
-                {sum.paymentMethod && <div><span className="text-white/60">Способ оплаты:</span> {sum.paymentMethod}</div>}
+                {amount !== undefined && amount !== null && (
+                  <div className="mt-2">
+                    <span className="text-white/60">Сумма к оплате:</span>{' '}
+                    <span className="font-bold text-lg">{amount} ₽</span>
+                    {tariff && <span className="ml-2 text-xs text-white/60">({tariff === 'Light' ? 'Лёгкий' : 'Полный'})</span>}
+                  </div>
+                )}
+                {status && (
+                  <div className="mt-1">
+                    <span className="text-white/60">Статус:</span>{' '}
+                    <span className={`font-semibold ${
+                      status === 'AwaitingPayment' ? 'text-yellow-400' :
+                      status === 'Cancelled' ? 'text-red-400' :
+                      'text-green-400'
+                    }`}>
+                      {status === 'AwaitingPayment' ? 'Ожидает оплаты' :
+                       status === 'Cancelled' ? 'Отменён' :
+                       status === 'Confirmed' ? 'Подтверждён' :
+                       status}
+                    </span>
+                  </div>
+                )}
               </div>
-
-              {needsPayment && sum.paymentLink && (
-                <div className="mt-3">
-                  <a href={sum.paymentLink} target="_blank" rel="noopener noreferrer">
-                    <Button variant="primary" className="w-full">Оплатить онлайн</Button>
-                  </a>
-                </div>
-              )}
             </>
           )}
 
@@ -427,6 +511,16 @@ function DateModal({
 
           <div className="flex gap-3 pt-2 flex-wrap">
             <Button onClick={onClose}>ОК</Button>
+
+            {needsPayment && (
+              <Button
+                onClick={handlePayOnline}
+                disabled={working}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {working ? 'Обработка...' : 'Оплатить онлайн'}
+              </Button>
+            )}
 
             <Button
               variant="ghost"
@@ -450,13 +544,6 @@ function DateModal({
               disabled={working || !sum?.orderId}
             >
               {working ? 'Отмена…' : 'Отменить'}
-            </Button>
-
-            <Button
-              variant="primary"
-              onClick={orderAnother}
-            >
-              Сделать заказ на еще один день
             </Button>
           </div>
         </div>
