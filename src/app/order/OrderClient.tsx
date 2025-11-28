@@ -9,8 +9,6 @@ import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, fmtDayLabel } from '@/lib/api';
 import HintDates from '@/components/HintDates';
 
-
-
 type SingleResp = {
   ok: boolean;
   summary: null | {
@@ -20,8 +18,42 @@ type SingleResp = {
     extra1: string;
     extra2: string;
     orderId: string;
+    status?: string;
+    employeePayableAmount?: number;
+    tariffCode?: string;
+    programType?: string;
   };
 };
+
+interface OrgMeta {
+  ok: boolean;
+  vidDogovora?: string;
+  minTeamSize?: number | null;
+  freeDeliveryMinOrders?: number | null;
+  priceFull?: number | null;
+  priceLight?: number | null;
+  bank?: {
+    name: string;
+    legalName: string;
+    bankName: string;
+    inn: string;
+    kpp: string;
+    account: string;
+    bic: string;
+    contactPhone?: string;
+    contactEmail?: string;
+    footerText?: string;
+    acquiringProvider?: string;
+  } | null;
+}
+
+interface EmployeeMeta {
+  ok: boolean;
+  employeeID: string;
+  role: string;
+  fullName: string;
+  organization: string;
+}
 
 export default function OrderClient() {
   const router = useRouter();
@@ -34,11 +66,15 @@ export default function OrderClient() {
   // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
-  const [busyReady, setBusyReady] = useState(false); // ← готовность статуса занятости/серости
+  const [busyReady, setBusyReady] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null); // для модалки
+  const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState('');
+
+  // Новое: метаданные
+  const [orgMeta, setOrgMeta] = useState<OrgMeta | null>(null);
+  const [employeeMeta, setEmployeeMeta] = useState<EmployeeMeta | null>(null);
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -54,7 +90,7 @@ export default function OrderClient() {
     }
   }, []);
 
-   // 2) опубликованные даты
+  // 2) опубликованные даты
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -69,6 +105,34 @@ export default function OrderClient() {
       }
     })();
   }, [org]);
+
+  // Новое: загрузка метаданных организации
+  useEffect(() => {
+    (async () => {
+      if (!org) return;
+      try {
+        const r = await fetchJSON<OrgMeta>(`/api/org_meta?org=${encodeURIComponent(org)}`);
+        if (r.ok) setOrgMeta(r);
+      } catch (e) {
+        console.error('Failed to load org meta:', e);
+      }
+    })();
+  }, [org]);
+
+  // Новое: загрузка метаданных сотрудника
+  useEffect(() => {
+    (async () => {
+      if (!employeeID || !org || !token) return;
+      try {
+        const r = await fetchJSON<EmployeeMeta>(
+          `/api/employee_meta?employeeID=${encodeURIComponent(employeeID)}&org=${encodeURIComponent(org)}&token=${encodeURIComponent(token)}`
+        );
+        if (r.ok) setEmployeeMeta(r);
+      } catch (e) {
+        console.error('Failed to load employee meta:', e);
+      }
+    })();
+  }, [employeeID, org, token]);
 
   // Перезагрузка «занятости» одним запросом /api/busy
   const reloadBusy = useCallback(async () => {
@@ -110,7 +174,6 @@ export default function OrderClient() {
 
   // 4) клик по дате
   async function handlePickDate(d: string) {
-    // Если занятость ещё не подгрузилась — проверим точечно, чтобы не улететь в квиз по ошибке
     if (!busyReady) {
       try {
         const u = new URL('/api/hr_orders', window.location.origin);
@@ -121,10 +184,9 @@ export default function OrderClient() {
         u.searchParams.set('date', d);
         const r = await fetchJSON<SingleResp>(u.toString());
         if (r?.summary?.orderId) {
-          setSelected(d); // есть заказ — модалка
+          setSelected(d);
           return;
         }
-        // свободно — квиз
         const q = new URL('/order/quiz', window.location.origin);
         q.searchParams.set('date', d);
         q.searchParams.set('step', '1');
@@ -134,7 +196,6 @@ export default function OrderClient() {
         router.push(q.toString());
         return;
       } catch {
-        // на ошибке — пускаем в квиз, чтобы не стопорить пользователя
         const q = new URL('/order/quiz', window.location.origin);
         q.searchParams.set('date', d);
         q.searchParams.set('step', '1');
@@ -146,7 +207,6 @@ export default function OrderClient() {
       }
     }
 
-    // Когда занятость известна — решаем локально
     const isBusy = Boolean(busy[d]?.summary);
     if (!isBusy) {
       const q = new URL('/order/quiz', window.location.origin);
@@ -158,99 +218,156 @@ export default function OrderClient() {
       router.push(q.toString());
       return;
     }
-    setSelected(d); // занято — модалка
+    setSelected(d);
   }
+
+  const isStarshiy = orgMeta?.vidDogovora === 'Starshiy';
+  const role = employeeMeta?.role || 'Employee';
 
   return (
     <main>
-      {/* НОВОЕ: общий контейнер, чтобы не тянуться на всю ширину на десктопе */}
-    <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8">
-      <Panel title="Добро пожаловать!">
-        <p className="text-white/80">
-          Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
-        </p>
-      </Panel>
-
-      {/* Промо: неделя скандинавской кухни */}
-<Panel title="Неделя скандинавской кухни · 24–28 ноября">
-  <div className="max-w-2xl mx-auto w-full">
-    <div className="w-full flex justify-center">
-      <img
-        src="/scandi.jpg"           // файл лежит в /public/scandi.jpg
-        alt="Неделя скандинавской кухни 24–28 ноября"
-        loading="lazy"
-        className="max-w-full h-auto max-h-124 sm:max-h-140 object-contain rounded-xl border border-white/10 bg-black/10"
-      />
-    </div>
-  </div>
-</Panel>
-
-
-     
-      {/* креды вручную — на случай, если пришли без query */}
-      {(!org || !employeeID || !token) && (
-        <Panel title="Данные доступа">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Field label="Org">
-              <Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" />
-            </Field>
-            <Field label="Employee ID">
-              <Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." />
-            </Field>
-            <Field label="Token">
-              <Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" />
-            </Field>
-          </div>
-          <div className="text-xs text-white/50">Обычно эти поля подставляются автоматически из персональной ссылки.</div>
+      <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8">
+        <Panel title="Добро пожаловать!">
+          <p className="text-white/80">
+            Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
+          </p>
         </Panel>
-      )}
 
-      <Panel title="Выберите дату">
-        {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
-        {error && <div className="text-red-400 text-sm">Ошибка: {error}</div>}
+        {/* Новое: информация о сотруднике */}
+        {employeeMeta && (
+          <Panel title="Информация о сотруднике">
+            <div className="space-y-1 text-sm text-white/80">
+              <p><strong>Сотрудник:</strong> {employeeMeta.fullName}</p>
+              <p><strong>Роль:</strong> {role}</p>
+            </div>
+          </Panel>
+        )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {dates.map(d => {
-            const has = Boolean(busy[d]?.summary); // СЕРОЕ если заказ уже есть
-            const label = fmtDayLabel(d);
-            return (
-              <Button
-                key={d}
-                onClick={() => handlePickDate(d)}
-                className="w-full"
-                variant={has ? 'ghost' : 'primary'}
-                disabled={!busyReady} // ← до загрузки «серости» клики блокируем
-              >
-                {label}
-              </Button>
-            );
-          })}
-        </div>
+        {/* Новое: программа «Старший» */}
+        {isStarshiy && orgMeta && (
+          <Panel title="Программа «Старший»">
+            <div className="space-y-2 text-sm text-white/80">
+              {role === 'Komanda' && (
+                <>
+                  <p><strong>Полный обед:</strong> {orgMeta.priceFull} ₽</p>
+                  <p><strong>Лёгкий обед:</strong> {orgMeta.priceLight} ₽</p>
+                </>
+              )}
+              {role === 'Ambassador' && (
+                <p className="text-green-400 font-semibold">Бесплатные обеды для амбассадоров</p>
+              )}
+              {orgMeta.minTeamSize && (
+                <p className="text-white/60">
+                  Минимальный размер команды: {orgMeta.minTeamSize} человек
+                </p>
+              )}
+              {orgMeta.freeDeliveryMinOrders && (
+                <p className="text-white/60">
+                  Бесплатная доставка от {orgMeta.freeDeliveryMinOrders} заказов
+                </p>
+              )}
+            </div>
+          </Panel>
+        )}
 
-        <HintDates />
-        
-        {/* Легенда */}
-        
-      </Panel>
+        {/* Новое: реквизиты банка */}
+        {isStarshiy && orgMeta?.bank && (
+          <Panel title="Реквизиты для оплаты">
+            <div className="space-y-1 text-sm text-white/80">
+              <p><strong>Организация:</strong> {orgMeta.bank.legalName}</p>
+              <p><strong>ИНН:</strong> {orgMeta.bank.inn}</p>
+              <p><strong>КПП:</strong> {orgMeta.bank.kpp}</p>
+              <p><strong>Банк:</strong> {orgMeta.bank.bankName}</p>
+              <p><strong>Расчётный счёт:</strong> {orgMeta.bank.account}</p>
+              <p><strong>БИК:</strong> {orgMeta.bank.bic}</p>
+              {orgMeta.bank.contactPhone && (
+                <p><strong>Телефон:</strong> {orgMeta.bank.contactPhone}</p>
+              )}
+              {orgMeta.bank.contactEmail && (
+                <p><strong>Email:</strong> {orgMeta.bank.contactEmail}</p>
+              )}
+              {orgMeta.bank.footerText && (
+                <p className="mt-2 text-xs text-white/60">{orgMeta.bank.footerText}</p>
+              )}
+            </div>
+          </Panel>
+        )}
 
-      {/* Модалка со составом — показываем только когда выбран день */}
-      {selected && (
-        <DateModal
-          iso={selected}
-          employeeID={employeeID}
-          org={org}
-          token={token}
-          info={busy[selected]}
-          onClose={() => setSelected(null)}
-          onChanged={reloadBusy}
-        />
-      )}
+        {/* Промо: неделя скандинавской кухни */}
+        <Panel title="Неделя скандинавской кухни · 24–28 ноября">
+          <div className="max-w-2xl mx-auto w-full">
+            <div className="w-full flex justify-center">
+              <img
+                src="/scandi.jpg"
+                alt="Неделя скандинавской кухни 24–28 ноября"
+                loading="lazy"
+                className="max-w-full h-auto max-h-124 sm:max-h-140 object-contain rounded-xl border border-white/10 bg-black/10"
+              />
+            </div>
+          </div>
+        </Panel>
+
+        {/* креды вручную — на случай, если пришли без query */}
+        {(!org || !employeeID || !token) && (
+          <Panel title="Данные доступа">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label="Org">
+                <Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" />
+              </Field>
+              <Field label="Employee ID">
+                <Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." />
+              </Field>
+              <Field label="Token">
+                <Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" />
+              </Field>
+            </div>
+            <div className="text-xs text-white/50">Обычно эти поля подставляются автоматически из персональной ссылки.</div>
+          </Panel>
+        )}
+
+        <Panel title="Выберите дату">
+          {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
+          {error && <div className="text-red-400 text-sm">Ошибка: {error}</div>}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {dates.map(d => {
+              const has = Boolean(busy[d]?.summary);
+              const label = fmtDayLabel(d);
+              return (
+                <Button
+                  key={d}
+                  onClick={() => handlePickDate(d)}
+                  className="w-full"
+                  variant={has ? 'ghost' : 'primary'}
+                  disabled={!busyReady}
+                >
+                  {label}
+                </Button>
+              );
+            })}
+          </div>
+
+          <HintDates />
+        </Panel>
+
+        {/* Модалка со составом */}
+        {selected && (
+          <DateModal
+            iso={selected}
+            employeeID={employeeID}
+            org={org}
+            token={token}
+            info={busy[selected]}
+            onClose={() => setSelected(null)}
+            onChanged={reloadBusy}
+          />
+        )}
       </div>
     </main>
   );
 }
 
-/* ——— Модалка: состав + действия — всегда остаётся открытой; показывает лоадер, пока тянем детали ——— */
+/* Модалка: состав + действия */
 function DateModal({
   iso, employeeID, org, token, info, onClose, onChanged,
 }: {
@@ -263,7 +380,6 @@ function DateModal({
   const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
   const [loading, setLoading] = useState(false);
 
-  // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
   useEffect(() => {
     let ignore = false;
     (async () => {
@@ -286,8 +402,7 @@ function DateModal({
       }
     })();
     return () => { ignore = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [iso, employeeID, org, token]);
+  }, [iso, employeeID, org, token, info]);
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
@@ -299,11 +414,41 @@ function DateModal({
         body: JSON.stringify({ employeeID, org, token, orderId: sum.orderId, reason: 'user_cancel' })
       });
       onClose();
-      onChanged(); // обновим «серость»
-          } catch(e: unknown) {
+      onChanged();
+    } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setWorking(false); }
   }
+
+  async function handlePayOnline() {
+    if (!sum?.orderId) return;
+    try {
+      setWorking(true); setErr('');
+      const amount = sum.employeePayableAmount || 0;
+      const res = await fetchJSON('/api/payment_create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeID, org, token,
+          orderIds: [sum.orderId],
+          amount,
+          paymentMethod: 'Online',
+        }),
+      });
+      if (res.ok && res.paymentLink) {
+        window.location.href = res.paymentLink;
+      } else {
+        throw new Error(res.error || 'Не удалось создать платёж');
+      }
+    } catch(e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally { setWorking(false); }
+  }
+
+  const status = sum?.status || '';
+  const needsPayment = status === 'AwaitingPayment';
+  const amount = sum?.employeePayableAmount;
+  const tariff = sum?.tariffCode;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
@@ -324,6 +469,28 @@ function DateModal({
                 <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
                 <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
                 <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
+                {amount !== undefined && amount !== null && (
+                  <div className="mt-2">
+                    <span className="text-white/60">Сумма к оплате:</span>{' '}
+                    <span className="font-bold text-lg">{amount} ₽</span>
+                    {tariff && <span className="ml-2 text-xs text-white/60">({tariff === 'Light' ? 'Лёгкий' : 'Полный'})</span>}
+                  </div>
+                )}
+                {status && (
+                  <div className="mt-1">
+                    <span className="text-white/60">Статус:</span>{' '}
+                    <span className={`font-semibold ${
+                      status === 'AwaitingPayment' ? 'text-yellow-400' :
+                      status === 'Cancelled' ? 'text-red-400' :
+                      'text-green-400'
+                    }`}>
+                      {status === 'AwaitingPayment' ? 'Ожидает оплаты' :
+                       status === 'Cancelled' ? 'Отменён' :
+                       status === 'Confirmed' ? 'Подтверждён' :
+                       status}
+                    </span>
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -336,33 +503,42 @@ function DateModal({
 
           {err && <div className="text-red-400">{err}</div>}
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex gap-3 pt-2 flex-wrap">
             <Button onClick={onClose}>ОК</Button>
 
-<Button
-  variant="ghost"
-  onClick={() => {
-    const u = new URL('/order/quiz', window.location.origin);
-    u.searchParams.set('date', iso);
-    u.searchParams.set('step', '1');
-    u.searchParams.set('org', org);
-    u.searchParams.set('employeeID', employeeID);
-    u.searchParams.set('token', token);
-    if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
-    window.location.href = u.toString();
-  }}
->
-  Изменить
-</Button>
+            {needsPayment && (
+              <Button
+                onClick={handlePayOnline}
+                disabled={working}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {working ? 'Обработка...' : 'Оплатить онлайн'}
+              </Button>
+            )}
 
-<Button
-  variant="danger"
-  onClick={cancelOrder}
-  disabled={working || !sum?.orderId}
->
-  {working ? 'Отмена…' : 'Отменить'}
-</Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                const u = new URL('/order/quiz', window.location.origin);
+                u.searchParams.set('date', iso);
+                u.searchParams.set('step', '1');
+                u.searchParams.set('org', org);
+                u.searchParams.set('employeeID', employeeID);
+                u.searchParams.set('token', token);
+                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId);
+                window.location.href = u.toString();
+              }}
+            >
+              Изменить
+            </Button>
 
+            <Button
+              variant="danger"
+              onClick={cancelOrder}
+              disabled={working || !sum?.orderId}
+            >
+              {working ? 'Отмена…' : 'Отменить'}
+            </Button>
           </div>
         </div>
       </div>
