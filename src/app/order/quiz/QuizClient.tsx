@@ -1,544 +1,623 @@
+// src/app/order/quiz/QuizClient.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
+import Input, { Field } from '@/components/ui/Input';
+import { fetchJSON, mapMenuItem, MenuItem } from '@/lib/api';
+import { loadDraft, saveDraft } from '@/lib/draft';
 
-interface MenuItem {
-  id: string;
-  fields: {
-    Name?: string;
-    Category?: string;
-    Description?: string;
-    Photo?: Array<{ url: string }>;
-  };
-}
+type RawMenu = { id: string; fields?: Record<string, unknown> };
+type MenuAPIResponse = { ok?: boolean; items?: RawMenu[]; records?: RawMenu[]; menu?: RawMenu[] };
 
-interface OrgMeta {
-  vidDogovora: string;
-  priceFull: number | null;
-  priceLight: number | null;
-}
+/** Для салатов */
+const SALAD_CATS = ['Salad'];
+/** Для «замена салата/супа на …» */
+const SWAP_CATS = ['Zapekanka', 'Pastry', 'Fruit', 'Drink'];
+/** Для супов */
+const SOUP_CATS = ['Soup'];
+/** Для основных и гарниров */
+const MAIN_CATS = ['Main'];
+const SIDE_CATS = ['Side'];
 
-interface EmployeeMeta {
-  role: string;
-}
+/** Путь к баннеру в /public */
+const QUIZ_BANNER_SRC = '/china_banner.jpg';
+
+/** Черновик, который хранится в localStorage (у вас дата обязательна) */
+type Draft = {
+  date: string;
+  saladId?: string; saladName?: string; saladIsSwap?: boolean;
+  soupId?: string;  soupName?: string;  soupIsSwap?: boolean;
+  mainId?: string;  mainName?: string;  mainGarnirnoe?: boolean;
+  sideId?: string;  sideName?: string | null;
+};
+
+// у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
+const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
 export default function QuizClient() {
   const sp = useSearchParams();
+  const qFor = sp.get('forEmployeeID') || '';
+  const qOrderId = sp.get('orderId') || '';
+  const qOrg  = sp.get('org') || '';
+  const qEmp  = sp.get('employeeID') || '';
+  const qTok  = sp.get('token') || '';
   const router = useRouter();
 
-  const org = sp.get('org') || '';
-  const employeeID = sp.get('employeeID') || '';
-  const token = sp.get('token') || '';
-  const dateParam = sp.get('date') || '';
-  const orderIdParam = sp.get('orderId') || '';
+  const date = sp.get('date') || '';
+  const step = sp.get('step') || '1';
 
-  const [step, setStep] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  const [dates, setDates] = useState<string[]>([]);
-  const [selectedDate, setSelectedDate] = useState('');
+  const [org, setOrg] = useState(qOrg || '');
+  const [employeeID, setEmployeeID] = useState(qEmp || '');
+  const [token, setToken] = useState(qTok || '');
 
   const [menu, setMenu] = useState<MenuItem[]>([]);
-  const [mains, setMains] = useState<MenuItem[]>([]);
-  const [sides, setSides] = useState<MenuItem[]>([]);
-  const [extras, setExtras] = useState<MenuItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
 
-  const [selectedMain, setSelectedMain] = useState('');
-  const [selectedSide, setSelectedSide] = useState('');
-  const [selectedExtras, setSelectedExtras] = useState<string[]>([]);
+  const [draft, setDraft] = useState<Draft>(() => {
+    const saved = loadDraft(date) || {};
+    return { date, ...(saved as Partial<Draft>) };
+  });
 
-  const [tariffCode, setTariffCode] = useState<'Full' | 'Light'>('Full');
-
-  const [submitting, setSubmitting] = useState(false);
-
-  const [orgMeta, setOrgMeta] = useState<OrgMeta | null>(null);
-  const [employeeMeta, setEmployeeMeta] = useState<EmployeeMeta | null>(null);
-
+  // если дата в URL поменялась — синхронизируем черновик
   useEffect(() => {
-    if (!org || !employeeID || !token) {
-      setError('Отсутствуют параметры org, employeeID или token');
-      setLoading(false);
-      return;
-    }
+    setDraft(() => ({ date, ...(loadDraft(date) as Partial<Draft>) }));
+  }, [date]);
 
-    Promise.all([
-      fetchOrgMeta(),
-      fetchEmployeeMeta(),
-      fetchDates(),
-    ]).finally(() => setLoading(false));
+  // Подтянуть креды из localStorage, если не пришли в query
+  useEffect(() => {
+    if (!org)  setOrg(localStorage.getItem('baza.org') || '');
+    if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
+    if (!token) setToken(localStorage.getItem('baza.token') || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Сохранить креды
+  useEffect(() => {
+    if (org)  localStorage.setItem('baza.org', org);
+    if (employeeID) localStorage.setItem('baza.employeeID', employeeID);
+    if (token) localStorage.setItem('baza.token', token);
   }, [org, employeeID, token]);
 
+  // Грузим меню
   useEffect(() => {
-    if (dateParam && dates.includes(dateParam)) {
-      setSelectedDate(dateParam);
-      setStep(2);
-    }
-  }, [dateParam, dates]);
-
-  useEffect(() => {
-    if (selectedDate) {
-      fetchMenu(selectedDate);
-    }
-  }, [selectedDate]);
-
-  async function fetchOrgMeta() {
-    try {
-      const res = await fetch(`/api/org_meta?org=${org}`);
-      if (!res.ok) throw new Error('Не удалось загрузить метаданные организации');
-      const data = await res.json();
-      if (data.ok) setOrgMeta(data);
-    } catch (e: any) {
-      console.error('fetchOrgMeta error:', e);
-    }
-  }
-
-  async function fetchEmployeeMeta() {
-    try {
-      const res = await fetch(`/api/employee_meta?employeeID=${employeeID}&org=${org}&token=${token}`);
-      if (!res.ok) throw new Error('Не удалось загрузить метаданные сотрудника');
-      const data = await res.json();
-      if (data.ok) setEmployeeMeta(data);
-    } catch (e: any) {
-      console.error('fetchEmployeeMeta error:', e);
-    }
-  }
-
-  async function fetchDates() {
-    try {
-      const res = await fetch(`/api/dates?org=${org}`);
-      if (!res.ok) throw new Error('Не удалось загрузить даты');
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.dates)) {
-        setDates(data.dates);
+    (async () => {
+      if (!date || !org) return;
+      try {
+        setLoading(true); setErr('');
+        const u = new URL('/api/menu', window.location.origin);
+        u.searchParams.set('date', date);
+        u.searchParams.set('org', org);
+        const r = await fetchJSON<MenuAPIResponse>(u.toString());
+        const rows = (r.items ?? r.records ?? r.menu ?? []) as RawMenu[];
+        const arr = rows.map(mapMenuItem);
+        setMenu(arr);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setErr(msg);
+      } finally {
+        setLoading(false);
       }
-    } catch (e: any) {
-      setError(e.message || 'Ошибка загрузки дат');
+    })();
+  }, [date, org]);
+
+  // Нормализация категорий
+  const byCat = useMemo(() => {
+    const NORM: Record<string, string> = {
+      Casseroles: 'Zapekanka',
+      Bakery:     'Zapekanka',
+      Pancakes:   'Zapekanka',
+      Salads:     'Salad',
+      Soups:      'Soup',
+      Zapekanka:  'Zapekanka',
+      Salad:      'Salad',
+      Soup:       'Soup',
+      Main:       'Main',
+      Side:       'Side',
+      Pastry:     'Pastry',
+      Fruit:      'Fruit',
+      Drink:      'Drink',
+    };
+    const m: Record<string, MenuItem[]> = {};
+    for (const x of menu) {
+      const raw = x.category || 'Other';
+      const c = NORM[raw] || 'Other';
+      (m[c] ||= []).push({ ...x, category: c });
     }
+    return m;
+  }, [menu]);
+
+  function go(nextStep: string) {
+    const u = new URL(window.location.href);
+    u.searchParams.set('step', nextStep);
+    router.push(u.pathname + '?' + u.searchParams.toString());
   }
 
-  async function fetchMenu(date: string) {
-    try {
-      const res = await fetch(`/api/menu?org=${org}&date=${date}`);
-      if (!res.ok) throw new Error('Не удалось загрузить меню');
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.menu)) {
-        setMenu(data.menu);
-        setMains(data.menu.filter((m: MenuItem) => m.fields.Category === 'Main'));
-        setSides(data.menu.filter((m: MenuItem) => m.fields.Category === 'Side'));
-        setExtras(data.menu.filter((m: MenuItem) => m.fields.Category === 'Extra'));
-      }
-    } catch (e: any) {
-      setError(e.message || 'Ошибка загрузки меню');
-    }
+  // ===== Actions
+  function pickSalad(it: MenuItem, isSwap=false) {
+    const d: Draft = { ...draft, date, saladId: it.id, saladName: it.name, saladIsSwap: isSwap };
+    setDraft(d); saveDraft(d);
+    go('3');
   }
 
-  async function handleSubmit(paymentMethod: 'Online' | 'Cash' | null) {
-    if (!selectedMain) {
-      alert('Выберите основное блюдо');
-      return;
-    }
+  function pickSoup(it: MenuItem, isSwap=false) {
+    const d: Draft = { ...draft, date, soupId: it.id, soupName: it.name, soupIsSwap: isSwap };
+    setDraft(d); saveDraft(d);
+    go('4');
+  }
 
-    setSubmitting(true);
+  function pickMain(it: MenuItem) {
+    const garn = isGarnirnoe(it);
+    const d: Draft = {
+      ...draft, date,
+      mainId: it.id, mainName: it.name, mainGarnirnoe: garn
+    };
+    setDraft(d); saveDraft(d);
+    if (garn) go('6'); else go('5');
+  }
 
-    try {
-      const body: any = {
-        employeeID,
-        org,
-        token,
-        date: selectedDate,
-        included: {
-          mainId: selectedMain,
-          sideId: selectedSide || null,
-          extras: selectedExtras,
-        },
-        tariffCode,
-        clientToken: `${Date.now()}_${Math.random()}`,
+  function pickSide(it: MenuItem | null) {
+    const d: Draft = { ...draft, date, sideId: it?.id, sideName: it?.name || null };
+    setDraft(d); saveDraft(d);
+    go('6');
+  }
+
+  async function submitOrder() {
+  try {
+    setLoading(true); setErr('');
+
+    // extras: максимум 2 — используем салат и суп
+    const extras: string[] = [];
+    if (draft.saladId) extras.push(draft.saladId);
+    if (draft.soupId)  extras.push(draft.soupId);
+
+    // общее тело
+    const included = {
+      mainId: draft.mainId || undefined,
+      sideId: draft.sideId || undefined,
+      extras: extras.slice(0, 2),
+    };
+
+    // если в URL есть orderId — делаем UPDATE
+    if (qOrderId) {
+      const bodyUpd: Record<string, unknown> = {
+        employeeID, org, token,
+        orderId: qOrderId,
+        included,
       };
+      // если HR редактирует за сотрудника — прокидываем цель
+      if (qFor) bodyUpd.forEmployeeID = qFor;
 
-      if (paymentMethod) {
-        body.paymentMethod = paymentMethod;
-      }
-
-      const endpoint = orderIdParam ? '/api/order_update' : '/api/order';
-      if (orderIdParam) body.orderId = orderIdParam;
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) throw new Error('Не удалось создать/обновить заказ');
-      const data = await res.json();
-
-      if (data.ok) {
-        // Если статус AwaitingPayment и метод Online — создаём платёж
-        if (data.orderStatus === 'AwaitingPayment' && paymentMethod === 'Online') {
-          const payRes = await fetch('/api/payment_create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              employeeID,
-              org,
-              token,
-              orderIds: [data.orderId],
-              amount: data.employeePayableAmount || 0,
-              paymentMethod: 'Online',
-            }),
-          });
-
-          if (!payRes.ok) throw new Error('Не удалось создать платёж');
-          const payData = await payRes.json();
-
-          if (payData.ok && payData.paymentLink) {
-            window.location.href = payData.paymentLink;
-            return;
-          }
+      const r = await fetchJSON<{ ok: boolean; error?: string }>(
+        '/api/order_update',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyUpd),
         }
+      );
 
-        alert(orderIdParam ? 'Заказ обновлён!' : 'Заказ создан!');
-        router.push(`/order?org=${org}&employeeID=${employeeID}&token=${token}`);
-      } else {
-        throw new Error(data.error || 'Ошибка создания заказа');
-      }
-    } catch (e: any) {
-      alert(e.message || 'Ошибка создания заказа');
-    } finally {
-      setSubmitting(false);
+      if (!r?.ok) throw new Error(r?.error || 'Не удалось обновить заказ');
+    } else {
+      // иначе — CREATE
+      const bodyCreate: Record<string, unknown> = {
+        employeeID, org, token, date,
+        included,
+        clientToken: crypto.randomUUID(),
+      };
+      if (qFor) bodyCreate.forEmployeeID = qFor;
+
+      const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(
+        '/api/order',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyCreate),
+        }
+      );
+
+      if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
     }
+
+    // очистить черновик этой даты
+    saveDraft({ date } as Draft);
+
+    // редирект обратно в консоль, если пришли из неё
+    const backTo = sp.get('back') || '';
+    if (backTo) {
+      const u = new URL(backTo, window.location.origin);
+      u.searchParams.set('org', org);
+      u.searchParams.set('employeeID', employeeID);
+      u.searchParams.set('token', token);
+      return router.push(u.toString());
+    }
+
+    // иначе — на страницу выбора дат
+    const u = new URL('/order', window.location.origin);
+    u.searchParams.set('employeeID', employeeID);
+    u.searchParams.set('org', org);
+    u.searchParams.set('token', token);
+    router.push(u.toString());
+  } catch (e: unknown) {
+    setErr(e instanceof Error ? e.message : String(e));
+  } finally {
+    setLoading(false);
   }
+}
+  const niceDate = formatRuDate(date);
 
-  if (loading) return <Panel><p>Загрузка...</p></Panel>;
-  if (error) return <Panel><p className="text-red-600">{error}</p></Panel>;
-
-  const isStarshiy = orgMeta?.vidDogovora === 'Starshiy';
-  const role = employeeMeta?.role || 'Employee';
-  const isKomanda = role === 'Komanda';
-  const isAmbassador = role === 'Ambassador';
-
-  const currentPrice = isStarshiy && isKomanda
-    ? (tariffCode === 'Light' ? orgMeta?.priceLight : orgMeta?.priceFull)
-    : null;
-
-  // Шаг 1: Выбор даты
-  if (step === 1) {
-    return (
-      <Panel>
-        <h1 className="text-2xl font-bold mb-4">Выберите дату</h1>
-        {dates.length === 0 ? (
-          <p className="text-gray-600">Нет доступных дат для заказа.</p>
-        ) : (
-          <div className="space-y-2">
-            {dates.map((date) => (
-              <Button
-                key={date}
-                onClick={() => {
-                  setSelectedDate(date);
-                  setStep(2);
-                }}
-                className="w-full"
-              >
-                {date}
-              </Button>
-            ))}
+  return (
+    <main>
+      <Panel title={<span className="text-white">{niceDate}</span>}>
+        {!org || !employeeID || !token ? (
+          <div className="mb-4 text-sm text-white/70">
+            Данные доступа не найдены в ссылке — заполните вручную:
           </div>
-        )}
-      </Panel>
-    );
-  }
+        ) : null}
 
-  // Шаг 2: Выбор основного блюда
-  if (step === 2) {
-    return (
-      <Panel>
-        <h1 className="text-2xl font-bold mb-4">Выберите основное блюдо</h1>
-        <p className="text-gray-600 mb-4">Дата: {selectedDate}</p>
-
-        {mains.length === 0 ? (
-          <p className="text-gray-600">Нет доступных основных блюд.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {mains.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => {
-                  setSelectedMain(item.id);
-                  setStep(3);
-                }}
-                className={`border rounded p-4 cursor-pointer hover:bg-blue-50 ${
-                  selectedMain === item.id ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
-                }`}
-              >
-                {item.fields.Photo?.[0]?.url && (
-                  <img
-                    src={item.fields.Photo[0].url}
-                    alt={item.fields.Name || ''}
-                    className="w-full h-40 object-cover rounded mb-2"
-                  />
-                )}
-                <h3 className="font-semibold">{item.fields.Name || 'Без названия'}</h3>
-                {item.fields.Description && (
-                  <p className="text-sm text-gray-600">{item.fields.Description}</p>
-                )}
-              </div>
-            ))}
+        {(!org || !employeeID || !token) && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <Field label="Org"><Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" /></Field>
+            <Field label="Employee ID"><Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." /></Field>
+            <Field label="Token"><Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" /></Field>
           </div>
         )}
 
-        <div className="mt-4">
-          <Button onClick={() => setStep(1)} className="bg-gray-500 hover:bg-gray-600">
-            Назад
-          </Button>
+        <div className="flex items-center gap-2 text-xs text-white/60">
+          <span className={cxStep(step,'1')}>1. Меню</span>
+          <span>→</span>
+          <span className={cxStep(step,'2')}>2. Салат</span>
+          <span>→</span>
+          <span className={cxStep(step,'3')}>3. Суп</span>
+          <span>→</span>
+          <span className={cxStep(step,'4')}>4. Основное</span>
+          <span>→</span>
+          <span className={cxStep(step,'5')}>5. Гарнир</span>
+          <span>→</span>
+          <span className={cxStep(step,'6')}>6. Подтверждение</span>
         </div>
       </Panel>
-    );
-  }
 
-  // Шаг 3: Выбор салата (с кнопкой "Без салата")
-  if (step === 3) {
-    return (
-      <Panel>
-        <h1 className="text-2xl font-bold mb-4">Выберите салат</h1>
-        <p className="text-gray-600 mb-4">Дата: {selectedDate}</p>
+      {loading && <Panel title="Загрузка"><div className="text-white/70">Загрузка…</div></Panel>}
+      {err && <Panel title="Ошибка"><div className="text-red-400 text-sm">{err}</div></Panel>}
 
-        <div className="mb-4">
-          <Button
-            onClick={() => {
-              setSelectedSide('');
-              setStep(4);
-            }}
-            className="bg-yellow-500 hover:bg-yellow-600 w-full"
-          >
-            Без салата
-          </Button>
-        </div>
-
-        {sides.length === 0 ? (
-          <p className="text-gray-600">Нет доступных салатов.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {sides.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => {
-                  setSelectedSide(item.id);
-                  setStep(4);
-                }}
-                className={`border rounded p-4 cursor-pointer hover:bg-blue-50 ${
-                  selectedSide === item.id ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
-                }`}
-              >
-                {item.fields.Photo?.[0]?.url && (
-                  <img
-                    src={item.fields.Photo[0].url}
-                    alt={item.fields.Name || ''}
-                    className="w-full h-40 object-cover rounded mb-2"
-                  />
-                )}
-                <h3 className="font-semibold">{item.fields.Name || 'Без названия'}</h3>
-                {item.fields.Description && (
-                  <p className="text-sm text-gray-600">{item.fields.Description}</p>
-                )}
-              </div>
-            ))}
+      {/* Шаг 1 — Витрина */}
+      {!loading && !err && step === '1' && (
+        <>
+          
+          
+          <Showcase byCat={byCat} />
+          <div className="flex gap-3">
+            <Button onClick={()=>go('2')}>Далее</Button>
+            <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
           </div>
-        )}
+        </>
+      )}
 
-        <div className="mt-4">
-          <Button onClick={() => setStep(2)} className="bg-gray-500 hover:bg-gray-600">
-            Назад
-          </Button>
-        </div>
-      </Panel>
-    );
-  }
+      {/* Шаг 2 — Салат */}
+      {!loading && !err && step === '2' && (
+        <SaladStep
+          byCat={byCat}
+          onPick={(it)=>pickSalad(it,false)}
+          onSwap={()=>go('2a')}
+          draft={draft}
+          onBack={()=>go('1')}
+        />
+      )}
 
-  // Шаг 4: Выбор допов (до 2)
-  if (step === 4) {
-    return (
-      <Panel>
-        <h1 className="text-2xl font-bold mb-4">Выберите дополнения (до 2)</h1>
-        <p className="text-gray-600 mb-4">Дата: {selectedDate}</p>
+      {/* Шаг 2a — Замена салата на … */}
+      {!loading && !err && step === '2a' && (
+        <SwapStep
+          title="Хочу заменить салат на …"
+          byCat={byCat}
+          cats={SWAP_CATS}
+          onPick={(it)=>pickSalad(it,true)}
+          onBack={()=>go('2')}
+        />
+      )}
 
-        {extras.length === 0 ? (
-          <p className="text-gray-600">Нет доступных дополнений.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {extras.map((item) => {
-              const isSelected = selectedExtras.includes(item.id);
-              const canSelect = selectedExtras.length < 2 || isSelected;
+      {/* Шаг 3 — Суп */}
+      {!loading && !err && step === '3' && (
+        <SoupStep
+          byCat={byCat}
+          onPick={(it)=>pickSoup(it,false)}
+          onSwapSalad={()=>go('3s')}
+          onSwapOther={()=>go('3a')}
+          draft={draft}
+          onBack={()=>go('2')}
+        />
+      )}
 
-              return (
-                <div
-                  key={item.id}
-                  onClick={() => {
-                    if (isSelected) {
-                      setSelectedExtras(selectedExtras.filter((id) => id !== item.id));
-                    } else if (canSelect) {
-                      setSelectedExtras([...selectedExtras, item.id]);
-                    }
-                  }}
-                  className={`border rounded p-4 cursor-pointer ${
-                    isSelected
-                      ? 'border-blue-500 bg-blue-50'
-                      : canSelect
-                      ? 'border-gray-300 hover:bg-blue-50'
-                      : 'border-gray-200 bg-gray-100 cursor-not-allowed'
-                  }`}
-                >
-                  {item.fields.Photo?.[0]?.url && (
-                    <img
-                      src={item.fields.Photo[0].url}
-                      alt={item.fields.Name || ''}
-                      className="w-full h-40 object-cover rounded mb-2"
-                    />
-                  )}
-                  <h3 className="font-semibold">{item.fields.Name || 'Без названия'}</h3>
-                  {item.fields.Description && (
-                    <p className="text-sm text-gray-600">{item.fields.Description}</p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+      {/* Шаг 3s — Замена супа на салат (без «заменить салат на …») */}
+      {!loading && !err && step === '3s' && (
+        <SaladStep
+          byCat={byCat}
+          onPick={(it)=>pickSoup(it,true)}
+          draft={draft}
+          onBack={()=>go('3')}
+        />
+      )}
 
-        <div className="mt-4 flex gap-2">
-          <Button onClick={() => setStep(3)} className="bg-gray-500 hover:bg-gray-600">
-            Назад
-          </Button>
-          <Button onClick={() => setStep(5)} className="bg-blue-600 hover:bg-blue-700">
-            Далее
-          </Button>
-        </div>
-      </Panel>
-    );
-  }
+      {/* Шаг 3a — Замена супа на … */}
+      {!loading && !err && step === '3a' && (
+        <SwapStep
+          title="Хочу заменить суп на …"
+          byCat={byCat}
+          cats={SWAP_CATS}
+          onPick={(it)=>pickSoup(it,true)}
+          onBack={()=>go('3')}
+        />
+      )}
 
-  // Шаг 5: Подтверждение (с выбором тарифа и тремя кнопками)
-  if (step === 5) {
-    const selectedMainItem = mains.find((m) => m.id === selectedMain);
-    const selectedSideItem = sides.find((s) => s.id === selectedSide);
-    const selectedExtrasItems = extras.filter((e) => selectedExtras.includes(e.id));
+      {/* Шаг 4 — Основное блюдо */}
+      {!loading && !err && step === '4' && (
+        <ListStep
+          title="Выберите основное блюдо"
+          byCat={byCat}
+          cats={MAIN_CATS}
+          onPick={pickMain}
+          emptyText="На сегодня нет основных блюд."
+          extraFooter={<Button variant="ghost" onClick={()=>go('3')}>Назад</Button>}
+        />
+      )}
 
-    return (
-      <Panel>
-        <h1 className="text-2xl font-bold mb-4">Подтверждение заказа</h1>
-        <p className="text-gray-600 mb-4">Дата: {selectedDate}</p>
-
-        <div className="mb-4">
-          <h3 className="font-semibold mb-2">Ваш заказ:</h3>
-          <ul className="list-disc list-inside space-y-1">
-            <li>
-              <strong>Основное:</strong> {selectedMainItem?.fields.Name || 'Не выбрано'}
-            </li>
-            <li>
-              <strong>Салат:</strong> {selectedSideItem?.fields.Name || 'Без салата'}
-            </li>
-            {selectedExtrasItems.length > 0 && (
-              <li>
-                <strong>Дополнения:</strong>{' '}
-                {selectedExtrasItems.map((e) => e.fields.Name).join(', ')}
-              </li>
-            )}
-          </ul>
-        </div>
-
-        {isStarshiy && isKomanda && (
-          <div className="mb-4 p-4 bg-yellow-50 rounded border border-yellow-200">
-            <h3 className="font-semibold mb-2">Выберите тариф:</h3>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="tariff"
-                  value="Full"
-                  checked={tariffCode === 'Full'}
-                  onChange={() => setTariffCode('Full')}
-                />
-                <span>Полный обед ({orgMeta?.priceFull} ₽)</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  name="tariff"
-                  value="Light"
-                  checked={tariffCode === 'Light'}
-                  onChange={() => setTariffCode('Light')}
-                />
-                <span>Лёгкий обед ({orgMeta?.priceLight} ₽)</span>
-              </label>
+      {/* Шаг 5 — Гарнир */}
+      {!loading && !err && step === '5' && (
+        <ListStep
+          title="Выберите гарнир"
+          byCat={byCat}
+          cats={SIDE_CATS}
+          onPick={(it)=>pickSide(it)}
+          emptyText="На сегодня нет гарниров."
+          extraFooter={
+            <div className="flex gap-3">
+              <Button variant="ghost" onClick={()=>go('4')}>Назад</Button>
+              <Button variant="ghost" onClick={()=>pickSide(null)}>Без гарнира</Button>
             </div>
-            {currentPrice !== null && (
-              <p className="mt-2 text-lg font-bold">Сумма к оплате: {currentPrice} ₽</p>
-            )}
-          </div>
-        )}
+          }
+        />
+      )}
 
-        {isStarshiy && isAmbassador && (
-          <div className="mb-4 p-4 bg-green-50 rounded border border-green-200">
-            <p className="text-green-700 font-semibold">Бесплатный обед для амбассадора</p>
-          </div>
-        )}
+      {/* Шаг 6 — Подтверждение */}
+      {!loading && !err && step === '6' && (
+        <ConfirmStep draft={draft} onSubmit={submitOrder} onBack={()=>go(draft.mainGarnirnoe ? '4' : '5')} />
+      )}
+    </main>
+  );
+}
 
-        <div className="flex flex-col gap-2">
-          {isStarshiy && isKomanda && (
-            <>
-              <Button
-                onClick={() => handleSubmit('Online')}
-                disabled={submitting}
-                className="bg-green-600 hover:bg-green-700"
-              >
-                {submitting ? 'Обработка...' : 'Оплатить онлайн'}
-              </Button>
-              <Button
-                onClick={() => handleSubmit('Cash')}
-                disabled={submitting}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                {submitting ? 'Обработка...' : 'Оплатить наличными'}
-              </Button>
-            </>
-          )}
+function cxStep(current:string, me:string) {
+  const active = current === me;
+  return `inline-flex items-center px-2.5 py-1 rounded-xl ${
+    active ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white/70'
+  }`;
+}
 
-          {(!isStarshiy || isAmbassador) && (
-            <Button
-              onClick={() => handleSubmit(null)}
-              disabled={submitting}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              {submitting ? 'Обработка...' : 'Подтвердить заказ'}
-            </Button>
-          )}
+/* Шаг 1. Витрина меню */
+function Showcase({ byCat }:{ byCat: Record<string, MenuItem[]> }) {
+  const ORDER = ['Zapekanka', 'Salad', 'Soup', 'Main', 'Side'];
+  const ordered = ORDER.filter(c => byCat[c]?.length);
 
-          <Button
-            onClick={() => {
-              setStep(1);
-              setSelectedMain('');
-              setSelectedSide('');
-              setSelectedExtras([]);
-            }}
-            disabled={submitting}
-            className="bg-yellow-500 hover:bg-yellow-600"
-          >
-            Сделать заказ на ещё один день
-          </Button>
+  return (
+    <Panel title="Меню на день">
+      {!ordered.length && <div className="text-white/70 text-sm">Меню пусто.</div>}
+      <div className="space-y-6">
+        {ordered.map(cat => (
+          <section key={cat}>
+            <h3 className="text-base font-bold mb-2 text-white">
+              <span className="text-yellow-400">[</span>
+              <span className="mx-1">{ruCat(cat)}</span>
+              <span className="text-yellow-400">]</span>
+            </h3>
+            <ul className="space-y-2">
+              {(byCat[cat] || []).map(it => (
+                <li key={it.id} className="rounded-xl bg-white/5 border border-white/10 p-3">
+                  <div className="font-semibold text-white">{it.name}</div>
+                  {it.description && <div className="text-white/70 text-xs leading-relaxed">{it.description}</div>}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </Panel>
+  );
+}
 
-          <Button
-            onClick={() => setStep(4)}
-            disabled={submitting}
-            className="bg-gray-500 hover:bg-gray-600"
-          >
-            Назад
-          </Button>
+/* Шаг 2. Салат */
+function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
+  byCat: Record<string, MenuItem[]>;
+  onPick: (it: MenuItem)=>void;
+  onSwap?: ()=>void;
+  draft: { saladId?: string; saladName?: string; saladIsSwap?: boolean };
+  onBack: ()=>void;
+}) {
+  const salads = SALAD_CATS.flatMap(c => byCat[c] || []);
+  return (
+    <Panel title="Выберите салат">
+      {draft?.saladId && (
+        <div className="mb-3 text-sm">
+          <span className="text-white/60">Сейчас выбрано:</span>{' '}
+          <span className="font-semibold">{draft.saladName}</span>
+          {draft.saladIsSwap ? <span className="ml-2 text-xs bg-white/10 px-2 py-0.5 rounded">замена</span> : null}
         </div>
-      </Panel>
-    );
-  }
+      )}
 
-  return null;
+      {!salads.length && (
+        <div className="text-white/70 text-sm">В категории «Салаты» на сегодня нет блюд.</div>
+      )}
+
+      <div className="space-y-3">
+        {salads.map(it => (
+          <div key={it.id} className="rounded-xl bg-white/5 border border-white/10 p-3">
+            <div className="font-semibold text-white">{it.name}</div>
+            {it.description && <div className="text-white/70 text-xs mb-2">{it.description}</div>}
+            <Button onClick={()=>onPick(it)}>Выбрать этот салат</Button>
+          </div>
+        ))}
+      </div>
+
+      {onSwap && (
+        <div className="mt-4">
+          <Button onClick={onSwap}>Хочу заменить салат на …</Button>
+        </div>
+      )}
+      <div className="mt-4">
+        <Button variant="ghost" onClick={onBack}>Назад</Button>
+      </div>
+    </Panel>
+  );
+}
+
+/* Универсальная «замена на …» */
+function SwapStep({ title, byCat, cats, onPick, onBack }:{
+  title: string;
+  byCat: Record<string, MenuItem[]>;
+  cats: string[];
+  onPick: (it: MenuItem)=>void;
+  onBack: ()=>void;
+}) {
+  const items = cats.flatMap(c => byCat[c] || []);
+  return (
+    <Panel title={title}>
+      {!items.length && (
+        <div className="text-white/70 text-sm">На сегодня в выбранных категориях нет блюд.</div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {items.map(it => (
+          <div key={it.id} className="rounded-xl bg-white/5 border border-white/10 p-3">
+            <div className="font-semibold text-white">{it.name}</div>
+            {it.description && <div className="text-white/70 text-xs mb-2">{it.description}</div>}
+            <Button onClick={()=>onPick(it)}>Выбрать</Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4">
+        <Button variant="ghost" onClick={onBack}>Назад</Button>
+      </div>
+    </Panel>
+  );
+}
+
+/* Шаг 3. Суп */
+function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
+  byCat: Record<string, MenuItem[]>;
+  onPick: (it: MenuItem)=>void;
+  onSwapSalad: ()=>void;
+  onSwapOther: ()=>void;
+  draft: { soupId?: string; soupName?: string; soupIsSwap?: boolean };
+  onBack: ()=>void;
+}) {
+  const soups = SOUP_CATS.flatMap(c => byCat[c] || []);
+  return (
+    <Panel title="Выберите суп">
+      {draft?.soupId && (
+        <div className="mb-3 text-sm">
+          <span className="text-white/60">Сейчас выбрано:</span>{' '}
+          <span className="font-semibold">{draft.soupName}</span>
+          {draft.soupIsSwap ? <span className="ml-2 text-xs bg-white/10 px-2 py-0.5 rounded">замена</span> : null}
+        </div>
+      )}
+
+      {!soups.length && (
+        <div className="text-white/70 text-sm">В категории «Супы» на сегодня нет блюд.</div>
+      )}
+
+      <div className="space-y-3">
+        {soups.map(it => (
+          <div key={it.id} className="rounded-xl bg-white/5 border border-white/10 p-3">
+            <div className="font-semibold text-white">{it.name}</div>
+            {it.description && <div className="text-white/70 text-xs mb-2">{it.description}</div>}
+            <Button onClick={()=>onPick(it)}>Выбрать этот суп</Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Button onClick={onSwapSalad}>Хочу заменить суп на салат</Button>
+        <Button onClick={onSwapOther}>Хочу заменить суп на …</Button>
+        <Button variant="ghost" onClick={onBack}>Назад</Button>
+      </div>
+    </Panel>
+  );
+}
+
+/* Универсальный листинг (Основное/Гарнир) */
+function ListStep({ title, byCat, cats, onPick, emptyText, extraFooter }:{
+  title: string;
+  byCat: Record<string, MenuItem[]>;
+  cats: string[];
+  onPick: (it: MenuItem)=>void;
+  emptyText: string;
+  extraFooter?: React.ReactNode;
+}) {
+  const items = cats.flatMap(c => byCat[c] || []);
+  return (
+    <Panel title={title}>
+      {!items.length && <div className="text-white/70 text-sm">{emptyText}</div>}
+
+      <div className="space-y-3">
+        {items.map(it => (
+          <div key={it.id} className="rounded-xl bg-white/5 border border-white/10 p-3">
+            <div className="font-semibold text-white">{it.name}</div>
+            {it.description && <div className="text-white/70 text-xs mb-2">{it.description}</div>}
+            <Button onClick={()=>onPick(it)}>Выбрать</Button>
+          </div>
+        ))}
+      </div>
+
+      {extraFooter ? <div className="mt-4">{extraFooter}</div> : null}
+    </Panel>
+  );
+}
+
+/* Подтверждение */
+function ConfirmStep({ draft, onSubmit, onBack }:{
+  draft: Draft;
+  onSubmit: ()=>void;
+  onBack: ()=>void;
+}) {
+  return (
+    <Panel title="Подтверждение заказа">
+      <div className="space-y-2 text-sm">
+        {draft.saladName && <div>Салат: <span className="font-semibold">{draft.saladName}{draft.saladIsSwap ? ' (замена)' : ''}</span></div>}
+        {draft.soupName &&  <div>Суп: <span className="font-semibold">{draft.soupName}{draft.soupIsSwap ? ' (замена)' : ''}</span></div>}
+        {draft.mainName &&  <div>Основное: <span className="font-semibold">{draft.mainName}</span></div>}
+        <div>Гарнир: <span className="font-semibold">{draft.sideName ?? '—'}</span></div>
+      </div>
+
+      <div className="mt-4 flex gap-3">
+        <Button onClick={onSubmit}>Подтвердить заказ</Button>
+        <Button variant="ghost" onClick={onBack}>Назад</Button>
+      </div>
+    </Panel>
+  );
+}
+
+function ruCat(cat:string) {
+  const map: Record<string,string> = {
+    Zapekanka: 'Запеканки и блины',
+    Salad:     'Салаты',
+    Soup:      'Супы',
+    Main:      'Основные',
+    Side:      'Гарниры',
+    Pastry:    'Выпечка',
+    Fruit:     'Фрукты',
+    Drink:     'Напитки',
+  };
+  return map[cat] || cat;
+}
+
+function formatRuDate(isoDate: string) {
+  if (!isoDate) return '';
+  const dt = new Date(`${isoDate}T00:00:00`);
+  const s = dt.toLocaleDateString('ru-RU', {
+    day: '2-digit', month: '2-digit', year: 'numeric', weekday: 'short'
+  });
+  return s.replace(/^[а-яё]/, ch => ch.toUpperCase());
 }
