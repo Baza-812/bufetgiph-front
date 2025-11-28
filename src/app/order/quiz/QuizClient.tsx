@@ -12,47 +12,12 @@ import { loadDraft, saveDraft } from '@/lib/draft';
 type RawMenu = { id: string; fields?: Record<string, unknown> };
 type MenuAPIResponse = { ok?: boolean; items?: RawMenu[]; records?: RawMenu[]; menu?: RawMenu[] };
 
-interface OrgMeta {
-  ok: boolean;
-  vidDogovora?: string;
-  minTeamSize?: number | null;
-  freeDeliveryMinOrders?: number | null;
-  priceFull?: number | null;
-  priceLight?: number | null;
-  bank?: {
-    name: string;
-    legalName: string;
-    bankName: string;
-    inn: string;
-    kpp: string;
-    account: string;
-    bic: string;
-    contactPhone?: string;
-    contactEmail?: string;
-    footerText?: string;
-    acquiringProvider?: string;
-  } | null;
-}
-
-interface EmployeeMeta {
-  ok: boolean;
-  employeeID: string;
-  role: string;
-  fullName: string;
-  organization: string;
-}
-
-/** Для салатов */
 const SALAD_CATS = ['Salad'];
-/** Для «замена салата/супа на …» */
 const SWAP_CATS = ['Zapekanka', 'Pastry', 'Fruit', 'Drink'];
-/** Для супов */
 const SOUP_CATS = ['Soup'];
-/** Для основных и гарниров */
 const MAIN_CATS = ['Main'];
 const SIDE_CATS = ['Side'];
 
-/** Черновик, который хранится в localStorage (у вас дата обязательна) */
 type Draft = {
   date: string;
   saladId?: string; saladName?: string; saladIsSwap?: boolean;
@@ -60,10 +25,19 @@ type Draft = {
   mainId?: string;  mainName?: string;  mainGarnirnoe?: boolean;
   sideId?: string;  sideName?: string | null;
   tariffCode?: 'Full' | 'Light';
-  paymentMethod?: 'Online' | 'Cash';
+  paymentMethod?: 'Cash' | 'Online';
 };
 
-// у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
+type OrgInfo = {
+  ok: boolean;
+  org?: {
+    name: string;
+    vidDogovora?: string;
+    priceFull?: number;
+    priceLight?: number;
+  };
+};
+
 const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
 export default function QuizClient() {
@@ -76,71 +50,52 @@ export default function QuizClient() {
   const router = useRouter();
 
   const date = sp.get('date') || '';
-  const step = sp.get('step') || '1';
+  const step = sp.get('step') || '0';
 
   const [org, setOrg] = useState(qOrg || '');
   const [employeeID, setEmployeeID] = useState(qEmp || '');
   const [token, setToken] = useState(qTok || '');
+  const [role, setRole] = useState('');
 
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
-
-  const [orgMeta, setOrgMeta] = useState<OrgMeta | null>(null);
-  const [employeeMeta, setEmployeeMeta] = useState<EmployeeMeta | null>(null);
+  const [orgInfo, setOrgInfo] = useState<OrgInfo | null>(null);
 
   const [draft, setDraft] = useState<Draft>(() => {
     const saved = loadDraft(date) || {};
-    return { date, tariffCode: 'Full', paymentMethod: 'Online', ...(saved as Partial<Draft>) };
+    return { date, ...(saved as Partial<Draft>) };
   });
 
-  // если дата в URL поменялась — синхронизируем черновик
   useEffect(() => {
-    setDraft(() => ({ date, tariffCode: 'Full', paymentMethod: 'Online', ...(loadDraft(date) as Partial<Draft>) }));
+    setDraft(() => ({ date, ...(loadDraft(date) as Partial<Draft>) }));
   }, [date]);
 
-  // Подтянуть креды из localStorage, если не пришли в query
   useEffect(() => {
     if (!org)  setOrg(localStorage.getItem('baza.org') || '');
     if (!employeeID) setEmployeeID(localStorage.getItem('baza.employeeID') || '');
     if (!token) setToken(localStorage.getItem('baza.token') || '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setRole(localStorage.getItem('baza.role') || '');
   }, []);
 
-  // Сохранить креды
   useEffect(() => {
     if (org)  localStorage.setItem('baza.org', org);
     if (employeeID) localStorage.setItem('baza.employeeID', employeeID);
     if (token) localStorage.setItem('baza.token', token);
   }, [org, employeeID, token]);
 
-  // Загрузка метаданных организации
+  // Загружаем информацию об организации
   useEffect(() => {
     (async () => {
       if (!org) return;
       try {
-        const r = await fetchJSON<OrgMeta>(`/api/org_meta?org=${encodeURIComponent(org)}`);
-        if (r.ok) setOrgMeta(r);
+        const r = await fetchJSON<OrgInfo>(`/api/org_info?org=${encodeURIComponent(org)}`);
+        setOrgInfo(r);
       } catch (e) {
-        console.error('Failed to load org meta:', e);
+        console.error('Failed to load org info:', e);
       }
     })();
   }, [org]);
-
-  // Загрузка метаданных сотрудника
-  useEffect(() => {
-    (async () => {
-      if (!employeeID || !org || !token) return;
-      try {
-        const r = await fetchJSON<EmployeeMeta>(
-          `/api/employee_meta?employeeID=${encodeURIComponent(employeeID)}&org=${encodeURIComponent(org)}&token=${encodeURIComponent(token)}`
-        );
-        if (r.ok) setEmployeeMeta(r);
-      } catch (e) {
-        console.error('Failed to load employee meta:', e);
-      }
-    })();
-  }, [employeeID, org, token]);
 
   // Грузим меню
   useEffect(() => {
@@ -164,7 +119,6 @@ export default function QuizClient() {
     })();
   }, [date, org]);
 
-  // Нормализация категорий
   const byCat = useMemo(() => {
     const NORM: Record<string, string> = {
       Casseroles: 'Zapekanka',
@@ -196,7 +150,18 @@ export default function QuizClient() {
     router.push(u.pathname + '?' + u.searchParams.toString());
   }
 
+  // Проверяем, нужна ли программа "Старший"
+  const isStarshiy = orgInfo?.org?.vidDogovora === 'Starshiy';
+  const isKomanda = role?.toLowerCase() === 'komanda';
+  const needsStarshiy = isStarshiy && isKomanda;
+
   // ===== Actions
+  function pickTariff(tariff: 'Full' | 'Light') {
+    const d: Draft = { ...draft, date, tariffCode: tariff };
+    setDraft(d); saveDraft(d);
+    go('1');
+  }
+
   function pickSalad(it: MenuItem, isSwap=false) {
     const d: Draft = { ...draft, date, saladId: it.id, saladName: it.name, saladIsSwap: isSwap };
     setDraft(d); saveDraft(d);
@@ -222,61 +187,46 @@ export default function QuizClient() {
   function pickSide(it: MenuItem | null) {
     const d: Draft = { ...draft, date, sideId: it?.id, sideName: it?.name || null };
     setDraft(d); saveDraft(d);
+    // Если программа "Старший" — идём на выбор оплаты
+    if (needsStarshiy) {
+      go('6.5');
+    } else {
+      go('6');
+    }
+  }
+
+  function pickPayment(method: 'Cash' | 'Online') {
+    const d: Draft = { ...draft, date, paymentMethod: method };
+    setDraft(d); saveDraft(d);
     go('6');
-  }
-
-  function updateTariff(tariff: 'Full' | 'Light') {
-    const d: Draft = { ...draft, tariffCode: tariff };
-    setDraft(d); saveDraft(d);
-  }
-
-  function updatePaymentMethod(method: 'Online' | 'Cash') {
-    const d: Draft = { ...draft, paymentMethod: method };
-    setDraft(d); saveDraft(d);
   }
 
   async function submitOrder() {
     try {
       setLoading(true); setErr('');
 
-      // extras: максимум 2 — используем салат и суп
       const extras: string[] = [];
       if (draft.saladId) extras.push(draft.saladId);
       if (draft.soupId)  extras.push(draft.soupId);
 
-      // общее тело
       const included = {
         mainId: draft.mainId || undefined,
         sideId: draft.sideId || undefined,
         extras: extras.slice(0, 2),
       };
 
-      const isStarshiy = orgMeta?.vidDogovora === 'Starshiy';
-      const role = employeeMeta?.role || 'Employee';
-
-      let employeePayableAmount: number | undefined;
-      if (isStarshiy && role === 'Komanda') {
-        employeePayableAmount = draft.tariffCode === 'Full' ? (orgMeta?.priceFull || 0) : (orgMeta?.priceLight || 0);
-      }
-
-      // если в URL есть orderId — делаем UPDATE
       if (qOrderId) {
         const bodyUpd: Record<string, unknown> = {
           employeeID, org, token,
           orderId: qOrderId,
           included,
         };
-
-        if (isStarshiy) {
-          bodyUpd.tariffCode = draft.tariffCode;
-          bodyUpd.programType = 'Starshiy';
-          if (employeePayableAmount !== undefined) {
-            bodyUpd.employeePayableAmount = employeePayableAmount;
-          }
-        }
-
-        // если HR редактирует за сотрудника — прокидываем цель
         if (qFor) bodyUpd.forEmployeeID = qFor;
+        if (needsStarshiy) {
+          bodyUpd.programType = 'Starshiy';
+          bodyUpd.tariffCode = draft.tariffCode || 'Full';
+          bodyUpd.paymentMethod = draft.paymentMethod || 'Cash';
+        }
 
         const r = await fetchJSON<{ ok: boolean; error?: string }>(
           '/api/order_update',
@@ -289,24 +239,19 @@ export default function QuizClient() {
 
         if (!r?.ok) throw new Error(r?.error || 'Не удалось обновить заказ');
       } else {
-        // иначе — CREATE
         const bodyCreate: Record<string, unknown> = {
           employeeID, org, token, date,
           included,
           clientToken: crypto.randomUUID(),
         };
-
-        if (isStarshiy) {
-          bodyCreate.tariffCode = draft.tariffCode;
+        if (qFor) bodyCreate.forEmployeeID = qFor;
+        if (needsStarshiy) {
           bodyCreate.programType = 'Starshiy';
-          if (employeePayableAmount !== undefined) {
-            bodyCreate.employeePayableAmount = employeePayableAmount;
-          }
+          bodyCreate.tariffCode = draft.tariffCode || 'Full';
+          bodyCreate.paymentMethod = draft.paymentMethod || 'Cash';
         }
 
-        if (qFor) bodyCreate.forEmployeeID = qFor;
-
-        const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(
+        const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string; paymentLink?: string }>(
           '/api/order',
           {
             method: 'POST',
@@ -317,36 +262,15 @@ export default function QuizClient() {
 
         if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
 
-        const finalOrderId = r.orderId || qOrderId;
-        const needsPayment = isStarshiy && role === 'Komanda' && employeePayableAmount && employeePayableAmount > 0;
-
-        if (needsPayment && draft.paymentMethod === 'Online') {
-          const payRes = await fetchJSON<{
-            ok: boolean;
-            paymentLink?: string;
-            error?: string;
-          }>('/api/payment_create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              employeeID, org, token,
-              orderIds: [finalOrderId],
-              amount: employeePayableAmount,
-              paymentMethod: 'Online',
-            }),
-          });
-
-          if (payRes.ok && payRes.paymentLink) {
-            window.location.href = payRes.paymentLink;
-            return;
-          }
+        // Если есть ссылка на оплату — редирект
+        if (r?.paymentLink && draft.paymentMethod === 'Online') {
+          window.location.href = r.paymentLink;
+          return;
         }
       }
 
-      // очистить черновик этой даты
       saveDraft({ date } as Draft);
 
-      // редирект обратно в консоль, если пришли из неё
       const backTo = sp.get('back') || '';
       if (backTo) {
         const u = new URL(backTo, window.location.origin);
@@ -356,7 +280,6 @@ export default function QuizClient() {
         return router.push(u.toString());
       }
 
-      // иначе — на страницу выбора дат
       const u = new URL('/order', window.location.origin);
       u.searchParams.set('employeeID', employeeID);
       u.searchParams.set('org', org);
@@ -370,13 +293,6 @@ export default function QuizClient() {
   }
 
   const niceDate = formatRuDate(date);
-  const isStarshiy = orgMeta?.vidDogovora === 'Starshiy';
-  const role = employeeMeta?.role || 'Employee';
-
-  const employeePayableAmount = useMemo(() => {
-    if (!isStarshiy || role !== 'Komanda') return undefined;
-    return draft.tariffCode === 'Full' ? (orgMeta?.priceFull || 0) : (orgMeta?.priceLight || 0);
-  }, [isStarshiy, role, draft.tariffCode, orgMeta]);
 
   return (
     <main>
@@ -395,7 +311,9 @@ export default function QuizClient() {
           </div>
         )}
 
-        <div className="flex items-center gap-2 text-xs text-white/60">
+        <div className="flex items-center gap-2 text-xs text-white/60 overflow-x-auto">
+          {needsStarshiy && <span className={cxStep(step,'0')}>0. Тариф</span>}
+          {needsStarshiy && <span>→</span>}
           <span className={cxStep(step,'1')}>1. Меню</span>
           <span>→</span>
           <span className={cxStep(step,'2')}>2. Салат</span>
@@ -405,96 +323,25 @@ export default function QuizClient() {
           <span className={cxStep(step,'4')}>4. Основное</span>
           <span>→</span>
           <span className={cxStep(step,'5')}>5. Гарнир</span>
+          {needsStarshiy && <span>→</span>}
+          {needsStarshiy && <span className={cxStep(step,'6.5')}>6. Оплата</span>}
           <span>→</span>
-          <span className={cxStep(step,'6')}>6. Подтверждение</span>
+          <span className={cxStep(step,'6')}>7. Подтверждение</span>
         </div>
       </Panel>
 
-      {/* Информация о сотруднике */}
-      {employeeMeta && (
-        <Panel title="Информация о сотруднике">
-          <div className="space-y-1 text-sm text-white/80">
-            <p><strong>Сотрудник:</strong> {employeeMeta.fullName}</p>
-            <p><strong>Роль:</strong> {role}</p>
-          </div>
-        </Panel>
-      )}
-
-      {/* Выбор тарифа для программы «Старший» */}
-      {isStarshiy && role === 'Komanda' && orgMeta && step === '6' && (
-        <Panel title="Выбор тарифа">
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <button
-                onClick={() => updateTariff('Full')}
-                className={`p-4 rounded-xl border-2 transition-all ${
-                  draft.tariffCode === 'Full'
-                    ? 'border-blue-500 bg-blue-500/10'
-                    : 'border-white/10 bg-white/5 hover:border-white/20'
-                }`}
-              >
-                <div className="font-bold text-lg">Полный обед</div>
-                <div className="text-2xl font-bold text-blue-400 mt-1">{orgMeta.priceFull} ₽</div>
-                <div className="text-xs text-white/60 mt-2">Основное блюдо + гарнир + салат + напиток</div>
-              </button>
-
-              <button
-                onClick={() => updateTariff('Light')}
-                className={`p-4 rounded-xl border-2 transition-all ${
-                  draft.tariffCode === 'Light'
-                    ? 'border-green-500 bg-green-500/10'
-                    : 'border-white/10 bg-white/5 hover:border-white/20'
-                }`}
-              >
-                <div className="font-bold text-lg">Лёгкий обед</div>
-                <div className="text-2xl font-bold text-green-400 mt-1">{orgMeta.priceLight} ₽</div>
-                <div className="text-xs text-white/60 mt-2">Салат + напиток</div>
-              </button>
-            </div>
-
-            {employeePayableAmount !== undefined && (
-              <div className="text-center p-3 bg-white/5 rounded-xl border border-white/10">
-                <span className="text-white/60">Сумма к оплате:</span>{' '}
-                <span className="font-bold text-xl text-white">{employeePayableAmount} ₽</span>
-              </div>
-            )}
-          </div>
-        </Panel>
-      )}
-
-      {/* Выбор способа оплаты */}
-      {isStarshiy && role === 'Komanda' && employeePayableAmount && employeePayableAmount > 0 && step === '6' && (
-        <Panel title="Способ оплаты">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <button
-              onClick={() => updatePaymentMethod('Online')}
-              className={`p-4 rounded-xl border-2 transition-all ${
-                draft.paymentMethod === 'Online'
-                  ? 'border-purple-500 bg-purple-500/10'
-                  : 'border-white/10 bg-white/5 hover:border-white/20'
-              }`}
-            >
-              <div className="font-bold">Онлайн-оплата</div>
-              <div className="text-xs text-white/60 mt-1">Банковская карта</div>
-            </button>
-
-            <button
-              onClick={() => updatePaymentMethod('Cash')}
-              className={`p-4 rounded-xl border-2 transition-all ${
-                draft.paymentMethod === 'Cash'
-                  ? 'border-yellow-500 bg-yellow-500/10'
-                  : 'border-white/10 bg-white/5 hover:border-white/20'
-              }`}
-            >
-              <div className="font-bold">Наличные</div>
-              <div className="text-xs text-white/60 mt-1">Оплата при получении</div>
-            </button>
-          </div>
-        </Panel>
-      )}
-
       {loading && <Panel title="Загрузка"><div className="text-white/70">Загрузка…</div></Panel>}
       {err && <Panel title="Ошибка"><div className="text-red-400 text-sm">{err}</div></Panel>}
+
+      {/* Шаг 0 — Выбор тарифа (только для Старший) */}
+      {!loading && !err && step === '0' && needsStarshiy && (
+        <TariffStep
+          orgInfo={orgInfo}
+          draft={draft}
+          onPick={pickTariff}
+          onBack={() => history.back()}
+        />
+      )}
 
       {/* Шаг 1 — Витрина */}
       {!loading && !err && step === '1' && (
@@ -502,7 +349,7 @@ export default function QuizClient() {
           <Showcase byCat={byCat} />
           <div className="flex gap-3">
             <Button onClick={()=>go('2')}>Далее</Button>
-            <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
+            <Button variant="ghost" onClick={()=> needsStarshiy ? go('0') : history.back()}>Назад</Button>
           </div>
         </>
       )}
@@ -515,10 +362,12 @@ export default function QuizClient() {
           onSwap={()=>go('2a')}
           draft={draft}
           onBack={()=>go('1')}
+          canSkip={draft.tariffCode === 'Light'}
+          onSkip={() => go('4')}
         />
       )}
 
-      {/* Шаг 2a — Замена салата на … */}
+      {/* Шаг 2a — Замена салата */}
       {!loading && !err && step === '2a' && (
         <SwapStep
           title="Хочу заменить салат на …"
@@ -541,7 +390,7 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 3s — Замена супа на салат (без «заменить салат на …») */}
+      {/* Шаг 3s — Замена супа на салат */}
       {!loading && !err && step === '3s' && (
         <SaladStep
           byCat={byCat}
@@ -562,7 +411,7 @@ export default function QuizClient() {
         />
       )}
 
-      {/* Шаг 4 — Основное блюдо */}
+      {/* Шаг 4 — Основное */}
       {!loading && !err && step === '4' && (
         <ListStep
           title="Выберите основное блюдо"
@@ -570,7 +419,7 @@ export default function QuizClient() {
           cats={MAIN_CATS}
           onPick={pickMain}
           emptyText="На сегодня нет основных блюд."
-          extraFooter={<Button variant="ghost" onClick={()=>go('3')}>Назад</Button>}
+          extraFooter={<Button variant="ghost" onClick={()=>go(draft.tariffCode === 'Light' ? '2' : '3')}>Назад</Button>}
         />
       )}
 
@@ -591,15 +440,23 @@ export default function QuizClient() {
         />
       )}
 
+      {/* Шаг 6.5 — Выбор способа оплаты (только для Старший) */}
+      {!loading && !err && step === '6.5' && needsStarshiy && (
+        <PaymentStep
+          draft={draft}
+          onPick={pickPayment}
+          onBack={()=>go(draft.mainGarnirnoe ? '4' : '5')}
+        />
+      )}
+
       {/* Шаг 6 — Подтверждение */}
       {!loading && !err && step === '6' && (
-        <ConfirmStep 
-          draft={draft} 
-          onSubmit={submitOrder} 
-          onBack={()=>go(draft.mainGarnirnoe ? '4' : '5')}
-          isStarshiy={isStarshiy}
-          role={role}
-          employeePayableAmount={employeePayableAmount}
+        <ConfirmStep
+          draft={draft}
+          orgInfo={orgInfo}
+          needsStarshiy={needsStarshiy}
+          onSubmit={submitOrder}
+          onBack={()=>go(needsStarshiy ? '6.5' : (draft.mainGarnirnoe ? '4' : '5'))}
         />
       )}
     </main>
@@ -608,9 +465,62 @@ export default function QuizClient() {
 
 function cxStep(current:string, me:string) {
   const active = current === me;
-  return `inline-flex items-center px-2.5 py-1 rounded-xl ${
+  return `inline-flex items-center px-2.5 py-1 rounded-xl whitespace-nowrap ${
     active ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white/70'
   }`;
+}
+
+/* Шаг 0. Выбор тарифа */
+function TariffStep({ orgInfo, draft, onPick, onBack }: {
+  orgInfo: OrgInfo | null;
+  draft: Draft;
+  onPick: (tariff: 'Full' | 'Light') => void;
+  onBack: () => void;
+}) {
+  return (
+    <Panel title="Выберите тариф">
+      {draft.tariffCode && (
+        <div className="mb-3 text-sm">
+          <span className="text-white/60">Сейчас выбрано:</span>{' '}
+          <span className="font-semibold">{draft.tariffCode === 'Full' ? 'Полный обед' : 'Лёгкий обед'}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div
+          onClick={() => onPick('Full')}
+          className="rounded-xl bg-white/5 border border-white/10 p-4 cursor-pointer hover:bg-white/10 transition-colors"
+        >
+          <div className="text-lg font-bold text-yellow-400 mb-2">Полный обед</div>
+          <div className="text-2xl font-bold text-white mb-2">
+            {orgInfo?.org?.priceFull ? `${orgInfo.org.priceFull} ₽` : '—'}
+          </div>
+          <div className="text-sm text-white/70 mb-3">
+            Салат + Суп + Основное + Гарнир
+          </div>
+          <Button className="w-full">Выбрать</Button>
+        </div>
+
+        <div
+          onClick={() => onPick('Light')}
+          className="rounded-xl bg-white/5 border border-white/10 p-4 cursor-pointer hover:bg-white/10 transition-colors"
+        >
+          <div className="text-lg font-bold text-yellow-400 mb-2">Лёгкий обед</div>
+          <div className="text-2xl font-bold text-white mb-2">
+            {orgInfo?.org?.priceLight ? `${orgInfo.org.priceLight} ₽` : '—'}
+          </div>
+          <div className="text-sm text-white/70 mb-3">
+            Салат + Основное + Гарнир
+          </div>
+          <Button className="w-full">Выбрать</Button>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <Button variant="ghost" onClick={onBack}>Назад</Button>
+      </div>
+    </Panel>
+  );
 }
 
 /* Шаг 1. Витрина меню */
@@ -645,12 +555,14 @@ function Showcase({ byCat }:{ byCat: Record<string, MenuItem[]> }) {
 }
 
 /* Шаг 2. Салат */
-function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
+function SaladStep({ byCat, onPick, onSwap, draft, onBack, canSkip, onSkip }:{
   byCat: Record<string, MenuItem[]>;
   onPick: (it: MenuItem)=>void;
   onSwap?: ()=>void;
   draft: { saladId?: string; saladName?: string; saladIsSwap?: boolean };
   onBack: ()=>void;
+  canSkip?: boolean;
+  onSkip?: ()=>void;
 }) {
   const salads = SALAD_CATS.flatMap(c => byCat[c] || []);
   return (
@@ -682,8 +594,12 @@ function SaladStep({ byCat, onPick, onSwap, draft, onBack }:{
           <Button onClick={onSwap}>Хочу заменить салат на …</Button>
         </div>
       )}
-      <div className="mt-4">
+      
+      <div className="mt-4 flex gap-3">
         <Button variant="ghost" onClick={onBack}>Назад</Button>
+        {canSkip && onSkip && (
+          <Button variant="ghost" onClick={onSkip}>Пропустить (лёгкий обед)</Button>
+        )}
       </div>
     </Panel>
   );
@@ -793,47 +709,83 @@ function ListStep({ title, byCat, cats, onPick, emptyText, extraFooter }:{
   );
 }
 
-/* Подтверждение */
-function ConfirmStep({ draft, onSubmit, onBack, isStarshiy, role, employeePayableAmount }:{
+/* Шаг 6.5. Выбор способа оплаты */
+function PaymentStep({ draft, onPick, onBack }: {
   draft: Draft;
+  onPick: (method: 'Cash' | 'Online') => void;
+  onBack: () => void;
+}) {
+  return (
+    <Panel title="Выберите способ оплаты">
+      {draft.paymentMethod && (
+        <div className="mb-3 text-sm">
+          <span className="text-white/60">Сейчас выбрано:</span>{' '}
+          <span className="font-semibold">{draft.paymentMethod === 'Cash' ? 'Наличными' : 'Онлайн'}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div
+          onClick={() => onPick('Cash')}
+          className="rounded-xl bg-white/5 border border-white/10 p-4 cursor-pointer hover:bg-white/10 transition-colors"
+        >
+          <div className="text-lg font-bold text-yellow-400 mb-2">💵 Наличными</div>
+          <div className="text-sm text-white/70 mb-3">
+            Оплата при получении заказа
+          </div>
+          <Button className="w-full">Выбрать</Button>
+        </div>
+
+        <div
+          onClick={() => onPick('Online')}
+          className="rounded-xl bg-white/5 border border-white/10 p-4 cursor-pointer hover:bg-white/10 transition-colors"
+        >
+          <div className="text-lg font-bold text-yellow-400 mb-2">💳 Онлайн</div>
+          <div className="text-sm text-white/70 mb-3">
+            Оплата картой через интернет
+          </div>
+          <Button className="w-full">Выбрать</Button>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <Button variant="ghost" onClick={onBack}>Назад</Button>
+      </div>
+    </Panel>
+  );
+}
+
+/* Подтверждение */
+function ConfirmStep({ draft, orgInfo, needsStarshiy, onSubmit, onBack }:{
+  draft: Draft;
+  orgInfo: OrgInfo | null;
+  needsStarshiy: boolean;
   onSubmit: ()=>void;
   onBack: ()=>void;
-  isStarshiy: boolean;
-  role: string;
-  employeePayableAmount?: number;
 }) {
+  const price = draft.tariffCode === 'Full' ? orgInfo?.org?.priceFull : orgInfo?.org?.priceLight;
+  
   return (
     <Panel title="Подтверждение заказа">
       <div className="space-y-2 text-sm">
+        {needsStarshiy && (
+          <>
+            <div className="pb-2 border-b border-white/10">
+              <span className="text-white/60">Тариф:</span>{' '}
+              <span className="font-semibold">{draft.tariffCode === 'Full' ? 'Полный обед' : 'Лёгкий обед'}</span>
+              {price && <span className="ml-2 text-yellow-400">{price} ₽</span>}
+            </div>
+            <div className="pb-2 border-b border-white/10">
+              <span className="text-white/60">Оплата:</span>{' '}
+              <span className="font-semibold">{draft.paymentMethod === 'Cash' ? 'Наличными' : 'Онлайн'}</span>
+            </div>
+          </>
+        )}
+        
         {draft.saladName && <div>Салат: <span className="font-semibold">{draft.saladName}{draft.saladIsSwap ? ' (замена)' : ''}</span></div>}
         {draft.soupName &&  <div>Суп: <span className="font-semibold">{draft.soupName}{draft.soupIsSwap ? ' (замена)' : ''}</span></div>}
         {draft.mainName &&  <div>Основное: <span className="font-semibold">{draft.mainName}</span></div>}
         <div>Гарнир: <span className="font-semibold">{draft.sideName ?? '—'}</span></div>
-
-        {isStarshiy && (
-          <>
-            <div className="mt-2 pt-2 border-t border-white/10">
-              <span className="text-white/60">Тариф:</span>{' '}
-              <span className="font-semibold">
-                {draft.tariffCode === 'Full' ? 'Полный обед' : 'Лёгкий обед'}
-              </span>
-            </div>
-            {employeePayableAmount !== undefined && (
-              <div>
-                <span className="text-white/60">Сумма к оплате:</span>{' '}
-                <span className="font-bold text-lg">{employeePayableAmount} ₽</span>
-              </div>
-            )}
-            {employeePayableAmount && employeePayableAmount > 0 && (
-              <div>
-                <span className="text-white/60">Способ оплаты:</span>{' '}
-                <span className="font-semibold">
-                  {draft.paymentMethod === 'Online' ? 'Онлайн-оплата' : 'Наличные'}
-                </span>
-              </div>
-            )}
-          </>
-        )}
       </div>
 
       <div className="mt-4 flex gap-3">
