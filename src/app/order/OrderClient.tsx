@@ -425,7 +425,12 @@ function DateModal({
     try {
       setWorking(true); setErr('');
       const amount = sum.employeePayableAmount || 0;
-      const res = await fetchJSON('/api/payment_create', {
+      
+      const res = await fetchJSON<{
+        ok: boolean;
+        paymentLink?: string;
+        error?: string;
+      }>('/api/payment_create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -435,6 +440,7 @@ function DateModal({
           paymentMethod: 'Online',
         }),
       });
+      
       if (res.ok && res.paymentLink) {
         window.location.href = res.paymentLink;
       } else {
