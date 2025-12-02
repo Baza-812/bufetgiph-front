@@ -5,12 +5,32 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import HintDates from '@/components/HintDates';
 
+interface OrderData {
+  date: string;
+  status: string;
+  mealBox?: string;
+  extra1?: string;
+  extra2?: string;
+  employeeName?: string;
+  tariffCode?: string;
+  paymentMethod?: string;
+  paid?: boolean;
+}
+
 interface DayData {
   date: string;
   label: string;
   isBusy: boolean;
-  order?: any;
+  order?: OrderData;
   needsPayment?: boolean;
+}
+
+interface OrgInfo {
+  name?: string;
+  vidDogovora?: string;
+  cutoffTime?: string;
+  footerText?: string;
+  employeeName?: string;
 }
 
 export default function OrderClient() {
@@ -19,7 +39,7 @@ export default function OrderClient() {
   const [days, setDays] = useState<DayData[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [orgInfo, setOrgInfo] = useState<any>(null);
+  const [orgInfo, setOrgInfo] = useState<OrgInfo | null>(null);
 
   const orgId = searchParams.get('org') || localStorage.getItem('orgId') || '';
   const employeeId = searchParams.get('employee') || localStorage.getItem('employeeId') || '';
@@ -53,7 +73,7 @@ export default function OrderClient() {
           .then(r2 => r2.json())
           .then(busyData => {
             const busySet = new Set(busyData.busyDates || []);
-            const ordersMap = new Map((busyData.orders || []).map((o: any) => [o.date, o]));
+            const ordersMap = new Map((busyData.orders || []).map((o: OrderData) => [o.date, o]));
             const mapped = datesArr.map((d: string) => {
               const order = ordersMap.get(d);
               const needsPayment = order && order.paymentMethod === 'Online' && !order.paid;
