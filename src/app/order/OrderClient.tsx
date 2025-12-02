@@ -1,532 +1,290 @@
-// src/app/order/OrderClient.tsx
 'use client';
-
-import { useEffect, useMemo, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState, useMemo } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
-import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import HintDates from '@/components/HintDates';
 
-type SingleResp = {
-  ok: boolean;
-  summary: null | {
-    fullName: string;
-    date: string;
-    mealBox: string;
-    extra1: string;
-    extra2: string;
-    orderId: string;
-    tariffCode?: string;
-    paymentMethod?: string;
-    paymentLink?: string;
-    status?: string;
-  };
-};
-
-type OrgInfo = {
-  ok: boolean;
-  org?: {
-    name: string;
-    vidDogovora?: string;
-    priceFull?: number | null;
-    priceLight?: number | null;
-    footerText?: string | null;
-    cutoffTime?: string | null;
-  };
-};
+interface DayData {
+  date: string;
+  label: string;
+  isBusy: boolean;
+  order?: any;
+  needsPayment?: boolean;
+}
 
 export default function OrderClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [days, setDays] = useState<DayData[]>([]);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [orgInfo, setOrgInfo] = useState<any>(null);
 
-  // креды
-  const [org, setOrg] = useState('');
-  const [employeeID, setEmployeeID] = useState('');
-  const [token, setToken] = useState('');
-  const [role, setRole] = useState('');
-  const [employeeName, setEmployeeName] = useState('');
+  const orgId = searchParams.get('org') || localStorage.getItem('orgId') || '';
+  const employeeId = searchParams.get('employee') || localStorage.getItem('employeeId') || '';
+  const role = searchParams.get('role') || localStorage.getItem('role') || '';
 
-  // данные организации
-  const [orgInfo, setOrgInfo] = useState<OrgInfo | null>(null);
-
-  // данные
-  const [dates, setDates] = useState<string[]>([]);
-  const [busy, setBusy] = useState<Record<string, SingleResp>>({});
-  const [busyReady, setBusyReady] = useState(false);
-
-  const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [error, setError] = useState('');
-
-  // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    const o = q.get('org') || localStorage.getItem('baza.org') || '';
-    const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
-    const t = q.get('token') || localStorage.getItem('baza.token') || '';
-    const r = q.get('role') || localStorage.getItem('baza.role') || '';
-    const n = q.get('name') || localStorage.getItem('baza.name') || '';
-    
-    setOrg(o); 
-    setEmployeeID(e); 
-    setToken(t);
-    setRole(r);
-    setEmployeeName(n);
-    
-    if (o && e && t) {
-      localStorage.setItem('baza.org', o);
-      localStorage.setItem('baza.employeeID', e);
-      localStorage.setItem('baza.token', t);
-    }
-    if (r) localStorage.setItem('baza.role', r);
-    if (n) localStorage.setItem('baza.name', n);
-  }, []);
+    if (orgId) localStorage.setItem('orgId', orgId);
+    if (employeeId) localStorage.setItem('employeeId', employeeId);
+    if (role) localStorage.setItem('role', role);
+  }, [orgId, employeeId, role]);
 
-  // 1.5) загружаем информацию об организации
+  // Fetch org info
   useEffect(() => {
-    (async () => {
-      if (!org) return;
-      try {
-        const r = await fetchJSON<OrgInfo>(`/api/org_info?org=${encodeURIComponent(org)}`);
-        setOrgInfo(r);
-      } catch (e) {
-        console.error('❌ Failed to load org info:', e);
-      }
-    })();
-  }, [org]);
-
-  // 2) опубликованные даты
-  useEffect(() => {
-    (async () => {
-      if (!org) return;
-      try {
-        setLoading(true); 
-        setError('');
-        const r = await fetchJSON<{ ok: boolean; dates: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
-        setDates(r.dates || []);
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [org]);
-
-  // Перезагрузка «занятости» с полными данными заказов
-  const reloadBusy = useCallback(async () => {
-    if (!employeeID || !org || !token || dates.length === 0) return;
-    setBusyReady(false);
-    try {
-      // Загружаем полные данные заказов для всех дат
-      const promises = dates.map(async (d) => {
-        try {
-          const u = new URL('/api/hr_orders', window.location.origin);
-          u.searchParams.set('mode', 'single');
-          u.searchParams.set('employeeID', employeeID);
-          u.searchParams.set('org', org);
-          u.searchParams.set('token', token);
-          u.searchParams.set('date', d);
-          const r = await fetchJSON<SingleResp>(u.toString());
-          return { date: d, data: r };
-        } catch {
-          return { date: d, data: { ok: true, summary: null } };
-        }
+    if (!orgId) return;
+    fetch(`/api/org_info?orgId=${orgId}&employeeId=${employeeId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) setOrgInfo(data.org);
       });
-      
-      const results = await Promise.all(promises);
-      const map: Record<string, SingleResp> = {};
-      results.forEach(({ date, data }) => {
-        map[date] = data;
-      });
-      setBusy(map);
-    } catch {
-      const map: Record<string, SingleResp> = {};
-      for (const d of dates) map[d] = { ok: false, summary: null };
-      setBusy(map);
-    } finally {
-      setBusyReady(true);
-    }
-  }, [dates, employeeID, org, token]);
+  }, [orgId, employeeId]);
 
-  // первичная загрузка busy
-  useEffect(() => { reloadBusy(); }, [reloadBusy]);
-
-  // обновлять при возвращении на вкладку (после квиза)
+  // Fetch dates
   useEffect(() => {
-    const onFocus = () => { reloadBusy(); };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [reloadBusy]);
+    if (!orgId || !employeeId) return;
+    fetch(`/api/dates?orgId=${orgId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.ok) return;
+        const datesArr = data.dates || [];
+        fetch(`/api/busy?orgId=${orgId}&employeeId=${employeeId}`)
+          .then(r2 => r2.json())
+          .then(busyData => {
+            const busySet = new Set(busyData.busyDates || []);
+            const ordersMap = new Map((busyData.orders || []).map((o: any) => [o.date, o]));
+            const mapped = datesArr.map((d: string) => {
+              const order = ordersMap.get(d);
+              const needsPayment = order && order.paymentMethod === 'Online' && !order.paid;
+              return {
+                date: d,
+                label: formatDateLabel(d),
+                isBusy: busySet.has(d),
+                order,
+                needsPayment
+              };
+            });
+            setDays(mapped);
+          });
+      });
+  }, [orgId, employeeId]);
 
-  // Проверка программы "Старший"
-  const isStarshiy = orgInfo?.org?.vidDogovora === 'Starshiy';
-  const isKomanda = role?.toLowerCase() === 'komanda';
-  const needsStarshiy = isStarshiy && isKomanda;
+  const isStarshiyActive = orgInfo?.vidDogovora === 'Starshiy' && role === 'komanda';
 
-  // Подсчёт неоплаченных заказов
+  const tariffs = useMemo(() => {
+    if (!isStarshiyActive) return [];
+    return [
+      { name: 'Полный обед', price: 390, desc: 'Салат + Суп + Основное + Гарнир' },
+      { name: 'Лёгкий обед', price: 320, desc: 'Салат + Основное + Гарнир' }
+    ];
+  }, [isStarshiyActive]);
+
   const unpaidOrders = useMemo(() => {
-    return Object.entries(busy)
-      .filter(([_, order]) => {
-        const s = order.summary;
-        return s && s.paymentMethod === 'card' && s.status !== 'paid';
-      })
-      .map(([date, order]) => ({ date, order: order.summary! }));
-  }, [busy]);
+    return days.filter(d => d.needsPayment);
+  }, [days]);
 
-  const totalUnpaid = useMemo(() => {
-    return unpaidOrders.reduce((sum, { order }) => {
-      const tariff = order.tariffCode;
-      const price = tariff === 'full' 
-        ? (orgInfo?.org?.priceFull || 0)
-        : tariff === 'light'
-        ? (orgInfo?.org?.priceLight || 0)
-        : 0;
-      return sum + price;
+  const totalToPay = useMemo(() => {
+    return unpaidOrders.reduce((sum, d) => {
+      const tariffCode = d.order?.tariffCode;
+      const tariff = tariffs.find(t => t.name === tariffCode);
+      return sum + (tariff?.price || 0);
     }, 0);
-  }, [unpaidOrders, orgInfo]);
+  }, [unpaidOrders, tariffs]);
 
-  // 4) клик по дате
-  async function handlePickDate(d: string) {
-    const isBusy = Boolean(busy[d]?.summary);
-    if (!isBusy) {
-      const q = new URL('/order/quiz', window.location.origin);
-      q.searchParams.set('date', d);
-      q.searchParams.set('step', '1');
-      q.searchParams.set('org', org);
-      q.searchParams.set('employeeID', employeeID);
-      q.searchParams.set('token', token);
-      router.push(q.toString());
-      return;
+  const handleDateClick = (day: DayData) => {
+    if (day.isBusy) {
+      setSelectedDate(day.date);
+      setModalOpen(true);
+    } else {
+      router.push(`/order/quiz?date=${day.date}&org=${orgId}&employee=${employeeId}&role=${role}`);
     }
-    setSelected(d);
-  }
+  };
 
-  // Определяем вариант кнопки для даты
-  function getDateVariant(d: string): 'primary' | 'ghost' | 'danger' {
-    const order = busy[d]?.summary;
-    if (!order) return 'primary'; // свободно
-    if (order.paymentMethod === 'card' && order.status !== 'paid') return 'danger'; // требуется оплата
-    return 'ghost'; // уже заказано
-  }
+  const handleCancel = () => {
+    if (!selectedDate) return;
+    fetch('/api/order_cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orgId, employeeId, date: selectedDate })
+    }).then(() => {
+      setModalOpen(false);
+      window.location.reload();
+    });
+  };
+
+  const handleEdit = () => {
+    if (!selectedDate) return;
+    router.push(`/order/quiz?date=${selectedDate}&org=${orgId}&employee=${employeeId}&role=${role}&edit=1`);
+  };
+
+  const handlePayOrder = () => {
+    if (!selectedDate) return;
+    const day = days.find(d => d.date === selectedDate);
+    if (!day || !day.order) return;
+    const tariff = tariffs.find(t => t.name === day.order.tariffCode);
+    const amount = tariff?.price || 0;
+    alert(`Переход на оплату ${amount} ₽ за заказ на ${day.label}`);
+    // Здесь интеграция с платёжной системой
+  };
+
+  const handlePayAll = () => {
+    alert(`Переход на оплату всех заказов: ${totalToPay} ₽`);
+    // Здесь интеграция с платёжной системой
+  };
+
+  const selectedDay = days.find(d => d.date === selectedDate);
+  const selectedOrder = selectedDay?.order;
+  const selectedTariff = tariffs.find(t => t.name === selectedOrder?.tariffCode);
 
   return (
-    <main>
-      <div className="mx-auto w-full max-w-5xl px-4 sm:px-6 lg:px-8">
-        {/* Блок "Итого к оплате" в правом верхнем углу */}
-        {needsStarshiy && unpaidOrders.length > 0 && (
-          <div className="fixed top-4 right-4 z-40 bg-red-500/90 backdrop-blur-sm border border-red-400 rounded-xl p-4 shadow-lg max-w-xs">
-            <div className="text-white font-bold text-lg mb-2">Итого к оплате</div>
-            <div className="text-white text-2xl font-bold mb-3">{totalUnpaid} ₽</div>
-            <div className="text-white/80 text-xs mb-3">
-              Неоплаченных заказов: {unpaidOrders.length}
+    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto', backgroundColor: '#000', color: '#fff', minHeight: '100vh' }}>
+      <h1 style={{ fontSize: '24px', marginBottom: '10px' }}>Добро пожаловать!</h1>
+      <p style={{ marginBottom: '30px' }}>Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.</p>
+
+      {/* Employee Info */}
+      <Panel style={{ marginBottom: '20px', padding: '15px' }}>
+        <h2 style={{ fontSize: '18px', marginBottom: '10px' }}>Информация о сотруднике</h2>
+        {orgInfo?.employeeName && (
+          <p style={{ marginBottom: '5px' }}>Сотрудник: <strong>{orgInfo.employeeName}</strong></p>
+        )}
+        <p style={{ marginBottom: '5px' }}>Организация: <strong>{orgInfo?.name || orgId}</strong></p>
+        {isStarshiyActive && (
+          <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#333', borderRadius: '8px', border: '2px solid #FFD700' }}>
+            ⭐ <strong>Программа "Старший" активна</strong>
+          </div>
+        )}
+      </Panel>
+
+      {/* Tariffs */}
+      {isStarshiyActive && tariffs.length > 0 && (
+        <Panel style={{ marginBottom: '20px', padding: '15px' }}>
+          <h2 style={{ fontSize: '18px', marginBottom: '15px' }}>Тарифы</h2>
+          <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+            {tariffs.map(t => (
+              <div key={t.name} style={{ flex: '1 1 45%', padding: '15px', backgroundColor: '#222', borderRadius: '8px', border: '1px solid #444' }}>
+                <h3 style={{ fontSize: '16px', marginBottom: '5px' }}>{t.name}</h3>
+                <p style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px' }}>{t.price} ₽</p>
+                <p style={{ fontSize: '12px', color: '#aaa' }}>{t.desc}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {/* Total to Pay */}
+      {isStarshiyActive && unpaidOrders.length > 0 && (
+        <Panel style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#1a1a1a', border: '2px solid #ff4444' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h2 style={{ fontSize: '18px', marginBottom: '5px' }}>Итого к оплате</h2>
+              <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#FFD700' }}>{totalToPay} ₽</p>
+              <p style={{ fontSize: '12px', color: '#aaa' }}>Неоплаченных заказов: {unpaidOrders.length}</p>
             </div>
-            <Button
-              variant="primary"
-              className="w-full"
-              onClick={() => {
-                // TODO: реализовать массовую оплату
-                alert('Функция массовой оплаты в разработке');
-              }}
-            >
+            <Button onClick={handlePayAll} style={{ backgroundColor: '#FFD700', color: '#000', fontWeight: 'bold', padding: '12px 24px' }}>
               Оплатить всё
             </Button>
           </div>
-        )}
-
-        <Panel title="Добро пожаловать!">
-          <p className="text-white/80">
-            Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
-          </p>
         </Panel>
+      )}
 
-        {/* Информация о сотруднике */}
-        {orgInfo?.org && (
-          <Panel title="Информация о сотруднике">
-            <div className="space-y-2 text-sm">
-              {employeeName && (
-                <div>
-                  Сотрудник: <span className="font-semibold">{employeeName}</span>
-                </div>
-              )}
-              <div>
-                Организация: <span className="font-semibold">{orgInfo.org.name}</span>
-              </div>
-              {needsStarshiy && (
-                <div className="mt-4 p-3 bg-yellow-400/10 border border-yellow-400/30 rounded-xl">
-                  <div className="text-yellow-400 font-bold">🌟 Программа "Старший" активна</div>
-                </div>
-              )}
-            </div>
-          </Panel>
-        )}
-
-        {/* Тарифы программы Старший */}
-        {needsStarshiy && orgInfo?.org && (
-          <Panel title="Тарифы">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-                <div className="text-lg font-bold text-yellow-400 mb-2">Полный обед</div>
-                <div className="text-2xl font-bold text-white mb-2">
-                  {orgInfo.org.priceFull != null ? `${orgInfo.org.priceFull} ₽` : '—'}
-                </div>
-                <div className="text-sm text-white/70">Салат + Суп + Основное + Гарнир</div>
-              </div>
-
-              <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-                <div className="text-lg font-bold text-yellow-400 mb-2">Лёгкий обед</div>
-                <div className="text-2xl font-bold text-white mb-2">
-                  {orgInfo.org.priceLight != null ? `${orgInfo.org.priceLight} ₽` : '—'}
-                </div>
-                <div className="text-sm text-white/70">Салат + Основное + Гарнир</div>
-              </div>
-            </div>
-          </Panel>
-        )}
-
-        {/* креды вручную — на случай, если пришли без query */}
-        {(!org || !employeeID || !token) && (
-          <Panel title="Данные доступа">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Field label="Org">
-                <Input value={org} onChange={e=>setOrg(e.target.value)} placeholder="org120" />
-              </Field>
-              <Field label="Employee ID">
-                <Input value={employeeID} onChange={e=>setEmployeeID(e.target.value)} placeholder="rec..." />
-              </Field>
-              <Field label="Token">
-                <Input value={token} onChange={e=>setToken(e.target.value)} placeholder="token" />
-              </Field>
-            </div>
-            <div className="text-xs text-white/50">Обычно эти поля подставляются автоматически из персональной ссылки.</div>
-          </Panel>
-        )}
-
-        <Panel title="Выберите дату">
-          {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
-          {error && <div className="text-red-400 text-sm">Ошибка: {error}</div>}
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {dates.map(d => {
-              const label = fmtDayLabel(d);
-              const variant = getDateVariant(d);
-              return (
-                <Button
-                  key={d}
-                  onClick={() => handlePickDate(d)}
-                  className="w-full"
-                  variant={variant}
-                  disabled={!busyReady}
-                >
-                  {label}
-                </Button>
-              );
-            })}
-          </div>
-
-          {/* Подсказки */}
-          <div className="mt-6 flex flex-wrap gap-4 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-yellow-400"></div>
-              <span className="text-white/70">— свободно</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-white/10 border border-white/20"></div>
-              <span className="text-white/70">— уже заказано</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-red-500"></div>
-              <span className="text-white/70">— требуется оплата</span>
-            </div>
-          </div>
-
-          <div className="mt-4 text-xs text-white/50">
-            Нажмите на дату, чтобы оформить заказ. Заказ на следующий день можно изменить/отменить до{' '}
-            {orgInfo?.org?.cutoffTime || '22:00'} текущего дня.
-          </div>
-        </Panel>
-
-        {/* Модалка со составом */}
-        {selected && (
-          <DateModal
-            iso={selected}
-            employeeID={employeeID}
-            org={org}
-            token={token}
-            info={busy[selected]}
-            onClose={() => setSelected(null)}
-            onChanged={reloadBusy}
-            needsStarshiy={needsStarshiy}
-            orgInfo={orgInfo}
-          />
-        )}
-
-        {/* Футер с реквизитами из Banks.FooterText */}
-        {needsStarshiy && orgInfo?.org?.footerText && (
-          <footer className="mt-8 p-4 bg-black/20 border border-white/10 rounded-xl">
-            <div className="text-xs text-white/60 whitespace-pre-line">
-              {orgInfo.org.footerText}
-            </div>
-          </footer>
-        )}
-      </div>
-    </main>
-  );
-}
-
-/* ——— Модалка: состав + действия ——— */
-function DateModal({
-  iso, employeeID, org, token, info, onClose, onChanged, needsStarshiy, orgInfo
-}: {
-  iso: string;
-  employeeID: string; 
-  org: string; 
-  token: string;
-  info?: SingleResp; 
-  onClose: ()=>void; 
-  onChanged: ()=>void;
-  needsStarshiy: boolean;
-  orgInfo: OrgInfo | null;
-}) {
-  const [working, setWorking] = useState(false);
-  const [err, setErr] = useState('');
-  const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let ignore = false;
-    (async () => {
-      const needFetch = !info?.summary || info.summary.orderId === '__has__';
-      if (!needFetch) { setSum(info!.summary); return; }
-      try {
-        setLoading(true); setErr('');
-        const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode','single');
-        u.searchParams.set('employeeID', employeeID);
-        u.searchParams.set('org', org);
-        u.searchParams.set('token', token);
-        u.searchParams.set('date', iso);
-        const r = await fetchJSON<SingleResp>(u.toString());
-        if (!ignore) setSum(r?.summary || null);
-      } catch (e) {
-        if (!ignore) setErr(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!ignore) setLoading(false);
-      }
-    })();
-    return () => { ignore = true; };
-  }, [iso, employeeID, org, token]);
-
-  async function cancelOrder() {
-    if (!sum?.orderId) return;
-    try {
-      setWorking(true); setErr('');
-      await fetchJSON('/api/order_cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeID, org, token, orderId: sum.orderId, reason: 'user_cancel' })
-      });
-      onClose();
-      onChanged();
-    } catch(e: unknown) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally { setWorking(false); }
-  }
-
-  // Определяем выбранный тариф и цену
-  const selectedTariff = sum?.tariffCode;
-  const selectedPrice = selectedTariff === 'full'
-    ? orgInfo?.org?.priceFull
-    : selectedTariff === 'light'
-    ? orgInfo?.org?.priceLight
-    : null;
-
-  const needsPayment = sum?.paymentMethod === 'card' && sum?.status !== 'paid';
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
-      <div className="w-full sm:max-w-lg bg-[#1a1a1a] border border-white/10 rounded-2xl p-4">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-lg font-bold">{fmtDayLabel(iso)}</div>
-          <button onClick={onClose} className="text-white/60 hover:text-white text-sm">Закрыть</button>
-        </div>
-
-        <div className="space-y-2 text-sm">
-          {loading && <div className="text-white/60">Загрузка данных заказа…</div>}
-
-          {!loading && sum?.orderId && (
-            <>
-              <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
-              <div className="rounded-xl bg-white/5 border border-white/10 p-3">
-                <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
-                <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
-                <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
-                <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
-              </div>
-
-              {/* Показываем ВЫБРАННЫЙ тариф в модалке для программы "Старший" */}
-              {needsStarshiy && selectedTariff && selectedPrice != null && (
-                <div className="mt-3 p-3 bg-yellow-400/10 border border-yellow-400/30 rounded-xl">
-                  <div className="text-yellow-400 font-bold mb-2">🌟 Программа "Старший"</div>
-                  <div className="text-sm">
-                    <div className="text-white/60">Выбранный тариф:</div>
-                    <div className="font-bold text-lg">
-                      {selectedTariff === 'full' ? 'Полный обед' : 'Лёгкий обед'} — {selectedPrice} ₽
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {!loading && !sum?.orderId && (
-            <div className="text-white/70">
-              Не удалось получить состав заказа. Вы можете перейти к изменению.
-            </div>
-          )}
-
-          {err && <div className="text-red-400">{err}</div>}
-
-          <div className="flex gap-3 pt-2 flex-wrap">
-            <Button onClick={onClose}>ОК</Button>
-
+      {/* Date Selection */}
+      <Panel style={{ marginBottom: '20px', padding: '15px' }}>
+        <h2 style={{ fontSize: '18px', marginBottom: '15px' }}>Выберите дату</h2>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          {days.map(day => (
             <Button
-              variant="ghost"
-              onClick={() => {
-                const u = new URL('/order/quiz', window.location.origin);
-                u.searchParams.set('date', iso);
-                u.searchParams.set('step', '1');
-                u.searchParams.set('org', org);
-                u.searchParams.set('employeeID', employeeID);
-                u.searchParams.set('token', token);
-                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId);
-                window.location.href = u.toString();
+              key={day.date}
+              onClick={() => handleDateClick(day)}
+              style={{
+                flex: '1 1 30%',
+                minWidth: '120px',
+                backgroundColor: day.isBusy ? '#FFD700' : '#333',
+                color: day.isBusy ? '#000' : '#fff',
+                position: 'relative',
+                padding: '12px'
               }}
             >
-              Изменить
+              {day.label}
+              {day.needsPayment && (
+                <span style={{ position: 'absolute', top: '5px', right: '5px', width: '10px', height: '10px', backgroundColor: 'red', borderRadius: '50%' }}></span>
+              )}
             </Button>
+          ))}
+        </div>
+        <div style={{ marginTop: '15px', fontSize: '12px', display: 'flex', gap: '15px' }}>
+          <span>🟨 — свободно</span>
+          <span>⬜ — уже заказано</span>
+          <span style={{ color: 'red' }}>🔴 — требуется оплата</span>
+        </div>
+        <HintDates cutoffTime={orgInfo?.cutoffTime || '18:00'} />
+      </Panel>
 
-            <Button
-              variant="danger"
-              onClick={cancelOrder}
-              disabled={working || !sum?.orderId}
-            >
-              {working ? 'Отмена…' : 'Отменить'}
-            </Button>
+      {/* Footer */}
+      {orgInfo?.footerText && (
+        <div style={{ marginTop: '30px', padding: '15px', backgroundColor: '#111', borderRadius: '8px', fontSize: '12px', color: '#aaa', whiteSpace: 'pre-wrap' }}>
+          {orgInfo.footerText}
+        </div>
+      )}
 
-            {/* Кнопка "Оплатить" если требуется оплата */}
-            {needsPayment && sum?.paymentLink && (
-              <Button
-                variant="primary"
-                onClick={() => {
-                  window.open(sum.paymentLink, '_blank');
-                }}
-              >
-                Оплатить
-              </Button>
+      {/* Modal */}
+      {modalOpen && selectedDay && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: '#222', padding: '30px', borderRadius: '12px', maxWidth: '500px', width: '90%', color: '#fff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '20px' }}>{selectedDay.label}</h2>
+              <button onClick={() => setModalOpen(false)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: '24px', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {selectedOrder ? (
+              <>
+                <p style={{ marginBottom: '15px', fontSize: '16px' }}>
+                  {selectedOrder.status === 'Cancelled' ? 'Заказ отменён.' : 'Заказ уже оформлен на эту дату.'}
+                </p>
+
+                {selectedOrder.status !== 'Cancelled' && (
+                  <>
+                    {selectedOrder.employeeName && (
+                      <p style={{ marginBottom: '8px' }}>Сотрудник: <strong>{selectedOrder.employeeName}</strong></p>
+                    )}
+                    <p style={{ marginBottom: '8px' }}>Meal Box: <strong>{selectedOrder.mealBox || 'Не указано'}</strong></p>
+                    {selectedOrder.extra1 && <p style={{ marginBottom: '8px' }}>Экстра 1: <strong>{selectedOrder.extra1}</strong></p>}
+                    {selectedOrder.extra2 && <p style={{ marginBottom: '8px' }}>Экстра 2: <strong>{selectedOrder.extra2}</strong></p>}
+
+                    {isStarshiyActive && selectedTariff && (
+                      <div style={{ marginTop: '15px', padding: '12px', backgroundColor: '#333', borderRadius: '8px' }}>
+                        <p style={{ fontSize: '14px', marginBottom: '5px' }}>Тариф: <strong>{selectedTariff.name}</strong></p>
+                        <p style={{ fontSize: '18px', fontWeight: 'bold', color: '#FFD700' }}>{selectedTariff.price} ₽</p>
+                        <p style={{ fontSize: '12px', color: '#aaa' }}>{selectedTariff.desc}</p>
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                      <Button onClick={() => setModalOpen(false)} style={{ flex: '1', backgroundColor: '#FFD700', color: '#000' }}>OK</Button>
+                      <Button onClick={handleEdit} style={{ flex: '1', backgroundColor: '#555', color: '#fff' }}>Изменить</Button>
+                      <Button onClick={handleCancel} style={{ flex: '1', backgroundColor: '#d32f2f', color: '#fff' }}>Отменить</Button>
+                      {selectedDay.needsPayment && (
+                        <Button onClick={handlePayOrder} style={{ flex: '1 1 100%', backgroundColor: '#4CAF50', color: '#fff', fontWeight: 'bold' }}>
+                          Оплатить ({selectedTariff?.price || 0} ₽)
+                        </Button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <p>Нет данных о заказе.</p>
             )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
+}
+
+function formatDateLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const days = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  return `${days[date.getDay()]}, ${d.toString().padStart(2, '0')}.${m.toString().padStart(2, '0')}`;
 }
