@@ -73,10 +73,10 @@ export default function OrderClient() {
           .then(r2 => r2.json())
           .then(busyData => {
             const busySet = new Set(busyData.busyDates || []);
-            const ordersMap = new Map((busyData.orders || []).map((o: OrderData) => [o.date, o]));
+            const ordersMap = new Map<string, OrderData>((busyData.orders || []).map((o: OrderData) => [o.date, o]));
             const mapped = datesArr.map((d: string) => {
-              const order = ordersMap.get(d);
-              const needsPayment = order && order.paymentMethod === 'Online' && !order.paid;
+              const order: OrderData | undefined = ordersMap.get(d);
+              const needsPayment = order ? (order.paymentMethod === 'Online' && !order.paid) : false;
               return {
                 date: d,
                 label: formatDateLabel(d),
