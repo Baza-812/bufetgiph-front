@@ -141,7 +141,7 @@ export default function OrderClient() {
   const handlePayOrder = () => {
     if (!selectedDate) return;
     const day = days.find(d => d.date === selectedDate);
-    if (!day || !day.order) return;
+    if (!day?.order) return;
     const tariff = tariffs.find(t => t.name === day.order.tariffCode);
     const amount = tariff?.price || 0;
     alert(`Переход на оплату ${amount} ₽ за заказ на ${day.label}`);
