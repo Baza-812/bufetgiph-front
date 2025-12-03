@@ -142,7 +142,8 @@ export default function OrderClient() {
     if (!selectedDate) return;
     const day = days.find(d => d.date === selectedDate);
     if (!day?.order) return;
-    const tariff = tariffs.find(t => t.name === day.order.tariffCode);
+    const order = day.order;
+    const tariff = tariffs.find(t => t.name === order.tariffCode);
     const amount = tariff?.price || 0;
     alert(`Переход на оплату ${amount} ₽ за заказ на ${day.label}`);
     // Здесь интеграция с платёжной системой
