@@ -33,6 +33,7 @@ type OrgInfo = {
     priceLight?: number | null;
     footerText?: string | null;
     cutoffTime?: string | null;
+    employeeName?: string | null;
   };
 };
 
@@ -44,7 +45,6 @@ export default function OrderClient() {
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
   const [role, setRole] = useState('');
-  const [employeeName, setEmployeeName] = useState('');
 
   // данные организации
   const [orgInfo, setOrgInfo] = useState<OrgInfo | null>(null);
@@ -65,13 +65,11 @@ export default function OrderClient() {
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
     const r = q.get('role') || localStorage.getItem('baza.role') || '';
-    const n = q.get('name') || localStorage.getItem('baza.name') || '';
     
     setOrg(o); 
     setEmployeeID(e); 
     setToken(t);
     setRole(r);
-    setEmployeeName(n);
     
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
@@ -79,21 +77,21 @@ export default function OrderClient() {
       localStorage.setItem('baza.token', t);
     }
     if (r) localStorage.setItem('baza.role', r);
-    if (n) localStorage.setItem('baza.name', n);
   }, []);
 
-  // 1.5) загружаем информацию об организации
+  // 1.5) загружаем информацию об организации И сотруднике
   useEffect(() => {
     (async () => {
-      if (!org) return;
+      if (!org || !employeeID) return;
       try {
-        const r = await fetchJSON<OrgInfo>(`/api/org_info?org=${encodeURIComponent(org)}`);
+        const r = await fetchJSON<OrgInfo>(`/api/org_info?orgId=${encodeURIComponent(org)}&employeeId=${encodeURIComponent(employeeID)}`);
+        console.log('org_info response:', r);
         setOrgInfo(r);
       } catch (e) {
         console.error('❌ Failed to load org info:', e);
       }
     })();
-  }, [org]);
+  }, [org, employeeID]);
 
   // 2) опубликованные даты
   useEffect(() => {
@@ -138,6 +136,7 @@ export default function OrderClient() {
       results.forEach(({ date, data }) => {
         map[date] = data;
       });
+      console.log('busy map:', map);
       setBusy(map);
     } catch {
       const map: Record<string, SingleResp> = {};
@@ -165,12 +164,17 @@ export default function OrderClient() {
 
   // Подсчёт неоплаченных заказов
   const unpaidOrders = useMemo(() => {
-    return Object.entries(busy)
+    const result = Object.entries(busy)
       .filter(([_, order]) => {
         const s = order.summary;
-        return s && s.paymentMethod === 'card' && s.status !== 'paid';
+        // Проверяем: метод оплаты "Online" и НЕ оплачено
+        const needsPay = s && s.paymentMethod === 'Online' && (!s.status || s.status !== 'Paid');
+        console.log(`Date ${_}: paymentMethod=${s?.paymentMethod}, status=${s?.status}, needsPay=${needsPay}`);
+        return needsPay;
       })
       .map(([date, order]) => ({ date, order: order.summary! }));
+    console.log('unpaidOrders:', result);
+    return result;
   }, [busy]);
 
   const totalUnpaid = useMemo(() => {
@@ -205,7 +209,10 @@ export default function OrderClient() {
   function getDateVariant(d: string): 'primary' | 'ghost' | 'danger' {
     const order = busy[d]?.summary;
     if (!order) return 'primary'; // свободно
-    if (order.paymentMethod === 'card' && order.status !== 'paid') return 'danger'; // требуется оплата
+    // Проверяем: метод оплаты "Online" и НЕ оплачено
+    if (order.paymentMethod === 'Online' && (!order.status || order.status !== 'Paid')) {
+      return 'danger'; // требуется оплата
+    }
     return 'ghost'; // уже заказано
   }
 
@@ -243,9 +250,9 @@ export default function OrderClient() {
         {orgInfo?.org && (
           <Panel title="Информация о сотруднике">
             <div className="space-y-2 text-sm">
-              {employeeName && (
+              {orgInfo.org.employeeName && (
                 <div>
-                  Сотрудник: <span className="font-semibold">{employeeName}</span>
+                  Сотрудник: <span className="font-semibold">{orgInfo.org.employeeName}</span>
                 </div>
               )}
               <div>
@@ -414,7 +421,7 @@ function DateModal({
       }
     })();
     return () => { ignore = true; };
-  }, [iso, employeeID, org, token]);
+  }, [iso, employeeID, org, token, info]);
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
@@ -440,7 +447,7 @@ function DateModal({
     ? orgInfo?.org?.priceLight
     : null;
 
-  const needsPayment = sum?.paymentMethod === 'card' && sum?.status !== 'paid';
+  const needsPayment = sum?.paymentMethod === 'Online' && (!sum?.status || sum?.status !== 'Paid');
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
@@ -517,11 +524,12 @@ function DateModal({
             {needsPayment && sum?.paymentLink && (
               <Button
                 variant="primary"
+                className="w-full mt-2"
                 onClick={() => {
                   window.open(sum.paymentLink, '_blank');
                 }}
               >
-                Оплатить
+                Оплатить ({selectedPrice || 0} ₽)
               </Button>
             )}
           </div>
