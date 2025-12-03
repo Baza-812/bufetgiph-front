@@ -33,6 +33,7 @@ type OrgInfo = {
     priceLight?: number | null;
     footerText?: string | null;
     cutoffTime?: string | null;
+    employeeName?: string | null;
   };
 };
 
@@ -44,7 +45,6 @@ export default function OrderClient() {
   const [employeeID, setEmployeeID] = useState('');
   const [token, setToken] = useState('');
   const [role, setRole] = useState('');
-  const [employeeName, setEmployeeName] = useState('');
 
   // данные организации
   const [orgInfo, setOrgInfo] = useState<OrgInfo | null>(null);
@@ -65,13 +65,11 @@ export default function OrderClient() {
     const e = q.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
     const t = q.get('token') || localStorage.getItem('baza.token') || '';
     const r = q.get('role') || localStorage.getItem('baza.role') || '';
-    const n = q.get('name') || localStorage.getItem('baza.name') || '';
     
     setOrg(o); 
     setEmployeeID(e); 
     setToken(t);
     setRole(r);
-    setEmployeeName(n);
     
     if (o && e && t) {
       localStorage.setItem('baza.org', o);
@@ -79,21 +77,21 @@ export default function OrderClient() {
       localStorage.setItem('baza.token', t);
     }
     if (r) localStorage.setItem('baza.role', r);
-    if (n) localStorage.setItem('baza.name', n);
   }, []);
 
   // 1.5) загружаем информацию об организации
   useEffect(() => {
     (async () => {
-      if (!org) return;
+      if (!org || !employeeID) return;
       try {
-        const r = await fetchJSON<OrgInfo>(`/api/org_info?org=${encodeURIComponent(org)}`);
+        const r = await fetchJSON<OrgInfo>(`/api/org_info?org=${encodeURIComponent(org)}&employeeId=${encodeURIComponent(employeeID)}`);
+        console.log('org_info response:', r);
         setOrgInfo(r);
       } catch (e) {
         console.error('❌ Failed to load org info:', e);
       }
     })();
-  }, [org]);
+  }, [org, employeeID]);
 
   // 2) опубликованные даты
   useEffect(() => {
@@ -243,14 +241,14 @@ export default function OrderClient() {
         {orgInfo?.org && (
           <Panel title="Информация о сотруднике">
             <div className="space-y-2 text-sm">
-              {employeeName && (
-                <div>
-                  Сотрудник: <span className="font-semibold">{employeeName}</span>
-                </div>
-              )}
               <div>
                 Организация: <span className="font-semibold">{orgInfo.org.name}</span>
               </div>
+              {orgInfo.org.employeeName && (
+                <div>
+                  Сотрудник: <span className="font-semibold">{orgInfo.org.employeeName}</span>
+                </div>
+              )}
               {needsStarshiy && (
                 <div className="mt-4 p-3 bg-yellow-400/10 border border-yellow-400/30 rounded-xl">
                   <div className="text-yellow-400 font-bold">🌟 Программа "Старший" активна</div>
@@ -414,7 +412,7 @@ function DateModal({
       }
     })();
     return () => { ignore = true; };
-  }, [iso, employeeID, org, token]);
+  }, [iso, employeeID, org, token, info]);
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
