@@ -159,12 +159,12 @@ export default function OrderClient() {
   const selectedTariff = tariffs.find(t => t.name === selectedOrder?.tariffCode);
 
   return (
-    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto', backgroundColor: '#000', color: '#fff', minHeight: '100vh' }}>
+    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto', minHeight: '100vh' }}>
       <h1 style={{ fontSize: '24px', marginBottom: '10px' }}>Добро пожаловать!</h1>
       <p style={{ marginBottom: '30px' }}>Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.</p>
 
       {/* Employee Info */}
-      <Panel style={{ marginBottom: '20px', padding: '15px' }}>
+      <Panel>
         <h2 style={{ fontSize: '18px', marginBottom: '10px' }}>Информация о сотруднике</h2>
         {orgInfo?.employeeName && (
           <p style={{ marginBottom: '5px' }}>Сотрудник: <strong>{orgInfo.employeeName}</strong></p>
@@ -179,7 +179,7 @@ export default function OrderClient() {
 
       {/* Tariffs */}
       {isStarshiyActive && tariffs.length > 0 && (
-        <Panel style={{ marginBottom: '20px', padding: '15px' }}>
+        <Panel>
           <h2 style={{ fontSize: '18px', marginBottom: '15px' }}>Тарифы</h2>
           <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
             {tariffs.map(t => (
@@ -195,8 +195,8 @@ export default function OrderClient() {
 
       {/* Total to Pay */}
       {isStarshiyActive && unpaidOrders.length > 0 && (
-        <Panel style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#1a1a1a', border: '2px solid #ff4444' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ marginBottom: '24px', padding: '15px', backgroundColor: '#1a1a1a', border: '2px solid #ff4444', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
             <div>
               <h2 style={{ fontSize: '18px', marginBottom: '5px' }}>Итого к оплате</h2>
               <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#FFD700' }}>{totalToPay} ₽</p>
@@ -206,11 +206,11 @@ export default function OrderClient() {
               Оплатить всё
             </Button>
           </div>
-        </Panel>
+        </div>
       )}
 
       {/* Date Selection */}
-      <Panel style={{ marginBottom: '20px', padding: '15px' }}>
+      <Panel>
         <h2 style={{ fontSize: '18px', marginBottom: '15px' }}>Выберите дату</h2>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           {days.map(day => (
