@@ -252,21 +252,22 @@ export default function QuizClient() {
         }
 
         const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string; paymentLink?: string }>(
-          '/api/order',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bodyCreate),
-          }
-        );
+  '/api/order',
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bodyCreate),
+  }
+);
 
-        if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
+if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
 
-        // Если есть ссылка на оплату — редирект
-        if (r?.paymentLink && draft.paymentMethod === 'Online') {
-          window.location.href = r.paymentLink;
-          return;
-        }
+// Если есть ссылка на оплату — редирект на страницу YooKassa
+if (r?.paymentLink && draft.paymentMethod === 'Online') {
+  saveDraft({ date } as Draft); // Очищаем черновик перед редиректом
+  window.location.href = r.paymentLink;
+  return;
+}
       }
 
       saveDraft({ date } as Draft);
