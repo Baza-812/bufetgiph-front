@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON } from '@/lib/api';
 
-type OrgResp = { ok: boolean; orgName?: string; error?: string };
+type OrgResp = { ok: boolean; name?: string; orgName?: string; portionType?: string; error?: string };
 type RegisterResp = {
   ok: boolean;
   // backend возвращает ok=true как при создании новой записи,
@@ -42,7 +42,7 @@ export default function RegisterPage() {
           u.searchParams.set('org', o);
           const js = await fetchJSON<OrgResp>(u.toString());
           if (!js.ok) throw new Error(js.error || 'Организация не найдена');
-          setOrgName(js.orgName || '');
+          setOrgName(js.name || js.orgName || '');
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           setLastError(msg);
