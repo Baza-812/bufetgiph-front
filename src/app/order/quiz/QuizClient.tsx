@@ -1,4 +1,4 @@
-// src/app/order/quiz/QuizClient.tsx
+// src/app/order/quiz/QuizClient.tsx 
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -56,6 +56,8 @@ export default function QuizClient() {
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
+  const [portionType, setPortionType] = useState<string | null>(null); // null = еще не загружено
+  const [portionLoading, setPortionLoading] = useState(true);
 
   const [draft, setDraft] = useState<Draft>(() => {
     const saved = loadDraft(date) || {};
@@ -81,6 +83,34 @@ export default function QuizClient() {
     if (employeeID) localStorage.setItem('baza.employeeID', employeeID);
     if (token) localStorage.setItem('baza.token', token);
   }, [org, employeeID, token]);
+
+  // Грузим информацию об организации (portionType)
+  useEffect(() => {
+    (async () => {
+      if (!org) return;
+      setPortionLoading(true);
+      try {
+        const u = new URL('/api/org_info', window.location.origin);
+        u.searchParams.set('org', org);
+        console.log('[DEBUG] Loading org_info for org:', org);
+        const r = await fetchJSON<{ ok: boolean; portionType?: string }>(u.toString());
+        console.log('[DEBUG] org_info response:', r);
+        if (r.ok && r.portionType) {
+          setPortionType(r.portionType);
+          console.log('[DEBUG] portionType set to:', r.portionType);
+        } else {
+          console.warn('[DEBUG] portionType not found in response, using default: Standard');
+          setPortionType('Standard');
+        }
+      } catch (e: unknown) {
+        // Не критично, используем значение по умолчанию
+        console.error('[DEBUG] Failed to load org info:', e);
+        setPortionType('Standard');
+      } finally {
+        setPortionLoading(false);
+      }
+    })();
+  }, [org]);
 
   // Грузим меню
   useEffect(() => {
@@ -136,6 +166,39 @@ export default function QuizClient() {
     router.push(u.pathname + '?' + u.searchParams.toString());
   }
 
+  // Вспомогательная функция для определения, является ли порция Light (с useMemo для реактивности)
+  const isLightPortion = useMemo(() => {
+    const result = portionType === 'Light';
+    console.log('[DEBUG] isLightPortion recalculated:', result, 'from portionType:', portionType);
+    return result;
+  }, [portionType]);
+  
+  // DEBUG: лог для отслеживания изменений
+  useEffect(() => {
+    console.log('[DEBUG] portionType changed:', portionType, '| isLightPortion:', isLightPortion);
+  }, [portionType, isLightPortion]);
+  
+  // Показываем загрузку пока не узнаем тип порции
+  if (portionLoading || portionType === null) {
+    return (
+      <main>
+        <Panel title="Загрузка">
+          <div className="text-white/70">Загрузка информации об организации...</div>
+        </Panel>
+      </main>
+    );
+  }
+  
+  console.log('[DEBUG] Rendering quiz with portionType:', portionType, 'isLightPortion:', isLightPortion);
+  
+  // Автоматическая перенаправка для Light порции: если на шаге 2 (Салат) - перейти на шаг 3 (Суп)
+  useEffect(() => {
+    if (isLightPortion && (step === '2' || step === '2a')) {
+      console.log('[DEBUG] Light portion detected on salad step, redirecting to step 3');
+      go('3');
+    }
+  }, [isLightPortion, step]);
+
   // ===== Actions
   function pickSalad(it: MenuItem, isSwap=false) {
     const d: Draft = { ...draft, date, saladId: it.id, saladName: it.name, saladIsSwap: isSwap };
@@ -169,17 +232,29 @@ export default function QuizClient() {
   try {
     setLoading(true); setErr('');
 
-    // extras: максимум 2 — используем салат и суп
+    // extras: для Light — только 1 (суп), для Standard/Upsized — максимум 2 (салат и суп)
     const extras: string[] = [];
-    if (draft.saladId) extras.push(draft.saladId);
-    if (draft.soupId)  extras.push(draft.soupId);
+    if (isLightPortion) {
+      // Для Light порции отправляем только суп
+      if (draft.soupId) extras.push(draft.soupId);
+    } else {
+      // Для Standard/Upsized отправляем салат и суп
+      if (draft.saladId) extras.push(draft.saladId);
+      if (draft.soupId)  extras.push(draft.soupId);
+    }
 
     // общее тело
     const included = {
       mainId: draft.mainId || undefined,
       sideId: draft.sideId || undefined,
-      extras: extras.slice(0, 2),
+      extras: isLightPortion ? extras.slice(0, 1) : extras.slice(0, 2),
     };
+
+    console.log('[DEBUG] submitOrder - portionType:', portionType);
+    console.log('[DEBUG] submitOrder - isLightPortion:', isLightPortion);
+    console.log('[DEBUG] submitOrder - draft:', draft);
+    console.log('[DEBUG] submitOrder - extras:', extras);
+    console.log('[DEBUG] submitOrder - included:', included);
 
     // если в URL есть orderId — делаем UPDATE
     if (qOrderId) {
@@ -250,8 +325,27 @@ export default function QuizClient() {
   const niceDate = formatRuDate(date);
 
   return (
-    <main>
+    <main key={`quiz-${portionType}`}>
+      {/* ТЕСТОВАЯ ПЛАШКА - ПРОВЕРКА ЧТО ДЕПЛОЙ РАБОТАЕТ */}
+      <div className="mb-4 p-6 bg-red-600 border-4 border-red-400 rounded-xl shadow-2xl">
+        <div className="text-white text-2xl font-bold mb-2">
+          🚨 ТЕСТОВАЯ ПЛАШКА - ДЕПЛОЙ РАБОТАЕТ! 🚨
+        </div>
+        <div className="text-white text-lg space-y-1">
+          <div>📍 Организация: <strong>{org}</strong></div>
+          <div>📦 Тип порции: <strong>{portionType || 'загружается...'}</strong></div>
+          <div>✨ isLightPortion: <strong>{isLightPortion ? 'ДА ✅' : 'НЕТ ❌'}</strong></div>
+          <div>⏳ portionLoading: <strong>{portionLoading ? 'ДА' : 'НЕТ'}</strong></div>
+          <div>🎯 Текущий шаг: <strong>{step}</strong></div>
+        </div>
+      </div>
+      
       <Panel title={<span className="text-white">{niceDate}</span>}>
+        {/* DEBUG: показываем тип порции */}
+        <div className="mb-2 text-xs text-yellow-400 bg-yellow-400/10 px-3 py-1 rounded">
+          🔍 DEBUG: Portion Type = <strong>{portionType}</strong> | isLight = <strong>{isLightPortion ? 'YES' : 'NO'}</strong>
+        </div>
+
         {!org || !employeeID || !token ? (
           <div className="mb-4 text-sm text-white/70">
             Данные доступа не найдены в ссылке — заполните вручную:
@@ -268,16 +362,20 @@ export default function QuizClient() {
 
         <div className="flex items-center gap-2 text-xs text-white/60">
           <span className={cxStep(step,'1')}>1. Меню</span>
+          {!isLightPortion && (
+            <>
+              <span>→</span>
+              <span className={cxStep(step,'2')}>2. Салат</span>
+            </>
+          )}
           <span>→</span>
-          <span className={cxStep(step,'2')}>2. Салат</span>
+          <span className={cxStep(step,'3')}>{isLightPortion ? '2' : '3'}. Суп</span>
           <span>→</span>
-          <span className={cxStep(step,'3')}>3. Суп</span>
+          <span className={cxStep(step,'4')}>{isLightPortion ? '3' : '4'}. Основное</span>
           <span>→</span>
-          <span className={cxStep(step,'4')}>4. Основное</span>
+          <span className={cxStep(step,'5')}>{isLightPortion ? '4' : '5'}. Гарнир</span>
           <span>→</span>
-          <span className={cxStep(step,'5')}>5. Гарнир</span>
-          <span>→</span>
-          <span className={cxStep(step,'6')}>6. Подтверждение</span>
+          <span className={cxStep(step,'6')}>{isLightPortion ? '5' : '6'}. Подтверждение</span>
         </div>
       </Panel>
 
@@ -291,7 +389,15 @@ export default function QuizClient() {
           
           <Showcase byCat={byCat} />
           <div className="flex gap-3">
-            <Button onClick={()=>go('2')}>Далее</Button>
+            <Button 
+              onClick={()=>{
+                console.log('[DEBUG] Далее clicked, isLightPortion:', isLightPortion, 'going to step:', isLightPortion ? '3' : '2');
+                go(isLightPortion ? '3' : '2');
+              }}
+              disabled={portionLoading}
+            >
+              {portionLoading ? 'Загрузка...' : 'Далее'}
+            </Button>
             <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
           </div>
         </>
@@ -324,10 +430,11 @@ export default function QuizClient() {
         <SoupStep
           byCat={byCat}
           onPick={(it)=>pickSoup(it,false)}
-          onSwapSalad={()=>go('3s')}
+          onSwapSalad={isLightPortion ? undefined : ()=>go('3s')}
           onSwapOther={()=>go('3a')}
           draft={draft}
-          onBack={()=>go('2')}
+          onBack={()=>go(isLightPortion ? '1' : '2')}
+          isLightPortion={isLightPortion}
         />
       )}
 
@@ -505,13 +612,14 @@ function SwapStep({ title, byCat, cats, onPick, onBack }:{
 }
 
 /* Шаг 3. Суп */
-function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
+function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack, isLightPortion }:{
   byCat: Record<string, MenuItem[]>;
   onPick: (it: MenuItem)=>void;
-  onSwapSalad: ()=>void;
+  onSwapSalad?: ()=>void;
   onSwapOther: ()=>void;
   draft: { soupId?: string; soupName?: string; soupIsSwap?: boolean };
   onBack: ()=>void;
+  isLightPortion?: boolean;
 }) {
   const soups = SOUP_CATS.flatMap(c => byCat[c] || []);
   return (
@@ -539,7 +647,9 @@ function SoupStep({ byCat, onPick, onSwapSalad, onSwapOther, draft, onBack }:{
       </div>
 
       <div className="mt-4 flex flex-wrap gap-3">
-        <Button onClick={onSwapSalad}>Хочу заменить суп на салат</Button>
+        {!isLightPortion && onSwapSalad && (
+          <Button onClick={onSwapSalad}>Хочу заменить суп на салат</Button>
+        )}
         <Button onClick={onSwapOther}>Хочу заменить суп на …</Button>
         <Button variant="ghost" onClick={onBack}>Назад</Button>
       </div>
