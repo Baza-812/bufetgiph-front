@@ -137,7 +137,7 @@ export async function renderKitchenDailyXLSX(opts: {
 
   // Генерация
   const buf = await wb.xlsx.writeBuffer();
-  return new Uint8Array(buf as ArrayBufferLike);
+  return new Uint8Array(buf);
 }
 
 /**
@@ -213,5 +213,5 @@ export async function renderLabelsXLSX(opts: {
 
   // Генерация
   const buf = await wb.xlsx.writeBuffer();
-  return new Uint8Array(buf as ArrayBufferLike);
+  return new Uint8Array(buf);
 }
