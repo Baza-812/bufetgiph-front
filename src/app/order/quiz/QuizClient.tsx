@@ -90,13 +90,18 @@ export default function QuizClient() {
       try {
         const u = new URL('/api/org_info', window.location.origin);
         u.searchParams.set('org', org);
+        console.log('[DEBUG] Loading org_info for org:', org);
         const r = await fetchJSON<{ ok: boolean; portionType?: string }>(u.toString());
+        console.log('[DEBUG] org_info response:', r);
         if (r.ok && r.portionType) {
           setPortionType(r.portionType);
+          console.log('[DEBUG] portionType set to:', r.portionType);
+        } else {
+          console.warn('[DEBUG] portionType not found in response, using default: Standard');
         }
       } catch (e: unknown) {
         // Не критично, используем значение по умолчанию
-        console.error('Failed to load org info:', e);
+        console.error('[DEBUG] Failed to load org info:', e);
       }
     })();
   }, [org]);
@@ -157,6 +162,11 @@ export default function QuizClient() {
 
   // Вспомогательная функция для определения, является ли порция Light
   const isLightPortion = portionType === 'Light';
+  
+  // DEBUG: лог для отслеживания изменений
+  useEffect(() => {
+    console.log('[DEBUG] portionType changed:', portionType, '| isLightPortion:', isLightPortion);
+  }, [portionType, isLightPortion]);
 
   // ===== Actions
   function pickSalad(it: MenuItem, isSwap=false) {
@@ -208,6 +218,12 @@ export default function QuizClient() {
       sideId: draft.sideId || undefined,
       extras: isLightPortion ? extras.slice(0, 1) : extras.slice(0, 2),
     };
+
+    console.log('[DEBUG] submitOrder - portionType:', portionType);
+    console.log('[DEBUG] submitOrder - isLightPortion:', isLightPortion);
+    console.log('[DEBUG] submitOrder - draft:', draft);
+    console.log('[DEBUG] submitOrder - extras:', extras);
+    console.log('[DEBUG] submitOrder - included:', included);
 
     // если в URL есть orderId — делаем UPDATE
     if (qOrderId) {
@@ -280,6 +296,11 @@ export default function QuizClient() {
   return (
     <main>
       <Panel title={<span className="text-white">{niceDate}</span>}>
+        {/* DEBUG: показываем тип порции */}
+        <div className="mb-2 text-xs text-yellow-400 bg-yellow-400/10 px-3 py-1 rounded">
+          🔍 DEBUG: Portion Type = <strong>{portionType}</strong> | isLight = <strong>{isLightPortion ? 'YES' : 'NO'}</strong>
+        </div>
+
         {!org || !employeeID || !token ? (
           <div className="mb-4 text-sm text-white/70">
             Данные доступа не найдены в ссылке — заполните вручную:
