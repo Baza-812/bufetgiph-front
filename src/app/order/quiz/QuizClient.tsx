@@ -326,6 +326,20 @@ export default function QuizClient() {
 
   return (
     <main key={`quiz-${portionType}`}>
+      {/* ТЕСТОВАЯ ПЛАШКА - ПРОВЕРКА ЧТО ДЕПЛОЙ РАБОТАЕТ */}
+      <div className="mb-4 p-6 bg-red-600 border-4 border-red-400 rounded-xl shadow-2xl">
+        <div className="text-white text-2xl font-bold mb-2">
+          🚨 ТЕСТОВАЯ ПЛАШКА - ДЕПЛОЙ РАБОТАЕТ! 🚨
+        </div>
+        <div className="text-white text-lg space-y-1">
+          <div>📍 Организация: <strong>{org}</strong></div>
+          <div>📦 Тип порции: <strong>{portionType || 'загружается...'}</strong></div>
+          <div>✨ isLightPortion: <strong>{isLightPortion ? 'ДА ✅' : 'НЕТ ❌'}</strong></div>
+          <div>⏳ portionLoading: <strong>{portionLoading ? 'ДА' : 'НЕТ'}</strong></div>
+          <div>🎯 Текущий шаг: <strong>{step}</strong></div>
+        </div>
+      </div>
+      
       <Panel title={<span className="text-white">{niceDate}</span>}>
         {/* DEBUG: показываем тип порции */}
         <div className="mb-2 text-xs text-yellow-400 bg-yellow-400/10 px-3 py-1 rounded">
