@@ -24,7 +24,7 @@ export async function renderKitchenDailyXLSX(opts: {
   dateLabel: string;
   rows: Row[];
   counters: Counters;
-}): Promise<Uint8Array> {
+}): Promise<Buffer> {
   const { orgName, dateLabel, rows, counters } = opts;
 
   const wb = new ExcelJS.Workbook();
@@ -137,7 +137,7 @@ export async function renderKitchenDailyXLSX(opts: {
 
   // Генерация
   const buf = await wb.xlsx.writeBuffer();
-  return new Uint8Array(buf);
+  return Buffer.from(buf);
 }
 
 /**
@@ -148,7 +148,7 @@ export async function renderLabelsXLSX(opts: {
   orgName: string;
   dateLabel: string;
   rows: LabelRow[];
-}): Promise<Uint8Array> {
+}): Promise<Buffer> {
   const { orgName, dateLabel, rows } = opts;
 
   const wb = new ExcelJS.Workbook();
@@ -213,5 +213,5 @@ export async function renderLabelsXLSX(opts: {
 
   // Генерация
   const buf = await wb.xlsx.writeBuffer();
-  return new Uint8Array(buf);
+  return Buffer.from(buf);
 }
