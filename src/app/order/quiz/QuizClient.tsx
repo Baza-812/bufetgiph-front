@@ -190,14 +190,6 @@ export default function QuizClient() {
   }
   
   console.log('[DEBUG] Rendering quiz with portionType:', portionType, 'isLightPortion:', isLightPortion);
-  
-  // Автоматическая перенаправка для Light порции: если на шаге 2 (Салат) - перейти на шаг 3 (Суп)
-  useEffect(() => {
-    if (isLightPortion && (step === '2' || step === '2a')) {
-      console.log('[DEBUG] Light portion detected on salad step, redirecting to step 3');
-      go('3');
-    }
-  }, [isLightPortion, step]);
 
   // ===== Actions
   function pickSalad(it: MenuItem, isSwap=false) {
