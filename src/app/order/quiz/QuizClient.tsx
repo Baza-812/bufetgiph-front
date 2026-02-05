@@ -166,16 +166,20 @@ export default function QuizClient() {
     router.push(u.pathname + '?' + u.searchParams.toString());
   }
 
-  // Вспомогательная функция для определения, является ли порция Light
-  const isLightPortion = portionType === 'Light';
+  // Вспомогательная функция для определения, является ли порция Light (с useMemo для реактивности)
+  const isLightPortion = useMemo(() => {
+    const result = portionType === 'Light';
+    console.log('[DEBUG] isLightPortion recalculated:', result, 'from portionType:', portionType);
+    return result;
+  }, [portionType]);
   
   // DEBUG: лог для отслеживания изменений
   useEffect(() => {
     console.log('[DEBUG] portionType changed:', portionType, '| isLightPortion:', isLightPortion);
-  }, [portionType]);
+  }, [portionType, isLightPortion]);
   
   // Показываем загрузку пока не узнаем тип порции
-  if (portionLoading) {
+  if (portionLoading || portionType === null) {
     return (
       <main>
         <Panel title="Загрузка">
@@ -184,6 +188,8 @@ export default function QuizClient() {
       </main>
     );
   }
+  
+  console.log('[DEBUG] Rendering quiz with portionType:', portionType, 'isLightPortion:', isLightPortion);
 
   // ===== Actions
   function pickSalad(it: MenuItem, isSwap=false) {
