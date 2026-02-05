@@ -190,6 +190,14 @@ export default function QuizClient() {
   }
   
   console.log('[DEBUG] Rendering quiz with portionType:', portionType, 'isLightPortion:', isLightPortion);
+  
+  // Автоматическая перенаправка для Light порции: если на шаге 2 (Салат) - перейти на шаг 3 (Суп)
+  useEffect(() => {
+    if (isLightPortion && (step === '2' || step === '2a')) {
+      console.log('[DEBUG] Light portion detected on salad step, redirecting to step 3');
+      go('3');
+    }
+  }, [isLightPortion, step]);
 
   // ===== Actions
   function pickSalad(it: MenuItem, isSwap=false) {
@@ -367,7 +375,15 @@ export default function QuizClient() {
           
           <Showcase byCat={byCat} />
           <div className="flex gap-3">
-            <Button onClick={()=>go(isLightPortion ? '3' : '2')}>Далее</Button>
+            <Button 
+              onClick={()=>{
+                console.log('[DEBUG] Далее clicked, isLightPortion:', isLightPortion, 'going to step:', isLightPortion ? '3' : '2');
+                go(isLightPortion ? '3' : '2');
+              }}
+              disabled={portionLoading}
+            >
+              {portionLoading ? 'Загрузка...' : 'Далее'}
+            </Button>
             <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
           </div>
         </>
