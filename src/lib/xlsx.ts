@@ -2,6 +2,14 @@
 import ExcelJS from 'exceljs';
 
 type Row = { fullName: string; mealBox: string; extra1?: string; extra2?: string };
+
+// Для маркировки: каждое блюдо в отдельной строке
+type LabelRow = {
+  fullName: string;
+  orderDate: string;
+  dishName: string;
+  dishDescription: string;
+};
 type Counters = {
   salads: [string, number][],
   soups: [string, number][],
@@ -126,6 +134,82 @@ export async function renderKitchenDailyXLSX(opts: {
   wr.getColumn(2).width = 42;
   wr.getColumn(3).width = 40;
   wr.getColumn(4).width = 40;
+
+  // Генерация
+  const buf = await wb.xlsx.writeBuffer();
+  return new Uint8Array(buf as ArrayBufferLike);
+}
+
+/**
+ * Генерация XLSX файла для маркировки
+ * Каждое блюдо (Meal Box, Extra1, Extra2) в отдельной строке
+ */
+export async function renderLabelsXLSX(opts: {
+  orgName: string;
+  dateLabel: string;
+  rows: LabelRow[];
+}): Promise<Uint8Array> {
+  const { orgName, dateLabel, rows } = opts;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Baza Orders - Labels';
+  wb.created = new Date();
+
+  const ws = wb.addWorksheet('Маркировка', {
+    views: [{ state: 'frozen', ySplit: 1 }],
+    properties: { tabColor: { argb: 'FFFF6B35' } },
+    pageSetup: { fitToPage: true, fitToWidth: 1, orientation: 'landscape' },
+  });
+
+  // Колонки
+  ws.columns = [
+    { header: 'FullName', key: 'c1', width: 32 },
+    { header: 'Order Date', key: 'c2', width: 12 },
+    { header: 'Наименование блюда', key: 'c3', width: 50 },
+    { header: 'Состав блюда', key: 'c4', width: 60 },
+  ];
+
+  // Шапка таблицы
+  const hdr = ws.addRow(['FullName', 'Order Date', 'Наименование блюда', 'Состав блюда']);
+  hdr.font = { bold: true, size: 11 };
+  hdr.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F6' } };
+    cell.border = { 
+      bottom: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+      top: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+      left: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+      right: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+    };
+  });
+
+  // Данные
+  for (const r of rows) {
+    const row = ws.addRow([
+      (r.fullName ?? '').toString(),
+      (r.orderDate ?? '').toString(),
+      (r.dishName ?? '').toString(),
+      (r.dishDescription ?? '').toString(),
+    ]);
+    
+    // Границы для всех ячеек
+    row.eachCell((cell) => {
+      cell.border = { 
+        top: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+        left: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+        bottom: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+        right: { style: 'thin', color: { argb: 'FFCCCCCC' } },
+      };
+    });
+  }
+
+  // Автофильтр
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: 4 } };
+  
+  // Выравнивание
+  ws.getColumn(1).alignment = { wrapText: true, vertical: 'top' };
+  ws.getColumn(2).alignment = { horizontal: 'center', vertical: 'top' };
+  ws.getColumn(3).alignment = { wrapText: true, vertical: 'top' };
+  ws.getColumn(4).alignment = { wrapText: true, vertical: 'top' };
 
   // Генерация
   const buf = await wb.xlsx.writeBuffer();

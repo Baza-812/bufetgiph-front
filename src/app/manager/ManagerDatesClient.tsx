@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import HintDates from '@/components/HintDates';
+import ManagerNav from '@/components/ManagerNav';
 import { useSearchParams, useRouter } from 'next/navigation';
 
 type Summary = {
@@ -190,8 +191,10 @@ export default function ManagerDatesClient() {
   }
 
   return (
-    <main>
-      <Panel title="Заказ менеджера: выберите дату">
+    <>
+      <ManagerNav />
+      <main className="p-4">
+        <Panel title="Заказ менеджера: выберите дату">
         {loading && <div className="text-white/60 text-sm">Загрузка дат…</div>}
         {err && <div className="text-red-400 text-sm">Ошибка: {err}</div>}
 
@@ -250,6 +253,7 @@ export default function ManagerDatesClient() {
           </div>
         </div>
       )}
-    </main>
+      </main>
+    </>
   );
 }
