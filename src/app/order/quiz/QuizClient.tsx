@@ -56,7 +56,8 @@ export default function QuizClient() {
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
-  const [portionType, setPortionType] = useState<string>('Standard');
+  const [portionType, setPortionType] = useState<string | null>(null); // null = еще не загружено
+  const [portionLoading, setPortionLoading] = useState(true);
 
   const [draft, setDraft] = useState<Draft>(() => {
     const saved = loadDraft(date) || {};
@@ -87,6 +88,7 @@ export default function QuizClient() {
   useEffect(() => {
     (async () => {
       if (!org) return;
+      setPortionLoading(true);
       try {
         const u = new URL('/api/org_info', window.location.origin);
         u.searchParams.set('org', org);
@@ -98,10 +100,14 @@ export default function QuizClient() {
           console.log('[DEBUG] portionType set to:', r.portionType);
         } else {
           console.warn('[DEBUG] portionType not found in response, using default: Standard');
+          setPortionType('Standard');
         }
       } catch (e: unknown) {
         // Не критично, используем значение по умолчанию
         console.error('[DEBUG] Failed to load org info:', e);
+        setPortionType('Standard');
+      } finally {
+        setPortionLoading(false);
       }
     })();
   }, [org]);
@@ -166,7 +172,18 @@ export default function QuizClient() {
   // DEBUG: лог для отслеживания изменений
   useEffect(() => {
     console.log('[DEBUG] portionType changed:', portionType, '| isLightPortion:', isLightPortion);
-  }, [portionType, isLightPortion]);
+  }, [portionType]);
+  
+  // Показываем загрузку пока не узнаем тип порции
+  if (portionLoading) {
+    return (
+      <main>
+        <Panel title="Загрузка">
+          <div className="text-white/70">Загрузка информации об организации...</div>
+        </Panel>
+      </main>
+    );
+  }
 
   // ===== Actions
   function pickSalad(it: MenuItem, isSwap=false) {
