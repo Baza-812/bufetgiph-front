@@ -39,6 +39,10 @@ export default function OrderClient() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null); // для модалки
   const [error, setError] = useState('');
+  
+  // информация о сотруднике и организации
+  const [employeeName, setEmployeeName] = useState('');
+  const [orgName, setOrgName] = useState('');
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -54,7 +58,39 @@ export default function OrderClient() {
     }
   }, []);
 
-   // 2) опубликованные даты
+  // 2) информация об организации
+  useEffect(() => {
+    (async () => {
+      if (!org) return;
+      try {
+        const r = await fetchJSON<{ ok: boolean; name?: string }>(`/api/org_info?org=${encodeURIComponent(org)}`);
+        if (r.ok && r.name) setOrgName(r.name);
+      } catch {
+        // не критично
+      }
+    })();
+  }, [org]);
+
+  // 3) информация о сотруднике (из модалки берем fullName)
+  useEffect(() => {
+    if (!employeeID || !org || !token || dates.length === 0) return;
+    (async () => {
+      try {
+        const u = new URL('/api/hr_orders', window.location.origin);
+        u.searchParams.set('mode', 'single');
+        u.searchParams.set('employeeID', employeeID);
+        u.searchParams.set('org', org);
+        u.searchParams.set('token', token);
+        u.searchParams.set('date', dates[0] || '');
+        const r = await fetchJSON<SingleResp>(u.toString());
+        if (r?.summary?.fullName) setEmployeeName(r.summary.fullName);
+      } catch {
+        // не критично
+      }
+    })();
+  }, [employeeID, org, token, dates]);
+
+   // 4) опубликованные даты
   useEffect(() => {
     (async () => {
       if (!org) return;
@@ -171,6 +207,25 @@ export default function OrderClient() {
         </p>
       </Panel>
 
+      {/* Информация о сотруднике */}
+      {(employeeName || orgName) && (
+        <Panel title="Информация о сотруднике">
+          <div className="space-y-1 text-sm">
+            {employeeName && (
+              <div className="text-white/80">
+                <span className="text-white/60">Имя:</span>{' '}
+                <span className="font-semibold">{employeeName}</span>
+              </div>
+            )}
+            {orgName && (
+              <div className="text-white/80">
+                <span className="text-white/60">Организация:</span>{' '}
+                <span className="font-semibold">{orgName}</span>
+              </div>
+            )}
+          </div>
+        </Panel>
+      )}
           
       {/* креды вручную — на случай, если пришли без query */}
       {(!org || !employeeID || !token) && (
