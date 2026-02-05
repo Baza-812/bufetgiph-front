@@ -215,7 +215,7 @@ if (debugLines) {
       });
 
       const filename = `${safe(orgName)}_${dateISO}_${slug}.xlsx`.replace(/\s+/g, '_');
-      const blob = await put(`reports/${filename}`, Buffer.from(xlsxBuf), {
+      const blob = await put(`reports/${filename}`, xlsxBuf, {
         access: 'public',
         contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         addRandomSuffix: false,
