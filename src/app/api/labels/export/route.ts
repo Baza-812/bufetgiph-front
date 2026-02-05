@@ -57,7 +57,10 @@ export async function GET(req: NextRequest) {
     const safeName = (orgName || org).replace(/[^а-яА-Яa-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
     const filename = `Маркировка_${safeName}_${dateLabel}.xlsx`;
 
-    return new NextResponse(xlsx, {
+    // Конвертируем Uint8Array в Buffer для NextResponse
+    const buffer = Buffer.from(xlsx);
+
+    return new NextResponse(buffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
