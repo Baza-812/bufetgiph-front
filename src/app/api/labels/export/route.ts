@@ -57,10 +57,8 @@ export async function GET(req: NextRequest) {
     const safeName = (orgName || org).replace(/[^а-яА-Яa-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
     const filename = `Маркировка_${safeName}_${dateLabel}.xlsx`;
 
-    // Конвертируем Uint8Array в Buffer для NextResponse
-    const buffer = Buffer.from(xlsx);
-
-    return new NextResponse(buffer, {
+    // Используем стандартный Response API для бинарных данных
+    return new Response(xlsx.buffer, {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
