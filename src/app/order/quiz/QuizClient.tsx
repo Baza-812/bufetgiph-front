@@ -311,7 +311,7 @@ export default function QuizClient() {
   const niceDate = formatRuDate(date);
 
   return (
-    <main>
+    <main key={`quiz-${portionType}`}>
       <Panel title={<span className="text-white">{niceDate}</span>}>
         {/* DEBUG: показываем тип порции */}
         <div className="mb-2 text-xs text-yellow-400 bg-yellow-400/10 px-3 py-1 rounded">
