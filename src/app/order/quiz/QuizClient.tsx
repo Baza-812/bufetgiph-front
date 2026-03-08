@@ -8,6 +8,7 @@ import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
 import { fetchJSON, mapMenuItem, MenuItem } from '@/lib/api';
 import { loadDraft, saveDraft } from '@/lib/draft';
+import PaidExtrasModal from '@/components/PaidExtrasModal';
 
 type RawMenu = { id: string; fields?: Record<string, unknown> };
 type MenuAPIResponse = { ok?: boolean; items?: RawMenu[]; records?: RawMenu[]; menu?: RawMenu[] };
@@ -63,6 +64,10 @@ export default function QuizClient() {
     const saved = loadDraft(date) || {};
     return { date, ...(saved as Partial<Draft>) };
   });
+
+  // Платные дополнительные блюда
+  const [paidExtras, setPaidExtras] = useState<Array<{ itemId: string; qty: number }>>([]);
+  const [paidModalOpen, setPaidModalOpen] = useState(false);
 
   // если дата в URL поменялась — синхронизируем черновик
   useEffect(() => {
@@ -229,6 +234,18 @@ export default function QuizClient() {
       extras: isLightPortion ? extras.slice(0, 1) : extras.slice(0, 2),
     };
 
+    // Подготовить платные extras с ценами
+    const paidExtrasWithPrice = paidExtras
+      .map((ex) => {
+        const item = menu.find((m) => m.id === ex.itemId);
+        return {
+          itemId: ex.itemId,
+          qty: ex.qty,
+          unitPrice: item?.price || 0,
+          chargeToEmployee: true,
+        };
+      })
+      .filter((ex) => ex.qty > 0 && ex.unitPrice > 0);
 
     // если в URL есть orderId — делаем UPDATE
     if (qOrderId) {
@@ -236,6 +253,7 @@ export default function QuizClient() {
         employeeID, org, token,
         orderId: qOrderId,
         included,
+        paidExtras: paidExtrasWithPrice.length > 0 ? paidExtrasWithPrice : undefined,
       };
       // если HR редактирует за сотрудника — прокидываем цель
       if (qFor) bodyUpd.forEmployeeID = qFor;
@@ -255,6 +273,7 @@ export default function QuizClient() {
       const bodyCreate: Record<string, unknown> = {
         employeeID, org, token, date,
         included,
+        paidExtras: paidExtrasWithPrice.length > 0 ? paidExtrasWithPrice : undefined,
         clientToken: crypto.randomUUID(),
       };
       if (qFor) bodyCreate.forEmployeeID = qFor;
@@ -442,7 +461,24 @@ export default function QuizClient() {
 
       {/* Шаг 6 — Подтверждение */}
       {!loading && !err && step === '6' && (
-        <ConfirmStep draft={draft} onSubmit={submitOrder} onBack={()=>go(draft.mainGarnirnoe ? '4' : '5')} />
+        <ConfirmStep 
+          draft={draft} 
+          onSubmit={submitOrder} 
+          onBack={()=>go(draft.mainGarnirnoe ? '4' : '5')}
+          paidExtras={paidExtras}
+          onOpenPaidModal={() => setPaidModalOpen(true)}
+          menu={menu}
+        />
+      )}
+
+      {/* Модальное окно выбора платных блюд */}
+      {paidModalOpen && (
+        <PaidExtrasModal
+          menu={menu}
+          initialExtras={paidExtras}
+          onSave={(extras) => setPaidExtras(extras)}
+          onClose={() => setPaidModalOpen(false)}
+        />
       )}
     </main>
   );
@@ -638,22 +674,88 @@ function ListStep({ title, byCat, cats, onPick, emptyText, extraFooter }:{
 }
 
 /* Подтверждение */
-function ConfirmStep({ draft, onSubmit, onBack }:{
+function ConfirmStep({ 
+  draft, 
+  onSubmit, 
+  onBack,
+  paidExtras,
+  onOpenPaidModal,
+  menu,
+}:{
   draft: Draft;
   onSubmit: ()=>void;
   onBack: ()=>void;
+  paidExtras: Array<{ itemId: string; qty: number }>;
+  onOpenPaidModal: () => void;
+  menu: MenuItem[];
 }) {
+  // Рассчитываем сумму платных блюд
+  const paidTotal = useMemo(() => {
+    let sum = 0;
+    for (const ex of paidExtras) {
+      const item = menu.find((m) => m.id === ex.itemId);
+      if (item?.price) {
+        sum += item.price * ex.qty;
+      }
+    }
+    return sum;
+  }, [paidExtras, menu]);
+
+  const hasPaidExtras = paidExtras.length > 0 && paidTotal > 0;
+  const buttonLabel = hasPaidExtras ? 'Оплатить и подтвердить' : 'Подтвердить заказ';
+
   return (
     <Panel title="Подтверждение заказа">
-      <div className="space-y-2 text-sm">
+      {/* Корпоративный набор */}
+      <div className="space-y-2 text-sm mb-4">
         {draft.saladName && <div>Салат: <span className="font-semibold">{draft.saladName}{draft.saladIsSwap ? ' (замена)' : ''}</span></div>}
         {draft.soupName &&  <div>Суп: <span className="font-semibold">{draft.soupName}{draft.soupIsSwap ? ' (замена)' : ''}</span></div>}
         {draft.mainName &&  <div>Основное: <span className="font-semibold">{draft.mainName}</span></div>}
         <div>Гарнир: <span className="font-semibold">{draft.sideName ?? '—'}</span></div>
       </div>
 
-      <div className="mt-4 flex gap-3">
-        <Button onClick={onSubmit}>Подтвердить заказ</Button>
+      {/* Блок платных дополнительных блюд */}
+      <div className="border-t border-white/10 pt-4 mt-4">
+        <div className="text-white/90 font-semibold mb-2">Дополнительные блюда</div>
+        <div className="text-white/60 text-sm mb-3">
+          Можно заказать сверх корпоративного набора. Эти позиции оплачиваются отдельно.
+        </div>
+
+        {hasPaidExtras ? (
+          <div className="bg-neutral-800/30 rounded-lg p-3 mb-3">
+            <div className="space-y-2 text-sm">
+              {paidExtras.map((ex) => {
+                const item = menu.find((m) => m.id === ex.itemId);
+                if (!item) return null;
+                const itemTotal = (item.price || 0) * ex.qty;
+                return (
+                  <div key={ex.itemId} className="flex justify-between">
+                    <span className="text-white/90">
+                      {item.name} × {ex.qty}
+                    </span>
+                    <span className="text-yellow-400 font-semibold">{itemTotal} ₽</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="border-t border-white/10 mt-3 pt-3 flex justify-between font-semibold">
+              <span className="text-white/90">К оплате сотрудником:</span>
+              <span className="text-yellow-400 text-lg">{paidTotal} ₽</span>
+            </div>
+          </div>
+        ) : null}
+
+        <Button 
+          variant="ghost" 
+          onClick={onOpenPaidModal}
+          className="w-full"
+        >
+          {hasPaidExtras ? 'Изменить дополнительные блюда' : '+ Добавить блюда дополнительно'}
+        </Button>
+      </div>
+
+      <div className="mt-6 flex gap-3">
+        <Button onClick={onSubmit}>{buttonLabel}</Button>
         <Button variant="ghost" onClick={onBack}>Назад</Button>
       </div>
     </Panel>
