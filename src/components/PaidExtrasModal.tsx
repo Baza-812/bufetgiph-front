@@ -120,6 +120,10 @@ export default function PaidExtrasModal({ menu, initialExtras, onSave, onClose }
     onClose();
   };
 
+  const handleClearAll = () => {
+    setQuantities(new Map());
+  };
+
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
@@ -191,6 +195,9 @@ export default function PaidExtrasModal({ menu, initialExtras, onSave, onClose }
             </div>
             <div className="flex gap-3">
               <Button onClick={handleSave}>Готово</Button>
+              <Button variant="ghost" onClick={handleClearAll}>
+                Удалить все
+              </Button>
               <Button variant="ghost" onClick={onClose}>
                 Отмена
               </Button>

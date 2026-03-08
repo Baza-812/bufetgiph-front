@@ -716,42 +716,43 @@ function ConfirmStep({
 
       {/* Блок платных дополнительных блюд */}
       <div className="border-t border-white/10 pt-4 mt-4">
-        <div className="text-white/90 font-semibold mb-2">Дополнительные блюда</div>
-        <div className="text-white/60 text-sm mb-3">
-          Можно заказать сверх корпоративного набора. Эти позиции оплачиваются отдельно.
-        </div>
-
-        {hasPaidExtras ? (
-          <div className="bg-neutral-800/30 rounded-lg p-3 mb-3">
-            <div className="space-y-2 text-sm">
-              {paidExtras.map((ex) => {
-                const item = menu.find((m) => m.id === ex.itemId);
-                if (!item) return null;
-                const itemTotal = (item.price || 0) * ex.qty;
-                return (
-                  <div key={ex.itemId} className="flex justify-between">
-                    <span className="text-white/90">
-                      {item.name} × {ex.qty}
-                    </span>
-                    <span className="text-yellow-400 font-semibold">{itemTotal} ₽</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="border-t border-white/10 mt-3 pt-3 flex justify-between font-semibold">
-              <span className="text-white/90">К оплате сотрудником:</span>
-              <span className="text-yellow-400 text-lg">{paidTotal} ₽</span>
-            </div>
+        <div className="bg-neutral-800/50 border border-green-500/30 rounded-xl p-4">
+          <div className="text-white/90 font-semibold mb-2">Дополнительные блюда</div>
+          <div className="text-white/60 text-sm mb-3">
+            Можно заказать сверх корпоративного набора. Эти позиции оплачиваются отдельно.
           </div>
-        ) : null}
 
-        <Button 
-          variant="ghost" 
-          onClick={onOpenPaidModal}
-          className="w-full"
-        >
-          {hasPaidExtras ? 'Изменить дополнительные блюда' : '+ Добавить блюда дополнительно'}
-        </Button>
+          {hasPaidExtras ? (
+            <div className="bg-neutral-800/30 rounded-lg p-3 mb-3">
+              <div className="space-y-2 text-sm">
+                {paidExtras.map((ex) => {
+                  const item = menu.find((m) => m.id === ex.itemId);
+                  if (!item) return null;
+                  const itemTotal = (item.price || 0) * ex.qty;
+                  return (
+                    <div key={ex.itemId} className="flex justify-between">
+                      <span className="text-white/90">
+                        {item.name} × {ex.qty}
+                      </span>
+                      <span className="text-yellow-400 font-semibold">{itemTotal} ₽</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="border-t border-white/10 mt-3 pt-3 flex justify-between font-semibold">
+                <span className="text-white/90">К оплате сотрудником:</span>
+                <span className="text-yellow-400 text-lg">{paidTotal} ₽</span>
+              </div>
+            </div>
+          ) : null}
+
+          <button
+            onClick={onOpenPaidModal}
+            className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+          >
+            {hasPaidExtras ? 'Изменить дополнительные блюда' : '+ Добавить блюда дополнительно'}
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 flex gap-3">

@@ -346,7 +346,7 @@ function DateModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 p-2 sm:p-6">
       <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div className="text-lg font-bold">{fmtDayLabel(iso)}</div>
