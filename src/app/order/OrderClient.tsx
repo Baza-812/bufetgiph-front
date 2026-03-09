@@ -19,6 +19,7 @@ type SingleResp = {
     mealBox: string;
     extra1: string;
     extra2: string;
+    paidExtras?: Array<{ name: string; qty: number; unitPrice: number; lineSum: number }>;
     orderId: string;
   };
 };
@@ -346,7 +347,7 @@ function DateModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 p-2 sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
       <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div className="text-lg font-bold">{fmtDayLabel(iso)}</div>
@@ -359,12 +360,33 @@ function DateModal({
           {!loading && sum?.orderId && (
             <>
               <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
-              <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+              <div className="rounded-xl bg-white/5 border border-white/10 p-3 mb-3">
                 <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
                 <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
                 <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
                 <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
               </div>
+
+              {/* Платные допы */}
+              {sum.paidExtras && sum.paidExtras.length > 0 && (
+                <div className="rounded-xl bg-green-900/20 border border-green-500/30 p-3 mb-3">
+                  <div className="text-white/90 font-semibold mb-2">Дополнительные блюда</div>
+                  <div className="space-y-1 text-sm">
+                    {sum.paidExtras.map((ex, i) => (
+                      <div key={i} className="flex justify-between">
+                        <span className="text-white/80">{ex.name} × {ex.qty}</span>
+                        <span className="text-yellow-400 font-semibold">{ex.lineSum} ₽</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-white/10 mt-2 pt-2 flex justify-between font-semibold">
+                    <span className="text-white/90">К оплате:</span>
+                    <span className="text-yellow-400">
+                      {sum.paidExtras.reduce((acc, ex) => acc + ex.lineSum, 0)} ₽
+                    </span>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -376,32 +398,51 @@ function DateModal({
 
           {err && <div className="text-red-400">{err}</div>}
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex flex-wrap gap-2 pt-2">
             <Button onClick={onClose}>ОК</Button>
 
-<Button
-  variant="ghost"
-  onClick={() => {
-    const u = new URL('/order/quiz', window.location.origin);
-    u.searchParams.set('date', iso);
-    u.searchParams.set('step', '1');
-    u.searchParams.set('org', org);
-    u.searchParams.set('employeeID', employeeID);
-    u.searchParams.set('token', token);
-    if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
-    window.location.href = u.toString();
-  }}
->
-  Изменить
-</Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                const u = new URL('/order/quiz', window.location.origin);
+                u.searchParams.set('date', iso);
+                u.searchParams.set('step', '1');
+                u.searchParams.set('org', org);
+                u.searchParams.set('employeeID', employeeID);
+                u.searchParams.set('token', token);
+                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId);
+                window.location.href = u.toString();
+              }}
+            >
+              Изменить
+            </Button>
 
-<Button
-  variant="danger"
-  onClick={cancelOrder}
-  disabled={working || !sum?.orderId}
->
-  {working ? 'Отмена…' : 'Отменить'}
-</Button>
+            {sum?.orderId && (
+              <button
+                onClick={() => {
+                  const u = new URL('/order/quiz', window.location.origin);
+                  u.searchParams.set('date', iso);
+                  u.searchParams.set('step', '1');
+                  u.searchParams.set('org', org);
+                  u.searchParams.set('employeeID', employeeID);
+                  u.searchParams.set('token', token);
+                  u.searchParams.set('orderId', sum.orderId);
+                  window.location.href = u.toString();
+                }}
+                className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition-colors"
+                title="Пройдите квиз до конца, чтобы изменить платные дополнительные блюда"
+              >
+                Доп блюда
+              </button>
+            )}
+
+            <Button
+              variant="danger"
+              onClick={cancelOrder}
+              disabled={working || !sum?.orderId}
+            >
+              {working ? 'Отмена…' : 'Отменить'}
+            </Button>
 
           </div>
         </div>
