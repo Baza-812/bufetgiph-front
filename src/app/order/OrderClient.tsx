@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import { fetchJSON, fmtDayLabel, MenuItem } from '@/lib/api';
 import HintDates from '@/components/HintDates';
+import PaidExtrasModal from '@/components/PaidExtrasModal';
 
 
 
@@ -44,6 +45,12 @@ export default function OrderClient() {
   // информация о сотруднике и организации
   const [employeeName, setEmployeeName] = useState('');
   const [orgName, setOrgName] = useState('');
+
+  // для редактирования платных допов
+  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [paidModalOpen, setPaidModalOpen] = useState(false);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editingDate, setEditingDate] = useState<string | null>(null);
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -284,6 +291,29 @@ export default function OrderClient() {
           info={busy[selected]}
           onClose={() => setSelected(null)}
           onChanged={reloadBusy}
+          onOpenPaidModal={(orderId, date) => {
+            setEditingOrderId(orderId);
+            setEditingDate(date);
+            setSelected(null);
+            setPaidModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* Модалка редактирования платных допов */}
+      {paidModalOpen && editingOrderId && editingDate && (
+        <PaidExtrasEditModal
+          orderId={editingOrderId}
+          date={editingDate}
+          employeeID={employeeID}
+          org={org}
+          token={token}
+          onClose={() => {
+            setPaidModalOpen(false);
+            setEditingOrderId(null);
+            setEditingDate(null);
+            reloadBusy();
+          }}
         />
       )}
       </div>
@@ -291,13 +321,158 @@ export default function OrderClient() {
   );
 }
 
+/* Модалка редактирования платных допов */
+function PaidExtrasEditModal({
+  orderId, date, employeeID, org, token, onClose
+}: {
+  orderId: string;
+  date: string;
+  employeeID: string;
+  org: string;
+  token: string;
+  onClose: () => void;
+}) {
+  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentExtras, setCurrentExtras] = useState<Array<{ itemId: string; qty: number }>>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Загружаем menu и текущие paid extras
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        setLoading(true);
+        
+        // Загружаем меню
+        const menuUrl = new URL('/api/menu', window.location.origin);
+        menuUrl.searchParams.set('date', date);
+        menuUrl.searchParams.set('org', org);
+        const menuResp = await fetchJSON<{ items?: any[]; records?: any[]; menu?: any[] }>(menuUrl.toString());
+        const rows = (menuResp.items ?? menuResp.records ?? menuResp.menu ?? []);
+        
+        // Преобразуем в MenuItem[]
+        const menuItems: MenuItem[] = rows.map((r: any) => ({
+          id: r.id || '',
+          name: r.name || r.fields?.Name || '',
+          description: r.description || r.fields?.Description || '',
+          category: r.category || r.fields?.Category || '',
+          price: r.price || r.fields?.Price || 0,
+        }));
+        
+        if (!ignore) setMenu(menuItems);
+
+        // Загружаем текущий заказ чтобы получить paidExtras
+        const summaryUrl = new URL('/api/hr_orders', window.location.origin);
+        summaryUrl.searchParams.set('mode', 'single');
+        summaryUrl.searchParams.set('employeeID', employeeID);
+        summaryUrl.searchParams.set('org', org);
+        summaryUrl.searchParams.set('token', token);
+        summaryUrl.searchParams.set('date', date);
+        
+        const summaryResp = await fetchJSON<SingleResp>(summaryUrl.toString());
+        
+        if (!ignore && summaryResp.summary?.paidExtras) {
+          // Преобразуем из backend формата в формат для модалки
+          const extras = summaryResp.summary.paidExtras.map(ex => {
+            // Найдем itemId по имени
+            const item = menuItems.find(m => m.name === ex.name);
+            return {
+              itemId: item?.id || '',
+              qty: ex.qty,
+            };
+          }).filter(ex => ex.itemId);
+          
+          setCurrentExtras(extras);
+        }
+      } catch (e) {
+        if (!ignore) setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    })();
+    
+    return () => { ignore = true; };
+  }, [date, org, employeeID, token]);
+
+  const handleSave = async (extras: Array<{ itemId: string; qty: number }>) => {
+    try {
+      setSaving(true);
+      setErr('');
+      
+      // Подготавливаем paidExtras с ценами
+      const paidExtrasWithPrice = extras
+        .map((ex) => {
+          const item = menu.find((m) => m.id === ex.itemId);
+          return {
+            itemId: ex.itemId,
+            qty: ex.qty,
+            unitPrice: item?.price || 0,
+            chargeToEmployee: true,
+          };
+        })
+        .filter((ex) => ex.qty > 0 && ex.unitPrice > 0);
+
+      // Вызываем order_update только с paidExtras (без изменения основного заказа)
+      await fetchJSON('/api/order_update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeID,
+          org,
+          token,
+          orderId,
+          date,
+          paidExtras: paidExtrasWithPrice.length > 0 ? paidExtrasWithPrice : [],
+          hardDelete: true,
+        }),
+      });
+
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90">
+        <div className="text-white">Загрузка меню...</div>
+      </div>
+    );
+  }
+
+  if (err) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
+        <div className="bg-panel border border-white/10 rounded-2xl p-4 max-w-md">
+          <div className="text-red-400 mb-4">{err}</div>
+          <Button onClick={onClose}>Закрыть</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <PaidExtrasModal
+      menu={menu}
+      initialExtras={currentExtras}
+      onSave={handleSave}
+      onClose={onClose}
+    />
+  );
+}
+
 /* ——— Модалка: состав + действия — всегда остаётся открытой; показывает лоадер, пока тянем детали ——— */
 function DateModal({
-  iso, employeeID, org, token, info, onClose, onChanged,
+  iso, employeeID, org, token, info, onClose, onChanged, onOpenPaidModal,
 }: {
   iso: string;
   employeeID: string; org: string; token: string;
   info?: SingleResp; onClose: ()=>void; onChanged: ()=>void;
+  onOpenPaidModal?: (orderId: string, date: string) => void;
 }) {
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
@@ -417,20 +592,10 @@ function DateModal({
               Изменить
             </Button>
 
-            {sum?.orderId && (
+            {sum?.orderId && onOpenPaidModal && (
               <button
-                onClick={() => {
-                  const u = new URL('/order/quiz', window.location.origin);
-                  u.searchParams.set('date', iso);
-                  u.searchParams.set('step', '1');
-                  u.searchParams.set('org', org);
-                  u.searchParams.set('employeeID', employeeID);
-                  u.searchParams.set('token', token);
-                  u.searchParams.set('orderId', sum.orderId);
-                  window.location.href = u.toString();
-                }}
+                onClick={() => onOpenPaidModal(sum.orderId, iso)}
                 className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition-colors"
-                title="Пройдите квиз до конца, чтобы изменить платные дополнительные блюда"
               >
                 Доп блюда
               </button>
