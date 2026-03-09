@@ -321,6 +321,82 @@ Backend теперь записывает **только минимум**:
 3. `abf49a4` - feat: display paid extras in order modal
 4. `e7e1882` - feat: direct paid extras editing from order modal
 
+## Интеграция оплаты через ЮKassa
+
+### Архитектура
+Система поддерживает прием платежей от сотрудников через **разные аккаунты ЮKassa** для разных организаций:
+- Каждая `Organizations` связана с `Banks` через поле `Bank`
+- `Banks` содержит реквизиты ЮKassa (MerchantID, APIKey) и юридические данные
+- `Payments` хранит транзакции с линком на `Orders`, `Employee`, `Organization`, `Provider (Banks)`
+
+### Payment Flow
+
+#### 1. Создание платежа (QuizClient)
+Когда пользователь добавляет платные допы и нажимает **"Оплатить и подтвердить"**:
+1. Создается/обновляется Order через `/api/order` или `/api/order_update`
+2. Вызывается `/api/payment/create`:
+   - Backend создает запись в Payments
+   - Вызывает ЮKassa API для создания платежа
+   - Возвращает `paymentUrl` (redirect на ЮKassa)
+3. Frontend делает редирект на `paymentUrl`
+
+#### 2. Страница результата
+После оплаты ЮKassa редиректит на `/payment/result?paymentId=...&orderId=...`:
+- Polling статуса через `/api/payment/status` (каждые 3 секунды)
+- Отображает статус: ✅ Успешно / ⏳ Ожидание / ❌ Отменено
+- Показывает сумму и реквизиты получателя (из Banks)
+- Кнопка "Вернуться на главную"
+
+#### 3. Webhook от ЮKassa
+ЮKassa отправляет уведомления на `/api/payment_webhook`:
+- Обновляет `Payments.Status` (pending → succeeded/canceled)
+- При `succeeded`: обновляет `Orders.Status = 'Confirmed'`
+
+#### 4. Редактирование платных допов (OrderClient)
+При изменении допов через кнопку **"Доп блюда"** в модалке заказа:
+1. Обновляется Order с новыми paidExtras
+2. Если сумма > 0: создается платеж и редирект на ЮKassa
+3. Если сумма = 0 (все удалены): просто закрывается модалка
+
+### Настройка
+
+#### Backend ENV (.env для bufetgiph-api):
+```env
+# Если Banks.CredentialsSource = "ENV"
+YOOKASSA_SHOP_ID=123456
+YOOKASSA_SECRET_KEY=live_abcd...
+
+# URL для возврата после оплаты
+PAYMENT_RETURN_URL=https://orders.baza.menu/payment/result
+```
+
+#### Webhook в ЮKassa:
+Настроить в личном кабинете каждого аккаунта:
+```
+https://api.baza.menu/api/payment_webhook
+```
+
+### Файлы интеграции
+
+**Backend**:
+- `lib/handlers/payment_create.js` - создание платежа
+- `lib/handlers/payment_webhook.js` - обработка webhook
+- `api/router.js` - роуты для payment_create и payment_webhook
+- `lib/utils.js` - константы Banks и Payments
+
+**Frontend**:
+- `src/app/payment/result/page.tsx` - страница результата
+- `src/app/api/payment/create/route.ts` - proxy для создания
+- `src/app/api/payment/status/route.ts` - проверка статуса
+- `src/app/order/quiz/QuizClient.tsx` - интеграция в квиз
+- `src/app/order/OrderClient.tsx` - интеграция при редактировании
+
+**Документация**: `YOOKASSA_INTEGRATION.md` - полная документация по интеграции
+
+**Коммиты**:
+- Backend: `0c90ae7` - feat: integrate YooKassa payment processing
+- Frontend: `8d37bcb` - feat: integrate YooKassa payment flow on frontend
+
 ## Preview URLs
 
 После деплоя на Vercel:
