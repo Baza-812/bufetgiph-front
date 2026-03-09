@@ -414,6 +414,8 @@ function PaidExtrasEditModal({
         })
         .filter((ex) => ex.qty > 0 && ex.unitPrice > 0);
 
+      const totalAmount = paidExtrasWithPrice.reduce((sum, ex) => sum + (ex.qty * ex.unitPrice), 0);
+
       // Вызываем order_update только с paidExtras (без изменения основного заказа)
       await fetchJSON('/api/order_update', {
         method: 'POST',
@@ -429,6 +431,34 @@ function PaidExtrasEditModal({
         }),
       });
 
+      // Если есть платные допы - создаем платеж и редиректим на оплату
+      if (totalAmount > 0) {
+        const paymentResp = await fetchJSON<{ ok: boolean; paymentUrl?: string; error?: string }>(
+          '/api/payment/create',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId,
+              employeeID,
+              org,
+              token,
+              amount: totalAmount,
+              description: `Дополнительные блюда к заказу`,
+            }),
+          }
+        );
+
+        if (!paymentResp?.ok || !paymentResp.paymentUrl) {
+          throw new Error(paymentResp?.error || 'Не удалось создать платеж');
+        }
+
+        // Редирект на страницу оплаты ЮKassa
+        window.location.href = paymentResp.paymentUrl;
+        return;
+      }
+
+      // Если допы удалены (сумма = 0) - просто закрываем
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

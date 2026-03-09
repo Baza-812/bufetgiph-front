@@ -288,8 +288,41 @@ export default function QuizClient() {
       );
 
       if (!r?.ok && !r?.orderId) throw new Error(r?.error || 'Не удалось создать заказ');
+      
+      finalOrderId = r.orderId || qOrderId;
     }
 
+    // Если есть платные допы - создаем платеж и редиректим на ЮKassa
+    if (hasPaidExtras && totalAmount > 0 && finalOrderId) {
+      const paymentResp = await fetchJSON<{ ok: boolean; paymentUrl?: string; error?: string }>(
+        '/api/payment/create',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderId: finalOrderId,
+            employeeID,
+            org,
+            token,
+            amount: totalAmount,
+            description: `Дополнительные блюда к заказу`,
+          }),
+        }
+      );
+
+      if (!paymentResp?.ok || !paymentResp.paymentUrl) {
+        throw new Error(paymentResp?.error || 'Не удалось создать платеж');
+      }
+
+      // Очищаем черновик перед редиректом
+      saveDraft({ date } as Draft);
+
+      // Редирект на страницу оплаты ЮKassa
+      window.location.href = paymentResp.paymentUrl;
+      return;
+    }
+
+    // Если платных допов нет - обычный flow
     // очистить черновик этой даты
     saveDraft({ date } as Draft);
 
