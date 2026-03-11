@@ -247,6 +247,14 @@ export default function QuizClient() {
       })
       .filter((ex) => ex.qty > 0 && ex.unitPrice > 0);
 
+    const hasPaidExtras = paidExtrasWithPrice.length > 0;
+    const totalAmount = paidExtrasWithPrice.reduce((sum, ex) => sum + (ex.qty * ex.unitPrice), 0);
+
+    console.log('[DEBUG] paidExtrasWithPrice:', paidExtrasWithPrice);
+    console.log('[DEBUG] hasPaidExtras:', hasPaidExtras, 'totalAmount:', totalAmount);
+
+    let finalOrderId = qOrderId;
+
     // если в URL есть orderId — делаем UPDATE
     if (qOrderId) {
       const bodyUpd: Record<string, unknown> = {
@@ -292,8 +300,12 @@ export default function QuizClient() {
       finalOrderId = r.orderId || qOrderId;
     }
 
+    console.log('[DEBUG] finalOrderId:', finalOrderId);
+    console.log('[DEBUG] checking payment condition:', { hasPaidExtras, totalAmount, finalOrderId });
+
     // Если есть платные допы - создаем платеж и редиректим на ЮKassa
     if (hasPaidExtras && totalAmount > 0 && finalOrderId) {
+      console.log('[DEBUG] Creating payment...');
       const paymentResp = await fetchJSON<{ ok: boolean; paymentUrl?: string; error?: string }>(
         '/api/payment/create',
         {
@@ -310,6 +322,8 @@ export default function QuizClient() {
         }
       );
 
+      console.log('[DEBUG] Payment response:', paymentResp);
+
       if (!paymentResp?.ok || !paymentResp.paymentUrl) {
         throw new Error(paymentResp?.error || 'Не удалось создать платеж');
       }
@@ -317,13 +331,16 @@ export default function QuizClient() {
       // Очищаем черновик перед редиректом
       saveDraft({ date } as Draft);
 
+      console.log('[DEBUG] Redirecting to:', paymentResp.paymentUrl);
+      
       // Редирект на страницу оплаты ЮKassa
       window.location.href = paymentResp.paymentUrl;
       return;
     }
+    
+    console.log('[DEBUG] No payment needed, proceeding with normal flow');
 
     // Если платных допов нет - обычный flow
-    // очистить черновик этой даты
     saveDraft({ date } as Draft);
 
     // редирект обратно в консоль, если пришли из неё
