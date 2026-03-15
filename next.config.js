@@ -13,6 +13,7 @@ const LOCAL_API_PREFIXES = [
   '/api/debug',
   '/api/_debug',
   '/api/ping',        // тех.проверка, можно удалить после
+  '/api/payment',     // payment proxy routes (create, status)
   // добавишь новые — просто допиши сюда строку
 ];
 
