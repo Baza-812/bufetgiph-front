@@ -306,8 +306,18 @@ export default function QuizClient() {
     // Если есть платные допы - создаем платеж и редиректим на ЮKassa
     if (hasPaidExtras && totalAmount > 0 && finalOrderId) {
       console.log('[DEBUG] Creating payment...');
+      
+      // Определяем backend API URL
+      const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 
+        (process.env.NEXT_PUBLIC_VERCEL_ENV === 'production' 
+          ? 'https://bufetgiph-api.vercel.app' 
+          : 'https://dev-bufetgiph-api.vercel.app');
+      
+      console.log('[DEBUG] API_BASE:', API_BASE);
+      
+      // Вызываем backend API напрямую (с подчеркиванием: payment_create)
       const paymentResp = await fetchJSON<{ ok: boolean; paymentUrl?: string; error?: string }>(
-        '/api/payment/create',
+        `${API_BASE}/api/payment_create`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
