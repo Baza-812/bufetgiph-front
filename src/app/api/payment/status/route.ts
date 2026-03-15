@@ -1,7 +1,6 @@
 // src/app/api/payment/status/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://api.baza.menu';
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 

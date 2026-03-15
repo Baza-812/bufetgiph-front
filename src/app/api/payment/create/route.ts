@@ -1,7 +1,11 @@
 // src/app/api/payment/create/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://api.baza.menu';
+// Определяем backend API в зависимости от окружения
+const isProd = process.env.VERCEL_ENV === 'production';
+const API_BASE = isProd
+  ? 'https://bufetgiph-api.vercel.app'
+  : 'https://dev-bufetgiph-api.vercel.app';
 
 export async function POST(req: NextRequest) {
   try {
