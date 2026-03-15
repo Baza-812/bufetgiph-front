@@ -1,6 +1,12 @@
 // src/app/api/payment/status/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
+// Определяем backend API в зависимости от окружения
+const isProd = process.env.VERCEL_ENV === 'production';
+const API_BASE = isProd
+  ? 'https://bufetgiph-api.vercel.app'
+  : 'https://dev-bufetgiph-api.vercel.app';
+
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 
@@ -15,58 +21,57 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const paymentId = searchParams.get('paymentId');
-    const orderId = searchParams.get('orderId');
 
     if (!paymentId) {
       return NextResponse.json({ error: 'paymentId required' }, { status: 400 });
     }
 
-    if (!AIRTABLE_BASE_ID || !AIRTABLE_API_KEY) {
-      return NextResponse.json({ error: 'Missing Airtable config' }, { status: 500 });
-    }
-
-    // Получаем Payment record из Airtable
-    const atUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(TABLE.PAYMENTS)}/${paymentId}`;
+    // Вызываем backend для получения актуального статуса из ЮKassa
+    const backendUrl = `${API_BASE}/api/payment_status?paymentId=${paymentId}`;
     
-    const atResp = await fetch(atUrl, {
+    const backendResp = await fetch(backendUrl, {
       headers: {
-        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+        'Content-Type': 'application/json',
       },
     });
 
-    if (!atResp.ok) {
-      return NextResponse.json({ error: 'Payment not found' }, { status: 404 });
+    if (!backendResp.ok) {
+      return NextResponse.json({ error: 'Failed to fetch payment status' }, { status: backendResp.status });
     }
 
-    const payment = await atResp.json();
-    const fields = payment.fields || {};
+    const paymentData = await backendResp.json();
 
-    const status = fields.Status || 'pending';
-    const paid = status === 'succeeded';
-    const amount = fields.Amount || 0;
-    const providerLinks = fields.Provider;
-    const providerRecordId = Array.isArray(providerLinks) ? providerLinks[0] : providerLinks;
-
-    // Получаем реквизиты из Banks
+    // Получаем реквизиты из Airtable
     let bankInfo = null;
-    if (providerRecordId) {
+    if (AIRTABLE_BASE_ID && AIRTABLE_API_KEY && paymentId) {
       try {
-        const bankUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(TABLE.BANKS)}/${providerRecordId}`;
-        const bankResp = await fetch(bankUrl, {
-          headers: {
-            'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
-          },
+        const paymentUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(TABLE.PAYMENTS)}/${paymentId}`;
+        const paymentResp = await fetch(paymentUrl, {
+          headers: { 'Authorization': `Bearer ${AIRTABLE_API_KEY}` },
         });
 
-        if (bankResp.ok) {
-          const bank = await bankResp.json();
-          const bf = bank.fields || {};
-          bankInfo = {
-            legalName: bf.LegalName || '',
-            inn: bf.INN || '',
-            kpp: bf.KPP || '',
-            footer: bf.FooterText || '',
-          };
+        if (paymentResp.ok) {
+          const payment = await paymentResp.json();
+          const providerLinks = payment.fields?.Provider;
+          const providerRecordId = Array.isArray(providerLinks) ? providerLinks[0] : providerLinks;
+
+          if (providerRecordId) {
+            const bankUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(TABLE.BANKS)}/${providerRecordId}`;
+            const bankResp = await fetch(bankUrl, {
+              headers: { 'Authorization': `Bearer ${AIRTABLE_API_KEY}` },
+            });
+
+            if (bankResp.ok) {
+              const bank = await bankResp.json();
+              const bf = bank.fields || {};
+              bankInfo = {
+                legalName: bf.LegalName || '',
+                inn: bf.INN || '',
+                kpp: bf.KPP || '',
+                footer: bf.FooterText || '',
+              };
+            }
+          }
         }
       } catch (e) {
         console.error('Failed to fetch bank info:', e);
@@ -74,10 +79,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
-      ok: true,
-      status,
-      paid,
-      amount,
+      ...paymentData,
       bankInfo,
     });
 
