@@ -19,11 +19,18 @@ export async function POST(req: NextRequest) {
     const backendUrl = `${API_BASE}/api/payment_create`;
     console.log('[payment/create route] Calling backend:', backendUrl);
     
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    
+    // Добавляем Vercel bypass token если есть (для Password Protection)
+    if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
+      headers['x-vercel-protection-bypass'] = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    }
+    
     const resp = await fetch(backendUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
     });
 
