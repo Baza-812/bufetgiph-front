@@ -513,6 +513,7 @@ function DateModal({
   const [err, setErr] = useState('');
   const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
   const [loading, setLoading] = useState(false);
+  const [showCancelSuccess, setShowCancelSuccess] = useState(false);
 
   // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
   useEffect(() => {
@@ -544,16 +545,47 @@ function DateModal({
     if (!sum?.orderId) return;
     try {
       setWorking(true); setErr('');
+      const hasPaidExtras = sum.paidExtras && sum.paidExtras.length > 0;
+      const hasSucceededPayment = sum.paymentInfo?.status === 'succeeded';
+      
       await fetchJSON('/api/order_cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeID, org, token, orderId: sum.orderId, reason: 'user_cancel' })
       });
-      onClose();
-      onChanged(); // обновим «серость»
-          } catch(e: unknown) {
+      
+      // Если был оплаченный платеж - показываем сообщение о возврате
+      if (hasPaidExtras && hasSucceededPayment) {
+        setShowCancelSuccess(true);
+        setTimeout(() => {
+          onClose();
+          onChanged();
+        }, 3000);
+      } else {
+        onClose();
+        onChanged();
+      }
+    } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally { setWorking(false); }
+  }
+
+  // Экран успешной отмены с возвратом
+  if (showCancelSuccess) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
+        <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-6 text-center">
+          <div className="text-4xl mb-4">✓</div>
+          <div className="text-xl font-bold text-white mb-2">Заказ отменен</div>
+          <div className="text-white/70 mb-4">
+            Средства за дополнительные блюда будут возвращены на ваш счет в течение нескольких минут.
+          </div>
+          <div className="text-sm text-white/50">
+            Переход на главную через 3 секунды...
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
