@@ -21,6 +21,12 @@ type SingleResp = {
     extra1: string;
     extra2: string;
     paidExtras?: Array<{ name: string; qty: number; unitPrice: number; lineSum: number }>;
+    paymentInfo?: {
+      status: string;
+      amount: number;
+      paymentLink: string;
+      paymentId: string;
+    } | null;
     orderId: string;
   };
 };
@@ -79,24 +85,23 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // 3) информация о сотруднике (из модалки берем fullName)
+  // 3) информация о сотруднике
   useEffect(() => {
-    if (!employeeID || !org || !token || dates.length === 0) return;
+    if (!employeeID || !org || !token) return;
     (async () => {
       try {
-        const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode', 'single');
+        // Используем API для получения информации о сотруднике
+        const u = new URL('/api/employee_info', window.location.origin);
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
-        u.searchParams.set('date', dates[0] || '');
-        const r = await fetchJSON<SingleResp>(u.toString());
-        if (r?.summary?.fullName) setEmployeeName(r.summary.fullName);
+        const r = await fetchJSON<{ ok: boolean; fullName?: string }>(u.toString());
+        if (r?.ok && r.fullName) setEmployeeName(r.fullName);
       } catch {
         // не критично
       }
     })();
-  }, [employeeID, org, token, dates]);
+  }, [employeeID, org, token]);
 
    // 4) опубликованные даты
   useEffect(() => {
@@ -575,7 +580,22 @@ function DateModal({
               {/* Платные допы */}
               {sum.paidExtras && sum.paidExtras.length > 0 && (
                 <div className="rounded-xl bg-green-900/20 border border-green-500/30 p-3 mb-3">
-                  <div className="text-white/90 font-semibold mb-2">Дополнительные блюда</div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-white/90 font-semibold">Дополнительные блюда</div>
+                    {sum.paymentInfo && (
+                      <div className={`text-xs px-2 py-1 rounded ${
+                        sum.paymentInfo.status === 'succeeded' 
+                          ? 'bg-green-600/20 text-green-400 border border-green-500/30' 
+                          : sum.paymentInfo.status === 'pending'
+                          ? 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30'
+                          : 'bg-red-600/20 text-red-400 border border-red-500/30'
+                      }`}>
+                        {sum.paymentInfo.status === 'succeeded' ? '✓ Оплачено' : 
+                         sum.paymentInfo.status === 'pending' ? '⏳ Ожидает оплаты' : 
+                         '✕ Не оплачено'}
+                      </div>
+                    )}
+                  </div>
                   <div className="space-y-1 text-sm">
                     {sum.paidExtras.map((ex, i) => (
                       <div key={i} className="flex justify-between">
@@ -585,7 +605,9 @@ function DateModal({
                     ))}
                   </div>
                   <div className="border-t border-white/10 mt-2 pt-2 flex justify-between font-semibold">
-                    <span className="text-white/90">К оплате:</span>
+                    <span className="text-white/90">
+                      {sum.paymentInfo?.status === 'succeeded' ? 'Оплачено:' : 'К оплате:'}
+                    </span>
                     <span className="text-yellow-400">
                       {sum.paidExtras.reduce((acc, ex) => acc + ex.lineSum, 0)} ₽
                     </span>
@@ -623,12 +645,33 @@ function DateModal({
             </Button>
 
             {sum?.orderId && onOpenPaidModal && (
-              <button
+              <Button
+                variant="ghost"
                 onClick={() => onOpenPaidModal(sum.orderId, iso)}
-                className="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition-colors"
+                className="!bg-green-600 hover:!bg-green-700 !text-white"
               >
                 Доп блюда
-              </button>
+              </Button>
+            )}
+
+            {/* Кнопка "Оплатить" если допы есть но не оплачены */}
+            {sum?.paidExtras && sum.paidExtras.length > 0 && 
+             sum.paymentInfo && sum.paymentInfo.status !== 'succeeded' && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  // Редирект на существующий payment link или создать новый
+                  if (sum.paymentInfo?.paymentLink) {
+                    window.location.href = sum.paymentInfo.paymentLink;
+                  } else if (sum.orderId && onOpenPaidModal) {
+                    // Если нет payment link - открываем редактирование допов (создаст новый платеж)
+                    onOpenPaidModal(sum.orderId, iso);
+                  }
+                }}
+                className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
+              >
+                💳 Оплатить
+              </Button>
             )}
 
             <Button

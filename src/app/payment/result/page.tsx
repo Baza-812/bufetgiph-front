@@ -157,7 +157,7 @@ function PaymentResultContent() {
 
             {isCanceled && (
               <div className="text-white/70">
-                Платеж был отменен. Вы можете вернуться и попробовать снова.
+                Платеж был отменен. Вы можете вернуться к заказу и повторить оплату.
               </div>
             )}
 
@@ -168,10 +168,20 @@ function PaymentResultContent() {
               </div>
             )}
 
-            <div className="mt-6">
+            <div className="mt-6 flex gap-2 flex-wrap">
               <Button onClick={goToHome}>
                 {isSuccess ? 'Вернуться на главную' : 'Назад к заказам'}
               </Button>
+              
+              {/* Для canceled платежей - кнопка повторить оплату */}
+              {isCanceled && status.paymentLink && (
+                <Button
+                  onClick={() => window.location.href = status.paymentLink}
+                  className="!bg-yellow-600 hover:!bg-yellow-700"
+                >
+                  Повторить оплату
+                </Button>
+              )}
             </div>
           </div>
         </Panel>

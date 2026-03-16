@@ -52,9 +52,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'No organizations resolved from OrgsIncluded' }, { status: 400 });
     }
 
-    // 3) Все заказы (минимально нужные поля)
+    // 3) Все заказы (минимально нужные поля + Payment)
     const ordersAll = await selectAll(TBL.ORDERS, {
-      fields: ['OrderDateISO', 'Order Date', 'Status', 'Org', 'Employee', 'Meal Boxes', 'Order Lines'],
+      fields: ['OrderDateISO', 'Order Date', 'Status', 'Org', 'Employee', 'Meal Boxes', 'Order Lines', 'Payment'],
     });
 
     // 🔽 ДОБАВЬ ЭТО ЗДЕСЬ (до любых debug-блоков!)
@@ -397,6 +397,7 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   const F_EMP = ['Employee', 'User', 'Emp'];
   const F_MEALBOXES = ['Meal Boxes', 'Meal Box', 'MealBox', 'MB'];
   const F_LINES = ['Order Lines', 'Lines', 'Items'];
+  const F_PAYMENT = ['Payment'];
 
   // отбираем сами заказы
   const orders = ordersAll.filter((o) => {
@@ -413,14 +414,36 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
     };
   }
 
-  // собираем id связанных сущностей
+  // собираем id связанных сущностей + payments
   const employeeIds = new Set<string>();
   const mealBoxIds = new Set<string>();
   const lineIds = new Set<string>();
+  const paymentIds = new Set<string>();
+  
   for (const o of orders) {
     getLinks(o, F_EMP).forEach((id) => employeeIds.add(id));
     getLinks(o, F_MEALBOXES).forEach((id) => mealBoxIds.add(id));
     getLinks(o, F_LINES).forEach((id) => lineIds.add(id));
+    getLinks(o, F_PAYMENT).forEach((id) => paymentIds.add(id));
+  }
+
+  // Получаем статусы платежей
+  const payments = paymentIds.size
+    ? await selectAll(TBL.PAYMENTS, {
+        fields: ['Status'],
+        filterByFormula: `OR(${[...paymentIds].map((id) => `RECORD_ID()='${id}'`).join(',')})`,
+      })
+    : [];
+  const paymentStatus = new Map<string, string>();
+  payments.forEach((p) => paymentStatus.set(p.getId(), (getStr(p, ['Status']) || 'unknown').toLowerCase()));
+
+  // Создаем мапу orderId -> paymentStatus
+  const orderPaymentStatus = new Map<string, string>();
+  for (const o of orders) {
+    const paymentLink = getLinks(o, F_PAYMENT)[0];
+    if (paymentLink) {
+      orderPaymentStatus.set(o.getId(), paymentStatus.get(paymentLink) || 'unknown');
+    }
   }
 
   // справочники
@@ -454,13 +477,24 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   const F_ITEM_LINK = ['Item (Menu Item)', 'Menu Item', 'Dish'];
   const F_ITEM_NAME = ['Item Name', 'Name', 'Title'];
   const F_QTY = ['Quantity', 'Qty', 'Count'];
-  const F_LINE_CATEGORY = ['Category (from Dish)', 'Category']; // сначала lookup, потом возможный fallback
+  const F_LINE_CATEGORY = ['Category (from Dish)', 'Category'];
+  const F_LINE_TYPE = ['Line Type', 'Type'];
 
   // группируем линии по заказу, берём категорию прямо из Order Lines
+  // ВАЖНО: для Paid линий проверяем статус платежа
   const orderLineMap = new Map<string, { name: string; qty: number; cat: string }[]>();
   for (const l of lines) {
     const orderRef = getLinks(l, F_LINE_ORDER)[0];
     if (!orderRef) continue;
+
+    const lineType = (getStr(l, F_LINE_TYPE) || '').toLowerCase();
+    
+    // Если линия Paid - проверяем статус платежа
+    if (lineType === 'paid') {
+      const paymentStat = orderPaymentStatus.get(orderRef);
+      // Включаем только если платеж succeeded
+      if (paymentStat !== 'succeeded') continue;
+    }
 
     const nameStr = (getStr(l, F_ITEM_NAME) || '').trim();
     const qty = getNum(l, F_QTY) ?? 1;
