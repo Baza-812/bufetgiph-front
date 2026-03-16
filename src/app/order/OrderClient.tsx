@@ -614,24 +614,35 @@ function DateModal({
               </div>
 
               {/* Платные допы */}
-              {sum.paidExtras && sum.paidExtras.length > 0 && (
-                <div className="rounded-xl bg-green-900/20 border border-green-500/30 p-3 mb-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-white/90 font-semibold">Дополнительные блюда</div>
-                    {sum.paymentInfo && (
-                      <div className={`text-xs px-2 py-1 rounded ${
-                        sum.paymentInfo.status === 'succeeded' 
-                          ? 'bg-green-600/20 text-green-400 border border-green-500/30' 
-                          : sum.paymentInfo.status === 'pending'
-                          ? 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30'
-                          : 'bg-red-600/20 text-red-400 border border-red-500/30'
-                      }`}>
-                        {sum.paymentInfo.status === 'succeeded' ? '✓ Оплачено' : 
-                         sum.paymentInfo.status === 'pending' ? '⏳ Ожидает оплаты' : 
-                         '✕ Не оплачено'}
-                      </div>
-                    )}
-                  </div>
+              {sum.paidExtras && sum.paidExtras.length > 0 && (() => {
+                const paymentStatus = sum.paymentInfo?.status || 'unknown';
+                const isSucceeded = paymentStatus === 'succeeded';
+                const isPending = paymentStatus === 'pending';
+                
+                const containerClass = isSucceeded
+                  ? 'rounded-xl bg-green-900/20 border border-green-500/30 p-3 mb-3'
+                  : isPending
+                  ? 'rounded-xl bg-yellow-900/20 border border-yellow-500/30 p-3 mb-3'
+                  : 'rounded-xl bg-red-900/20 border border-red-500/30 p-3 mb-3';
+                
+                return (
+                  <div className={containerClass}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-white/90 font-semibold">Дополнительные блюда</div>
+                      {sum.paymentInfo && (
+                        <div className={`text-xs px-2 py-1 rounded ${
+                          isSucceeded
+                            ? 'bg-green-600/20 text-green-400 border border-green-500/30' 
+                            : isPending
+                            ? 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30'
+                            : 'bg-red-600/20 text-red-400 border border-red-500/30'
+                        }`}>
+                          {isSucceeded ? '✓ Оплачено' : 
+                           isPending ? '⏳ Ожидает оплаты' : 
+                           '✕ Не оплачено'}
+                        </div>
+                      )}
+                    </div>
                   <div className="space-y-1 text-sm">
                     {sum.paidExtras.map((ex, i) => (
                       <div key={i} className="flex justify-between">
@@ -640,16 +651,17 @@ function DateModal({
                       </div>
                     ))}
                   </div>
-                  <div className="border-t border-white/10 mt-2 pt-2 flex justify-between font-semibold">
-                    <span className="text-white/90">
-                      {sum.paymentInfo?.status === 'succeeded' ? 'Оплачено:' : 'К оплате:'}
-                    </span>
-                    <span className="text-yellow-400">
-                      {sum.paidExtras.reduce((acc, ex) => acc + ex.lineSum, 0)} ₽
-                    </span>
+                    <div className="border-t border-white/10 mt-2 pt-2 flex justify-between font-semibold">
+                      <span className="text-white/90">
+                        {isSucceeded ? 'Оплачено:' : 'К оплате:'}
+                      </span>
+                      <span className="text-yellow-400">
+                        {sum.paidExtras.reduce((acc, ex) => acc + ex.lineSum, 0)} ₽
+                      </span>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </>
           )}
 
