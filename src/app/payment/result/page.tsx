@@ -177,7 +177,11 @@ function PaymentResultContent() {
               {/* Для canceled платежей - кнопка повторить оплату */}
               {isCanceled && status.paymentLink && (
                 <Button
-                  onClick={() => window.location.href = status.paymentLink}
+                  onClick={() => {
+                    if (status.paymentLink) {
+                      window.location.href = status.paymentLink;
+                    }
+                  }}
                   className="!bg-yellow-600 hover:!bg-yellow-700"
                 >
                   Повторить оплату
