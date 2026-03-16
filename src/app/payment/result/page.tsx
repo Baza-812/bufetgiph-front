@@ -12,6 +12,7 @@ type PaymentStatus = {
   status?: string;
   paid?: boolean;
   amount?: number;
+  paymentLink?: string;
   error?: string;
   bankInfo?: {
     legalName: string;
