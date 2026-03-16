@@ -543,16 +543,19 @@ function DateModal({
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
+    const hasPaidExtras = sum.paidExtras && sum.paidExtras.length > 0;
+    const hasSucceededPayment = sum.paymentInfo?.status === 'succeeded';
+    
     try {
       setWorking(true); setErr('');
-      const hasPaidExtras = sum.paidExtras && sum.paidExtras.length > 0;
-      const hasSucceededPayment = sum.paymentInfo?.status === 'succeeded';
       
       await fetchJSON('/api/order_cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeID, org, token, orderId: sum.orderId, reason: 'user_cancel' })
       });
+      
+      setWorking(false);
       
       // Если был оплаченный платеж - показываем сообщение о возврате
       if (hasPaidExtras && hasSucceededPayment) {
@@ -567,7 +570,8 @@ function DateModal({
       }
     } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
-    } finally { setWorking(false); }
+      setWorking(false);
+    }
   }
 
   // Экран успешной отмены с возвратом
