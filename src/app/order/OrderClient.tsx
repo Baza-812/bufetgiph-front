@@ -530,6 +530,8 @@ function DateModal({
         u.searchParams.set('token', token);
         u.searchParams.set('date', iso);
         const r = await fetchJSON<SingleResp>(u.toString());
+        console.log('[DateModal] hr_orders response:', JSON.stringify(r?.summary, null, 2));
+        console.log('[DateModal] paymentInfo:', r?.summary?.paymentInfo);
         if (!ignore) setSum(r?.summary || null);
       } catch (e) {
         if (!ignore) setErr(e instanceof Error ? e.message : String(e));
@@ -618,6 +620,8 @@ function DateModal({
                 const paymentStatus = sum.paymentInfo?.status || 'unknown';
                 const isSucceeded = paymentStatus === 'succeeded';
                 const isPending = paymentStatus === 'pending';
+                
+                console.log('[DateModal] Rendering paid extras. paymentStatus:', paymentStatus, 'isSucceeded:', isSucceeded, 'isPending:', isPending);
                 
                 const containerClass = isSucceeded
                   ? 'rounded-xl bg-green-900/20 border border-green-500/30 p-3 mb-3'
