@@ -57,6 +57,9 @@ export default function OrderClient() {
   const [paidModalOpen, setPaidModalOpen] = useState(false);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [editingDate, setEditingDate] = useState<string | null>(null);
+  
+  // для модального окна с инструкцией
+  const [showInstructionModal, setShowInstructionModal] = useState(false);
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -220,6 +223,32 @@ export default function OrderClient() {
         </p>
       </Panel>
 
+      {/* Баннер с новой функцией дополнительных блюд */}
+      <div className="mb-4">
+        <div className="relative overflow-hidden rounded-2xl">
+          <img 
+            src="/images/paid-extras-banner.png" 
+            alt="Дополнительные блюда" 
+            className="w-full h-auto"
+          />
+        </div>
+        
+        {/* Краткая инструкция */}
+        <div className="mt-3 px-2 text-sm text-white/80">
+          <p className="mb-2">
+            <strong className="text-white">Новая возможность!</strong> Закажите дополнительные блюда к обеду с оплатой онлайн. 
+            Выберите любые позиции из меню на этапе подтверждения или добавьте к существующему заказу. 
+            Оплата картой через ЮКасса. Возврат средств при отмене - автоматический.
+          </p>
+          <button
+            onClick={() => setShowInstructionModal(true)}
+            className="text-yellow-400 hover:text-yellow-300 underline transition-colors"
+          >
+            Подробнее...
+          </button>
+        </div>
+      </div>
+
       {/* Информация о сотруднике */}
       {(employeeName || orgName) && (
         <Panel title="Информация о сотруднике">
@@ -320,6 +349,134 @@ export default function OrderClient() {
             reloadBusy();
           }}
         />
+      )}
+
+      {/* Модальное окно с инструкцией по дополнительным блюдам */}
+      {showInstructionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90">
+          <div className="bg-zinc-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Заголовок */}
+            <div className="sticky top-0 bg-zinc-900 border-b border-white/10 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-white">Инструкция: Как заказать дополнительные блюда</h2>
+              <button
+                onClick={() => setShowInstructionModal(false)}
+                className="text-white/60 hover:text-white text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Контент инструкции */}
+            <div className="px-6 py-4 space-y-6 text-white/90">
+              {/* Что это? */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Что это?</h3>
+                <p className="text-sm">
+                  Теперь вы можете заказать любые дополнительные блюда из меню сверх корпоративного набора. 
+                  Дополнительные блюда оплачиваются онлайн банковской картой через безопасный сервис ЮКасса.
+                </p>
+              </section>
+
+              {/* Как добавить */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Как добавить дополнительные блюда?</h3>
+                
+                <div className="space-y-4 text-sm">
+                  <div>
+                    <h4 className="font-semibold text-white mb-1">Вариант 1: При создании нового заказа</h4>
+                    <ol className="list-decimal list-inside space-y-1 ml-2">
+                      <li>Пройдите стандартный квиз выбора обеда (meal box, салат, суп и т.д.)</li>
+                      <li>На последнем шаге подтверждения нажмите <span className="text-yellow-400">"+ Добавить блюда дополнительно"</span></li>
+                      <li>Выберите нужные блюда из меню и укажите количество</li>
+                      <li>Нажмите <span className="text-yellow-400">"Готово"</span> - вы вернетесь к подтверждению заказа</li>
+                      <li>Проверьте состав и сумму, нажмите <span className="text-yellow-400">"Оплатить и подтвердить"</span></li>
+                      <li>Вы будете перенаправлены на страницу оплаты ЮКасса</li>
+                      <li>Оплатите заказ картой - после оплаты вас вернет обратно</li>
+                    </ol>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold text-white mb-1">Вариант 2: Добавить к существующему заказу</h4>
+                    <ol className="list-decimal list-inside space-y-1 ml-2">
+                      <li>Выберите дату, на которую уже оформлен заказ</li>
+                      <li>В открывшемся окне нажмите <span className="text-green-400">"Доп блюда"</span></li>
+                      <li>Выберите дополнительные блюда и количество</li>
+                      <li>Нажмите <span className="text-yellow-400">"Сохранить и оплатить"</span></li>
+                      <li>Оплатите через ЮКасса</li>
+                    </ol>
+                  </div>
+                </div>
+              </section>
+
+              {/* Статус оплаты */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Как посмотреть статус оплаты?</h3>
+                <p className="text-sm mb-2">
+                  Откройте модальное окно заказа - блок "Дополнительные блюда" будет подсвечен:
+                </p>
+                <ul className="text-sm space-y-1 ml-4">
+                  <li><span className="text-green-400">🟢 Зеленая рамка</span> - успешно оплачено</li>
+                  <li><span className="text-yellow-400">🟡 Желтая рамка</span> - ожидает оплаты</li>
+                  <li><span className="text-red-400">🔴 Красная рамка</span> - оплата не прошла</li>
+                </ul>
+                <p className="text-sm mt-2">
+                  Для неоплаченных допов доступна кнопка <span className="text-yellow-400">"Оплатить"</span> для повторной попытки.
+                </p>
+              </section>
+
+              {/* Отмена */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Как отменить заказ с дополнительными блюдами?</h3>
+                <ol className="list-decimal list-inside space-y-1 ml-2 text-sm">
+                  <li>Откройте модальное окно заказа</li>
+                  <li>Нажмите <span className="text-red-400">"Отменить"</span></li>
+                  <li>Если дополнительные блюда были оплачены, средства будут <strong>автоматически возвращены</strong> на вашу карту в течение нескольких минут</li>
+                  <li>Вы увидите уведомление об отмене и возврате средств</li>
+                </ol>
+              </section>
+
+              {/* Отмена в ЮКасса */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Что делать если отменили оплату в ЮКасса?</h3>
+                <p className="text-sm">
+                  Если вы нажали "Отменить" на странице оплаты ЮКасса:
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-4 text-sm mt-2">
+                  <li>Основной корпоративный заказ будет сохранен</li>
+                  <li>Дополнительные блюда будут в статусе "Ожидает оплаты"</li>
+                  <li>Вы сможете вернуться и оплатить их позже через кнопку <span className="text-yellow-400">"Оплатить"</span></li>
+                </ul>
+              </section>
+
+              {/* Ограничения */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Ограничения по времени</h3>
+                <p className="text-sm">
+                  Заказ дополнительных блюд доступен до <strong>22:00 текущего дня</strong> (как и изменение основного заказа).
+                </p>
+              </section>
+
+              {/* Безопасность */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Безопасность</h3>
+                <p className="text-sm">
+                  Оплата производится через <strong>ЮКасса</strong> - официальный платежный сервис от Сбербанка. 
+                  Мы не храним данные ваших карт. Все транзакции защищены по стандартам PCI DSS.
+                </p>
+              </section>
+            </div>
+
+            {/* Футер с кнопкой закрытия */}
+            <div className="sticky bottom-0 bg-zinc-900 border-t border-white/10 px-6 py-4">
+              <button
+                onClick={() => setShowInstructionModal(false)}
+                className="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-semibold py-3 rounded-xl transition-colors"
+              >
+                Понятно
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       </div>
     </main>
