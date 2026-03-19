@@ -417,6 +417,7 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   const employeeIds = new Set<string>();
   const mealBoxIds = new Set<string>();
   const lineIds = new Set<string>();
+  
   for (const o of orders) {
     getLinks(o, F_EMP).forEach((id) => employeeIds.add(id));
     getLinks(o, F_MEALBOXES).forEach((id) => mealBoxIds.add(id));
@@ -454,13 +455,20 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   const F_ITEM_LINK = ['Item (Menu Item)', 'Menu Item', 'Dish'];
   const F_ITEM_NAME = ['Item Name', 'Name', 'Title'];
   const F_QTY = ['Quantity', 'Qty', 'Count'];
-  const F_LINE_CATEGORY = ['Category (from Dish)', 'Category']; // сначала lookup, потом возможный fallback
+  const F_LINE_CATEGORY = ['Category (from Dish)', 'Category'];
+  const F_LINE_TYPE = ['Line Type', 'Type'];
 
   // группируем линии по заказу, берём категорию прямо из Order Lines
+  // ВАЖНО: исключаем линии с Line Type='Pending' (неоплаченные платные допы)
   const orderLineMap = new Map<string, { name: string; qty: number; cat: string }[]>();
   for (const l of lines) {
     const orderRef = getLinks(l, F_LINE_ORDER)[0];
     if (!orderRef) continue;
+
+    const lineType = (getStr(l, F_LINE_TYPE) || '').toLowerCase();
+    
+    // Исключаем Pending линии (неоплаченные платные допы)
+    if (lineType === 'pending') continue;
 
     const nameStr = (getStr(l, F_ITEM_NAME) || '').trim();
     const qty = getNum(l, F_QTY) ?? 1;

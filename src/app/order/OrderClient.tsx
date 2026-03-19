@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, fmtDayLabel } from '@/lib/api';
+import { fetchJSON, fmtDayLabel, MenuItem } from '@/lib/api';
 import HintDates from '@/components/HintDates';
+import PaidExtrasModal from '@/components/PaidExtrasModal';
 
 
 
@@ -19,6 +20,13 @@ type SingleResp = {
     mealBox: string;
     extra1: string;
     extra2: string;
+    paidExtras?: Array<{ name: string; qty: number; unitPrice: number; lineSum: number }>;
+    paymentInfo?: {
+      status: string;
+      amount: number;
+      paymentLink: string;
+      paymentId: string;
+    } | null;
     orderId: string;
   };
 };
@@ -43,6 +51,15 @@ export default function OrderClient() {
   // информация о сотруднике и организации
   const [employeeName, setEmployeeName] = useState('');
   const [orgName, setOrgName] = useState('');
+
+  // для редактирования платных допов
+  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [paidModalOpen, setPaidModalOpen] = useState(false);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editingDate, setEditingDate] = useState<string | null>(null);
+  
+  // для модального окна с инструкцией
+  const [showInstructionModal, setShowInstructionModal] = useState(false);
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -71,24 +88,23 @@ export default function OrderClient() {
     })();
   }, [org]);
 
-  // 3) информация о сотруднике (из модалки берем fullName)
+  // 3) информация о сотруднике
   useEffect(() => {
-    if (!employeeID || !org || !token || dates.length === 0) return;
+    if (!employeeID || !org || !token) return;
     (async () => {
       try {
-        const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode', 'single');
+        // Используем API для получения информации о сотруднике
+        const u = new URL('/api/employee_info', window.location.origin);
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
-        u.searchParams.set('date', dates[0] || '');
-        const r = await fetchJSON<SingleResp>(u.toString());
-        if (r?.summary?.fullName) setEmployeeName(r.summary.fullName);
+        const r = await fetchJSON<{ ok: boolean; fullName?: string }>(u.toString());
+        if (r?.ok && r.fullName) setEmployeeName(r.fullName);
       } catch {
         // не критично
       }
     })();
-  }, [employeeID, org, token, dates]);
+  }, [employeeID, org, token]);
 
    // 4) опубликованные даты
   useEffect(() => {
@@ -207,6 +223,32 @@ export default function OrderClient() {
         </p>
       </Panel>
 
+      {/* Баннер с новой функцией дополнительных блюд */}
+      <div className="mb-4">
+        <div className="relative overflow-hidden rounded-2xl">
+          <img 
+            src="/images/paid-extras-banner.png" 
+            alt="Дополнительные блюда" 
+            className="w-full h-auto"
+          />
+        </div>
+        
+        {/* Краткая инструкция */}
+        <div className="mt-3 px-2 text-sm text-white/80">
+          <p className="mb-2">
+            <strong className="text-white">Новая возможность!</strong> Закажите дополнительные блюда к обеду с оплатой онлайн. 
+            Выберите любые позиции из меню на этапе подтверждения или добавьте к существующему заказу. 
+            Оплата картой через ЮКасса. Возврат средств при отмене - автоматический.
+          </p>
+          <button
+            onClick={() => setShowInstructionModal(true)}
+            className="text-yellow-400 hover:text-yellow-300 underline transition-colors"
+          >
+            Подробнее...
+          </button>
+        </div>
+      </div>
+
       {/* Информация о сотруднике */}
       {(employeeName || orgName) && (
         <Panel title="Информация о сотруднике">
@@ -283,25 +325,352 @@ export default function OrderClient() {
           info={busy[selected]}
           onClose={() => setSelected(null)}
           onChanged={reloadBusy}
+          onOpenPaidModal={(orderId, date) => {
+            setEditingOrderId(orderId);
+            setEditingDate(date);
+            setSelected(null);
+            setPaidModalOpen(true);
+          }}
         />
+      )}
+
+      {/* Модалка редактирования платных допов */}
+      {paidModalOpen && editingOrderId && editingDate && (
+        <PaidExtrasEditModal
+          orderId={editingOrderId}
+          date={editingDate}
+          employeeID={employeeID}
+          org={org}
+          token={token}
+          onClose={() => {
+            setPaidModalOpen(false);
+            setEditingOrderId(null);
+            setEditingDate(null);
+            reloadBusy();
+          }}
+        />
+      )}
+
+      {/* Модальное окно с инструкцией по дополнительным блюдам */}
+      {showInstructionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90">
+          <div className="bg-zinc-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Заголовок */}
+            <div className="sticky top-0 bg-zinc-900 border-b border-white/10 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold text-white">Инструкция: Как заказать дополнительные блюда</h2>
+              <button
+                onClick={() => setShowInstructionModal(false)}
+                className="text-white/60 hover:text-white text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Контент инструкции */}
+            <div className="px-6 py-4 space-y-6 text-white/90">
+              {/* Что это? */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Что это?</h3>
+                <p className="text-sm">
+                  Теперь вы можете заказать любые дополнительные блюда из меню сверх корпоративного набора. 
+                  Дополнительные блюда оплачиваются онлайн банковской картой через безопасный сервис ЮКасса.
+                </p>
+              </section>
+
+              {/* Как добавить */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Как добавить дополнительные блюда?</h3>
+                
+                <div className="space-y-4 text-sm">
+                  <div>
+                    <h4 className="font-semibold text-white mb-1">Вариант 1: При создании нового заказа</h4>
+                    <ol className="list-decimal list-inside space-y-1 ml-2">
+                      <li>Пройдите стандартный квиз выбора обеда (meal box, салат, суп и т.д.)</li>
+                      <li>На последнем шаге подтверждения нажмите <span className="text-yellow-400">"+ Добавить блюда дополнительно"</span></li>
+                      <li>Выберите нужные блюда из меню и укажите количество</li>
+                      <li>Нажмите <span className="text-yellow-400">"Готово"</span> - вы вернетесь к подтверждению заказа</li>
+                      <li>Проверьте состав и сумму, нажмите <span className="text-yellow-400">"Оплатить и подтвердить"</span></li>
+                      <li>Вы будете перенаправлены на страницу оплаты ЮКасса</li>
+                      <li>Оплатите заказ картой - после оплаты вас вернет обратно</li>
+                    </ol>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold text-white mb-1">Вариант 2: Добавить к существующему заказу</h4>
+                    <ol className="list-decimal list-inside space-y-1 ml-2">
+                      <li>Выберите дату, на которую уже оформлен заказ</li>
+                      <li>В открывшемся окне нажмите <span className="text-green-400">"Доп блюда"</span></li>
+                      <li>Выберите дополнительные блюда и количество</li>
+                      <li>Нажмите <span className="text-yellow-400">"Сохранить и оплатить"</span></li>
+                      <li>Оплатите через ЮКасса</li>
+                    </ol>
+                  </div>
+                </div>
+              </section>
+
+              {/* Статус оплаты */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Как посмотреть статус оплаты?</h3>
+                <p className="text-sm mb-2">
+                  Откройте модальное окно заказа - блок "Дополнительные блюда" будет подсвечен:
+                </p>
+                <ul className="text-sm space-y-1 ml-4">
+                  <li><span className="text-green-400">🟢 Зеленая рамка</span> - успешно оплачено</li>
+                  <li><span className="text-yellow-400">🟡 Желтая рамка</span> - ожидает оплаты</li>
+                  <li><span className="text-red-400">🔴 Красная рамка</span> - оплата не прошла</li>
+                </ul>
+                <p className="text-sm mt-2">
+                  Для неоплаченных допов доступна кнопка <span className="text-yellow-400">"Оплатить"</span> для повторной попытки.
+                </p>
+              </section>
+
+              {/* Отмена */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Как отменить заказ с дополнительными блюдами?</h3>
+                <ol className="list-decimal list-inside space-y-1 ml-2 text-sm">
+                  <li>Откройте модальное окно заказа</li>
+                  <li>Нажмите <span className="text-red-400">"Отменить"</span></li>
+                  <li>Если дополнительные блюда были оплачены, средства будут <strong>автоматически возвращены</strong> на вашу карту в течение нескольких минут</li>
+                  <li>Вы увидите уведомление об отмене и возврате средств</li>
+                </ol>
+              </section>
+
+              {/* Отмена в ЮКасса */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Что делать если отменили оплату в ЮКасса?</h3>
+                <p className="text-sm">
+                  Если вы нажали "Отменить" на странице оплаты ЮКасса:
+                </p>
+                <ul className="list-disc list-inside space-y-1 ml-4 text-sm mt-2">
+                  <li>Основной корпоративный заказ будет сохранен</li>
+                  <li>Дополнительные блюда будут в статусе "Ожидает оплаты"</li>
+                  <li>Вы сможете вернуться и оплатить их позже через кнопку <span className="text-yellow-400">"Оплатить"</span></li>
+                </ul>
+              </section>
+
+              {/* Ограничения */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Ограничения по времени</h3>
+                <p className="text-sm">
+                  Заказ дополнительных блюд доступен до <strong>22:00 текущего дня</strong> (как и изменение основного заказа).
+                </p>
+              </section>
+
+              {/* Безопасность */}
+              <section>
+                <h3 className="text-lg font-semibold text-white mb-2">Безопасность</h3>
+                <p className="text-sm">
+                  Оплата производится через <strong>ЮКасса</strong> - официальный платежный сервис от Сбербанка. 
+                  Мы не храним данные ваших карт. Все транзакции защищены по стандартам PCI DSS.
+                </p>
+              </section>
+            </div>
+
+            {/* Футер с кнопкой закрытия */}
+            <div className="sticky bottom-0 bg-zinc-900 border-t border-white/10 px-6 py-4">
+              <button
+                onClick={() => setShowInstructionModal(false)}
+                className="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-semibold py-3 rounded-xl transition-colors"
+              >
+                Понятно
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       </div>
     </main>
   );
 }
 
+/* Модалка редактирования платных допов */
+function PaidExtrasEditModal({
+  orderId, date, employeeID, org, token, onClose
+}: {
+  orderId: string;
+  date: string;
+  employeeID: string;
+  org: string;
+  token: string;
+  onClose: () => void;
+}) {
+  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentExtras, setCurrentExtras] = useState<Array<{ itemId: string; qty: number }>>([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Загружаем menu и текущие paid extras
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        setLoading(true);
+        
+        // Загружаем меню
+        const menuUrl = new URL('/api/menu', window.location.origin);
+        menuUrl.searchParams.set('date', date);
+        menuUrl.searchParams.set('org', org);
+        const menuResp = await fetchJSON<{ items?: any[]; records?: any[]; menu?: any[] }>(menuUrl.toString());
+        const rows = (menuResp.items ?? menuResp.records ?? menuResp.menu ?? []);
+        
+        // Преобразуем в MenuItem[]
+        const menuItems: MenuItem[] = rows.map((r: any) => ({
+          id: r.id || '',
+          name: r.name || r.fields?.Name || '',
+          description: r.description || r.fields?.Description || '',
+          category: r.category || r.fields?.Category || '',
+          price: r.price || r.fields?.Price || 0,
+        }));
+        
+        if (!ignore) setMenu(menuItems);
+
+        // Загружаем текущий заказ чтобы получить paidExtras
+        const summaryUrl = new URL('/api/hr_orders', window.location.origin);
+        summaryUrl.searchParams.set('mode', 'single');
+        summaryUrl.searchParams.set('employeeID', employeeID);
+        summaryUrl.searchParams.set('org', org);
+        summaryUrl.searchParams.set('token', token);
+        summaryUrl.searchParams.set('date', date);
+        
+        const summaryResp = await fetchJSON<SingleResp>(summaryUrl.toString());
+        
+        if (!ignore && summaryResp.summary?.paidExtras) {
+          // Преобразуем из backend формата в формат для модалки
+          const extras = summaryResp.summary.paidExtras.map(ex => {
+            // Найдем itemId по имени
+            const item = menuItems.find(m => m.name === ex.name);
+            return {
+              itemId: item?.id || '',
+              qty: ex.qty,
+            };
+          }).filter(ex => ex.itemId);
+          
+          setCurrentExtras(extras);
+        }
+      } catch (e) {
+        if (!ignore) setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    })();
+    
+    return () => { ignore = true; };
+  }, [date, org, employeeID, token]);
+
+  const handleSave = async (extras: Array<{ itemId: string; qty: number }>) => {
+    try {
+      setSaving(true);
+      setErr('');
+      
+      // Подготавливаем paidExtras с ценами
+      const paidExtrasWithPrice = extras
+        .map((ex) => {
+          const item = menu.find((m) => m.id === ex.itemId);
+          return {
+            itemId: ex.itemId,
+            qty: ex.qty,
+            unitPrice: item?.price || 0,
+            chargeToEmployee: true,
+          };
+        })
+        .filter((ex) => ex.qty > 0 && ex.unitPrice > 0);
+
+      const totalAmount = paidExtrasWithPrice.reduce((sum, ex) => sum + (ex.qty * ex.unitPrice), 0);
+
+      // Вызываем order_update только с paidExtras (без изменения основного заказа)
+      await fetchJSON('/api/order_update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeID,
+          org,
+          token,
+          orderId,
+          date,
+          paidExtras: paidExtrasWithPrice.length > 0 ? paidExtrasWithPrice : [],
+          hardDelete: true,
+        }),
+      });
+
+      // Если есть платные допы - создаем платеж и редиректим на оплату
+      if (totalAmount > 0) {
+        const paymentResp = await fetchJSON<{ ok: boolean; paymentUrl?: string; error?: string }>(
+          '/api/payment/create',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId,
+              employeeID,
+              org,
+              token,
+              amount: totalAmount,
+              description: `Дополнительные блюда к заказу`,
+            }),
+          }
+        );
+
+        if (!paymentResp?.ok || !paymentResp.paymentUrl) {
+          throw new Error(paymentResp?.error || 'Не удалось создать платеж');
+        }
+
+        // Редирект на страницу оплаты ЮKassa
+        window.location.href = paymentResp.paymentUrl;
+        return;
+      }
+
+      // Если допы удалены (сумма = 0) - просто закрываем
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90">
+        <div className="text-white">Загрузка меню...</div>
+      </div>
+    );
+  }
+
+  if (err) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4">
+        <div className="bg-panel border border-white/10 rounded-2xl p-4 max-w-md">
+          <div className="text-red-400 mb-4">{err}</div>
+          <Button onClick={onClose}>Закрыть</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <PaidExtrasModal
+      menu={menu}
+      initialExtras={currentExtras}
+      onSave={handleSave}
+      onClose={onClose}
+    />
+  );
+}
+
 /* ——— Модалка: состав + действия — всегда остаётся открытой; показывает лоадер, пока тянем детали ——— */
 function DateModal({
-  iso, employeeID, org, token, info, onClose, onChanged,
+  iso, employeeID, org, token, info, onClose, onChanged, onOpenPaidModal,
 }: {
   iso: string;
   employeeID: string; org: string; token: string;
   info?: SingleResp; onClose: ()=>void; onChanged: ()=>void;
+  onOpenPaidModal?: (orderId: string, date: string) => void;
 }) {
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
   const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
   const [loading, setLoading] = useState(false);
+  const [showCancelSuccess, setShowCancelSuccess] = useState(false);
 
   // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
   useEffect(() => {
@@ -318,6 +687,8 @@ function DateModal({
         u.searchParams.set('token', token);
         u.searchParams.set('date', iso);
         const r = await fetchJSON<SingleResp>(u.toString());
+        console.log('[DateModal] hr_orders response:', JSON.stringify(r?.summary, null, 2));
+        console.log('[DateModal] paymentInfo:', r?.summary?.paymentInfo);
         if (!ignore) setSum(r?.summary || null);
       } catch (e) {
         if (!ignore) setErr(e instanceof Error ? e.message : String(e));
@@ -331,22 +702,57 @@ function DateModal({
 
   async function cancelOrder() {
     if (!sum?.orderId) return;
+    const hasPaidExtras = sum.paidExtras && sum.paidExtras.length > 0;
+    const hasSucceededPayment = sum.paymentInfo?.status === 'succeeded';
+    
     try {
       setWorking(true); setErr('');
+      
       await fetchJSON('/api/order_cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ employeeID, org, token, orderId: sum.orderId, reason: 'user_cancel' })
       });
-      onClose();
-      onChanged(); // обновим «серость»
-          } catch(e: unknown) {
+      
+      setWorking(false);
+      
+      // Если был оплаченный платеж - показываем сообщение о возврате
+      if (hasPaidExtras && hasSucceededPayment) {
+        setShowCancelSuccess(true);
+        setTimeout(() => {
+          onClose();
+          onChanged();
+        }, 3000);
+      } else {
+        onClose();
+        onChanged();
+      }
+    } catch(e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
-    } finally { setWorking(false); }
+      setWorking(false);
+    }
+  }
+
+  // Экран успешной отмены с возвратом
+  if (showCancelSuccess) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
+        <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-6 text-center">
+          <div className="text-4xl mb-4">✓</div>
+          <div className="text-xl font-bold text-white mb-2">Заказ отменен</div>
+          <div className="text-white/70 mb-4">
+            Средства за дополнительные блюда будут возвращены на ваш счет в течение нескольких минут.
+          </div>
+          <div className="text-sm text-white/50">
+            Переход на главную через 3 секунды...
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-2 sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
       <div className="w-full sm:max-w-lg bg-panel border border-white/10 rounded-2xl p-4">
         <div className="flex items-center justify-between mb-2">
           <div className="text-lg font-bold">{fmtDayLabel(iso)}</div>
@@ -359,12 +765,64 @@ function DateModal({
           {!loading && sum?.orderId && (
             <>
               <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
-              <div className="rounded-xl bg-white/5 border border-white/10 p-3">
+              <div className="rounded-xl bg-white/5 border border-white/10 p-3 mb-3">
                 <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
                 <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
                 <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
                 <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
               </div>
+
+              {/* Платные допы */}
+              {sum.paidExtras && sum.paidExtras.length > 0 && (() => {
+                const paymentStatus = sum.paymentInfo?.status || 'unknown';
+                const isSucceeded = paymentStatus === 'succeeded';
+                const isPending = paymentStatus === 'pending';
+                
+                console.log('[DateModal] Rendering paid extras. paymentStatus:', paymentStatus, 'isSucceeded:', isSucceeded, 'isPending:', isPending);
+                
+                const containerClass = isSucceeded
+                  ? 'rounded-xl bg-green-900/20 border border-green-500/30 p-3 mb-3'
+                  : isPending
+                  ? 'rounded-xl bg-yellow-900/20 border border-yellow-500/30 p-3 mb-3'
+                  : 'rounded-xl bg-red-900/20 border border-red-500/30 p-3 mb-3';
+                
+                return (
+                  <div className={containerClass}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-white/90 font-semibold">Дополнительные блюда</div>
+                      {sum.paymentInfo && (
+                        <div className={`text-xs px-2 py-1 rounded ${
+                          isSucceeded
+                            ? 'bg-green-600/20 text-green-400 border border-green-500/30' 
+                            : isPending
+                            ? 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30'
+                            : 'bg-red-600/20 text-red-400 border border-red-500/30'
+                        }`}>
+                          {isSucceeded ? '✓ Оплачено' : 
+                           isPending ? '⏳ Ожидает оплаты' : 
+                           '✕ Не оплачено'}
+                        </div>
+                      )}
+                    </div>
+                  <div className="space-y-1 text-sm">
+                    {sum.paidExtras.map((ex, i) => (
+                      <div key={i} className="flex justify-between">
+                        <span className="text-white/80">{ex.name} × {ex.qty}</span>
+                        <span className="text-yellow-400 font-semibold">{ex.lineSum} ₽</span>
+                      </div>
+                    ))}
+                  </div>
+                    <div className="border-t border-white/10 mt-2 pt-2 flex justify-between font-semibold">
+                      <span className="text-white/90">
+                        {isSucceeded ? 'Оплачено:' : 'К оплате:'}
+                      </span>
+                      <span className="text-yellow-400">
+                        {sum.paidExtras.reduce((acc, ex) => acc + ex.lineSum, 0)} ₽
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
             </>
           )}
 
@@ -376,32 +834,62 @@ function DateModal({
 
           {err && <div className="text-red-400">{err}</div>}
 
-          <div className="flex gap-3 pt-2">
+          <div className="flex flex-wrap gap-2 pt-2">
             <Button onClick={onClose}>ОК</Button>
 
-<Button
-  variant="ghost"
-  onClick={() => {
-    const u = new URL('/order/quiz', window.location.origin);
-    u.searchParams.set('date', iso);
-    u.searchParams.set('step', '1');
-    u.searchParams.set('org', org);
-    u.searchParams.set('employeeID', employeeID);
-    u.searchParams.set('token', token);
-    if (sum?.orderId) u.searchParams.set('orderId', sum.orderId); // правка существующего
-    window.location.href = u.toString();
-  }}
->
-  Изменить
-</Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                const u = new URL('/order/quiz', window.location.origin);
+                u.searchParams.set('date', iso);
+                u.searchParams.set('step', '1');
+                u.searchParams.set('org', org);
+                u.searchParams.set('employeeID', employeeID);
+                u.searchParams.set('token', token);
+                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId);
+                window.location.href = u.toString();
+              }}
+            >
+              Изменить
+            </Button>
 
-<Button
-  variant="danger"
-  onClick={cancelOrder}
-  disabled={working || !sum?.orderId}
->
-  {working ? 'Отмена…' : 'Отменить'}
-</Button>
+            {sum?.orderId && onOpenPaidModal && (
+              <Button
+                variant="ghost"
+                onClick={() => onOpenPaidModal(sum.orderId, iso)}
+                className="!bg-green-600 hover:!bg-green-700 !text-white"
+              >
+                Доп блюда
+              </Button>
+            )}
+
+            {/* Кнопка "Оплатить" если допы есть но не оплачены */}
+            {sum?.paidExtras && sum.paidExtras.length > 0 && 
+             sum.paymentInfo && sum.paymentInfo.status !== 'succeeded' && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  // Редирект на существующий payment link или создать новый
+                  if (sum.paymentInfo?.paymentLink) {
+                    window.location.href = sum.paymentInfo.paymentLink;
+                  } else if (sum.orderId && onOpenPaidModal) {
+                    // Если нет payment link - открываем редактирование допов (создаст новый платеж)
+                    onOpenPaidModal(sum.orderId, iso);
+                  }
+                }}
+                className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
+              >
+                💳 Оплатить
+              </Button>
+            )}
+
+            <Button
+              variant="danger"
+              onClick={cancelOrder}
+              disabled={working || !sum?.orderId}
+            >
+              {working ? 'Отмена…' : 'Отменить'}
+            </Button>
 
           </div>
         </div>
