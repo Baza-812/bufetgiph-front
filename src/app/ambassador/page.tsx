@@ -7,6 +7,9 @@ import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import { fetchJSON } from '@/lib/api';
 
+// Делаем страницу динамической для использования useSearchParams()
+export const dynamic = 'force-dynamic';
+
 type TeamMember = {
   id: string;
   name: string;
