@@ -1,14 +1,11 @@
 // src/app/ambassador/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import { fetchJSON } from '@/lib/api';
-
-// Делаем страницу динамической для использования useSearchParams()
-export const dynamic = 'force-dynamic';
 
 type TeamMember = {
   id: string;
@@ -34,7 +31,7 @@ type DateStats = {
   label: string;
 };
 
-export default function AmbassadorDashboard() {
+function AmbassadorDashboardContent() {
   const sp = useSearchParams();
   const router = useRouter();
   
@@ -407,5 +404,21 @@ export default function AmbassadorDashboard() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function AmbassadorDashboard() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen bg-zinc-900 text-white p-4">
+        <div className="max-w-4xl mx-auto">
+          <Panel title="Загрузка">
+            <div className="text-white/70">Загрузка личного кабинета...</div>
+          </Panel>
+        </div>
+      </main>
+    }>
+      <AmbassadorDashboardContent />
+    </Suspense>
   );
 }
