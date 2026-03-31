@@ -14,6 +14,8 @@ const {
   AIRTABLE_TBL_REPORT_RECIPIENTS,
   AIRTABLE_TBL_REPORTS,
   AIRTABLE_TBL_PAYMENTS,
+  AIRTABLE_TBL_PRICING_PLANS,
+  AIRTABLE_TBL_AMBASSADOR_APPS,
 } = process.env as Record<string, string | undefined>;
 
 // Жёстко падаем при сборке, если секреты не заданы
@@ -42,6 +44,8 @@ export const TBL = {
   REPORT_RECIPIENTS: AIRTABLE_TBL_REPORT_RECIPIENTS || "ReportRecipients",
   REPORTS: AIRTABLE_TBL_REPORTS || "Reports",
   PAYMENTS: AIRTABLE_TBL_PAYMENTS || "Payments",
+  PRICING_PLANS: AIRTABLE_TBL_PRICING_PLANS || "PricingPlans",
+  AMBASSADOR_APPS: AIRTABLE_TBL_AMBASSADOR_APPS || "AmbassadorApplications",
 } as const;
 
 // Хелпер для выборки всех записей (обходит пагинацию)
