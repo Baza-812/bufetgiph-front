@@ -120,7 +120,7 @@ export default function AmbassadorDashboard() {
           `/api/ambassador/team_stats?org=${encodeURIComponent(org)}&date=${selectedDate}`
         );
         if (r?.ok && r.stats) {
-          setDateStats(prev => ({ ...prev, [selectedDate]: r.stats }));
+          setDateStats(prev => ({ ...prev, [selectedDate]: r.stats! }));
         }
       } catch (err) {
         console.error('Failed to load team stats:', err);
