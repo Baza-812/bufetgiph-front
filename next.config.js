@@ -15,6 +15,8 @@ const LOCAL_API_PREFIXES = [
   '/api/ping',        // тех.проверка, можно удалить после
   '/api/payment',     // payment proxy routes (create, status)
   '/api/employee_info', // employee info proxy route
+  '/api/pricing_plan',  // pricing plan proxy route
+  '/api/ambassador',    // ambassador proxy routes (team_stats, apply)
   // добавишь новые — просто допиши сюда строку
 ];
 

@@ -51,6 +51,7 @@ export default function OrderClient() {
   // информация о сотруднике и организации
   const [employeeName, setEmployeeName] = useState('');
   const [orgName, setOrgName] = useState('');
+  const [employeeRole, setEmployeeRole] = useState('');
 
   // для редактирования платных допов
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -60,6 +61,32 @@ export default function OrderClient() {
   
   // для модального окна с инструкцией
   const [showInstructionModal, setShowInstructionModal] = useState(false);
+
+  // для Ambassador программы
+  const [pricingPlan, setPricingPlan] = useState<{
+    contractType: string;
+    fullMealPrice: number;
+    lightMealPrice: number;
+    teamMinForDelivery: number;
+    teamMinForFreeAmbassador: number;
+    deliveryAddress: string;
+    bankInfo?: {
+      legalName: string;
+      inn: string;
+      kpp: string;
+      phone: string;
+      footer: string;
+    };
+  } | null>(null);
+
+  const [teamStats, setTeamStats] = useState<Record<string, {
+    totalOrders: number;
+    paidOrders: number;
+    minForDelivery: number;
+    minForFreeAmbassador: number;
+    deliveryAllowed: boolean;
+    ambassadorFree: boolean;
+  }>>({});
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -98,13 +125,62 @@ export default function OrderClient() {
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
-        const r = await fetchJSON<{ ok: boolean; fullName?: string }>(u.toString());
-        if (r?.ok && r.fullName) setEmployeeName(r.fullName);
+        const r = await fetchJSON<{ ok: boolean; fullName?: string; role?: string }>(u.toString());
+        if (r?.ok) {
+          if (r.fullName) setEmployeeName(r.fullName);
+          if (r.role) setEmployeeRole(r.role);
+        }
       } catch {
         // не критично
       }
     })();
   }, [employeeID, org, token]);
+
+  // 3b) загружаем pricing plan для Ambassador организаций
+  useEffect(() => {
+    if (!org) return;
+    (async () => {
+      try {
+        const r = await fetchJSON<any>(`/api/pricing_plan?org=${encodeURIComponent(org)}`);
+        if (r?.ok) {
+          setPricingPlan(r);
+        }
+      } catch (err) {
+        console.error('Failed to load pricing plan:', err);
+      }
+    })();
+  }, [org]);
+
+  // 3c) загружаем team stats для Ambassador/TeamMember
+  useEffect(() => {
+    if (!org || !dates.length) return;
+    if (employeeRole !== 'Ambassador' && employeeRole !== 'TeamMember') return;
+    if (pricingPlan?.contractType !== 'Ambassador') return;
+
+    (async () => {
+      try {
+        const statsMap: Record<string, any> = {};
+        
+        // Загружаем статистику для всех доступных дат
+        for (const date of dates) {
+          try {
+            const r = await fetchJSON<any>(
+              `/api/ambassador/team_stats?org=${encodeURIComponent(org)}&date=${date}`
+            );
+            if (r?.ok && r.stats) {
+              statsMap[date] = r.stats;
+            }
+          } catch {
+            // Пропускаем ошибки для отдельных дат
+          }
+        }
+        
+        setTeamStats(statsMap);
+      } catch (err) {
+        console.error('Failed to load team stats:', err);
+      }
+    })();
+  }, [org, dates, employeeRole, pricingPlan]);
 
    // 4) опубликованные даты
   useEffect(() => {
@@ -249,6 +325,51 @@ export default function OrderClient() {
         </div>
       </div>
 
+      {/* Блок с ценами и условиями для Ambassador организаций */}
+      {pricingPlan?.contractType === 'Ambassador' && (
+        <div className="space-y-4">
+          <Panel title="Варианты обедов">
+            <div className="space-y-3">
+              {/* Полный обед */}
+              <div className="bg-white/5 p-3 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-white text-lg">Полный обед</span>
+                  <span className="text-yellow-400 font-bold text-xl">{pricingPlan.fullMealPrice} ₽</span>
+                </div>
+                <p className="text-white/70 text-sm">
+                  Салат + Суп + Основное блюдо + Гарнир + Напиток
+                </p>
+              </div>
+
+              {/* Легкий обед */}
+              <div className="bg-white/5 p-3 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-white text-lg">Лёгкий обед</span>
+                  <span className="text-yellow-400 font-bold text-xl">{pricingPlan.lightMealPrice} ₽</span>
+                </div>
+                <p className="text-white/70 text-sm">
+                  Суп + Основное блюдо + Гарнир + Напиток
+                </p>
+              </div>
+
+              {/* Условия доставки */}
+              <div className="mt-4 p-3 bg-blue-500/10 rounded-lg border border-blue-400/30">
+                <h4 className="font-semibold text-white mb-2 flex items-center gap-2">
+                  <span>📦</span>
+                  <span>Условия доставки</span>
+                </h4>
+                <ul className="text-sm text-white/70 space-y-1 list-disc list-inside">
+                  <li>Минимум <strong className="text-white">{pricingPlan.teamMinForDelivery} оплаченных обедов</strong> для доставки</li>
+                  <li>Организатор (Амбассадор) получает <strong className="text-white">бесплатный обед</strong> при заказе от <strong className="text-white">{pricingPlan.teamMinForFreeAmbassador} человек</strong></li>
+                  <li>Заказ и оплата до <strong className="text-white">17:00</strong> накануне</li>
+                  <li>Доставка: <strong className="text-white">{pricingPlan.deliveryAddress}</strong></li>
+                </ul>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      )}
+
       {/* Информация о сотруднике */}
       {(employeeName || orgName) && (
         <Panel title="Информация о сотруднике">
@@ -265,7 +386,28 @@ export default function OrderClient() {
                 <span className="font-semibold">{orgName}</span>
               </div>
             )}
+            {employeeRole && (
+              <div className="text-white/80">
+                <span className="text-white/60">Роль:</span>{' '}
+                <span className="font-semibold">
+                  {employeeRole === 'Ambassador' ? '👑 Амбассадор' : employeeRole}
+                </span>
+              </div>
+            )}
           </div>
+          
+          {/* Кнопка перехода в личный кабинет для Ambassador */}
+          {employeeRole === 'Ambassador' && (
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <Button
+                onClick={() => router.push(`/ambassador?org=${org}&employeeID=${employeeID}&token=${token}`)}
+                className="w-full"
+              >
+                <span className="mr-2">👑</span>
+                Личный кабинет Амбассадора
+              </Button>
+            </div>
+          )}
         </Panel>
       )}
           
@@ -295,16 +437,34 @@ export default function OrderClient() {
           {dates.map(d => {
             const has = Boolean(busy[d]?.summary); // СЕРОЕ если заказ уже есть
             const label = fmtDayLabel(d);
+            const stats = teamStats[d];
+            const showStats = pricingPlan?.contractType === 'Ambassador' && 
+                             (employeeRole === 'Ambassador' || employeeRole === 'TeamMember');
+            
             return (
-              <Button
-                key={d}
-                onClick={() => handlePickDate(d)}
-                className="w-full"
-                variant={has ? 'ghost' : 'primary'}
-                disabled={!busyReady} // ← до загрузки «серости» клики блокируем
-              >
-                {label}
-              </Button>
+              <div key={d} className="relative">
+                <Button
+                  onClick={() => handlePickDate(d)}
+                  className="w-full"
+                  variant={has ? 'ghost' : 'primary'}
+                  disabled={!busyReady} // ← до загрузки «серости» клики блокируем
+                >
+                  {label}
+                </Button>
+                
+                {/* Счетчик команды для Ambassador/TeamMember */}
+                {showStats && stats && (
+                  <div className="mt-1 text-center">
+                    <span className={`text-xs font-medium ${
+                      stats.paidOrders >= stats.minForDelivery 
+                        ? 'text-green-400' 
+                        : 'text-yellow-400'
+                    }`}>
+                      {stats.paidOrders} / {stats.minForDelivery}
+                    </span>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -476,6 +636,41 @@ export default function OrderClient() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Футер с контактами для Ambassador организаций */}
+      {pricingPlan?.contractType === 'Ambassador' && pricingPlan.bankInfo && (
+        <div className="mt-8 border-t border-white/10 pt-6">
+          <Panel title="Контакты и реквизиты">
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="text-white/60">Организация:</span>{' '}
+                <span className="text-white font-medium">{pricingPlan.bankInfo.legalName}</span>
+              </div>
+              <div className="flex gap-6 flex-wrap">
+                <div>
+                  <span className="text-white/60">ИНН:</span>{' '}
+                  <span className="text-white">{pricingPlan.bankInfo.inn}</span>
+                </div>
+                {pricingPlan.bankInfo.kpp && (
+                  <div>
+                    <span className="text-white/60">КПП:</span>{' '}
+                    <span className="text-white">{pricingPlan.bankInfo.kpp}</span>
+                  </div>
+                )}
+              </div>
+              <div>
+                <span className="text-white/60">Телефон:</span>{' '}
+                <span className="text-white">{pricingPlan.bankInfo.phone}</span>
+              </div>
+              {pricingPlan.bankInfo.footer && (
+                <div className="mt-3 pt-3 border-t border-white/10 text-white/70">
+                  {pricingPlan.bankInfo.footer}
+                </div>
+              )}
+            </div>
+          </Panel>
         </div>
       )}
       </div>

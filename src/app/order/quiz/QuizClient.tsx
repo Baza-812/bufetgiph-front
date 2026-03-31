@@ -69,6 +69,15 @@ export default function QuizClient() {
   const [paidExtras, setPaidExtras] = useState<Array<{ itemId: string; qty: number }>>([]);
   const [paidModalOpen, setPaidModalOpen] = useState(false);
 
+  // Для Ambassador программы
+  const [employeeRole, setEmployeeRole] = useState('');
+  const [pricingPlan, setPricingPlan] = useState<{
+    contractType: string;
+    fullMealPrice: number;
+    lightMealPrice: number;
+  } | null>(null);
+  const [mealType, setMealType] = useState<'Full' | 'Light' | null>(null); // для TeamMember
+
   // если дата в URL поменялась — синхронизируем черновик
   useEffect(() => {
     setDraft(() => ({ date, ...(loadDraft(date) as Partial<Draft>) }));
@@ -111,6 +120,38 @@ export default function QuizClient() {
       }
     })();
   }, [org]);
+
+  // Грузим роль сотрудника и pricing plan для Ambassador программы
+  useEffect(() => {
+    if (!employeeID || !org || !token) return;
+    
+    (async () => {
+      try {
+        // Получаем роль сотрудника
+        const empUrl = new URL('/api/employee_info', window.location.origin);
+        empUrl.searchParams.set('employeeID', employeeID);
+        empUrl.searchParams.set('org', org);
+        empUrl.searchParams.set('token', token);
+        const empR = await fetchJSON<{ ok: boolean; role?: string }>(empUrl.toString());
+        if (empR?.ok && empR.role) {
+          setEmployeeRole(empR.role);
+        }
+        
+        // Получаем pricing plan
+        const planUrl = `/api/pricing_plan?org=${encodeURIComponent(org)}`;
+        const planR = await fetchJSON<any>(planUrl);
+        if (planR?.ok && planR.contractType === 'Ambassador') {
+          setPricingPlan({
+            contractType: planR.contractType,
+            fullMealPrice: planR.fullMealPrice,
+            lightMealPrice: planR.lightMealPrice,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load employee role or pricing plan:', err);
+      }
+    })();
+  }, [employeeID, org, token]);
 
   // Грузим меню
   useEffect(() => {
@@ -216,9 +257,18 @@ export default function QuizClient() {
   try {
     setLoading(true); setErr('');
 
+    // Определяем стоимость основного обеда для TeamMember
+    const isTeamMemberRole = employeeRole === 'TeamMember';
+    const mealCost = isTeamMemberRole && pricingPlan 
+      ? (mealType === 'Light' ? pricingPlan.lightMealPrice : pricingPlan.fullMealPrice)
+      : 0;
+
     // extras: для Light — только 1 (суп), для Standard/Upsized — максимум 2 (салат и суп)
+    // Для TeamMember с Light meal type - также пропускаем салат
+    const isLightMeal = isLightPortion || (isTeamMemberRole && mealType === 'Light');
+    
     const extras: string[] = [];
-    if (isLightPortion) {
+    if (isLightMeal) {
       // Для Light порции отправляем только суп
       if (draft.soupId) extras.push(draft.soupId);
     } else {
@@ -231,7 +281,7 @@ export default function QuizClient() {
     const included = {
       mainId: draft.mainId || undefined,
       sideId: draft.sideId || undefined,
-      extras: isLightPortion ? extras.slice(0, 1) : extras.slice(0, 2),
+      extras: isLightMeal ? extras.slice(0, 1) : extras.slice(0, 2),
     };
 
     // Подготовить платные extras с ценами
@@ -248,10 +298,12 @@ export default function QuizClient() {
       .filter((ex) => ex.qty > 0 && ex.unitPrice > 0);
 
     const hasPaidExtras = paidExtrasWithPrice.length > 0;
-    const totalAmount = paidExtrasWithPrice.reduce((sum, ex) => sum + (ex.qty * ex.unitPrice), 0);
+    const paidExtrasTotal = paidExtrasWithPrice.reduce((sum, ex) => sum + (ex.qty * ex.unitPrice), 0);
+    const totalPayable = mealCost + paidExtrasTotal;
 
     console.log('[DEBUG] paidExtrasWithPrice:', paidExtrasWithPrice);
-    console.log('[DEBUG] hasPaidExtras:', hasPaidExtras, 'totalAmount:', totalAmount);
+    console.log('[DEBUG] hasPaidExtras:', hasPaidExtras, 'paidExtrasTotal:', paidExtrasTotal);
+    console.log('[DEBUG] mealCost:', mealCost, 'totalPayable:', totalPayable);
 
     let finalOrderId = qOrderId;
 
@@ -301,12 +353,28 @@ export default function QuizClient() {
     }
 
     console.log('[DEBUG] finalOrderId:', finalOrderId);
-    console.log('[DEBUG] checking payment condition:', { hasPaidExtras, totalAmount, finalOrderId });
+    console.log('[DEBUG] checking payment condition:', { 
+      hasPaidExtras, 
+      paidExtrasTotal, 
+      mealCost, 
+      totalPayable, 
+      finalOrderId 
+    });
 
-    // Если есть платные допы - создаем платеж и редиректим на ЮKassa
-    if (hasPaidExtras && totalAmount > 0 && finalOrderId) {
+    // Если есть сумма к оплате (основной обед TeamMember или платные допы) - создаем платеж
+    if (totalPayable > 0 && finalOrderId) {
       console.log('[DEBUG] Creating payment...');
       console.log('[DEBUG] Calling /api/payment/create route...');
+      
+      // Описание платежа
+      let description = '';
+      if (isTeamMemberRole && hasPaidExtras) {
+        description = `Обед (${mealCost}₽) + Доп. блюда (${paidExtrasTotal}₽)`;
+      } else if (isTeamMemberRole) {
+        description = `Обед ${mealType === 'Light' ? 'Лёгкий' : 'Полный'}`;
+      } else {
+        description = `Дополнительные блюда к заказу`;
+      }
       
       // Используем Next.js API route (серверный proxy, нет проблем с CORS)
       const paymentResp = await fetchJSON<{ ok: boolean; paymentUrl?: string; error?: string }>(
@@ -319,8 +387,8 @@ export default function QuizClient() {
             employeeID,
             org,
             token,
-            amount: totalAmount,
-            description: `Дополнительные блюда к заказу`,
+            amount: totalPayable,
+            description,
           }),
         }
       );
@@ -416,15 +484,64 @@ export default function QuizClient() {
           
           
           <Showcase byCat={byCat} />
-          <div className="flex gap-3">
-            <Button 
-              onClick={()=>go(isLightPortion ? '3' : '2')}
-              disabled={portionLoading}
-            >
-              {portionLoading ? 'Загрузка...' : 'Далее'}
-            </Button>
-            <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
-          </div>
+          
+          {/* Для TeamMember - выбор варианта обеда */}
+          {employeeRole === 'TeamMember' && pricingPlan?.contractType === 'Ambassador' ? (
+            <div className="space-y-3">
+              <p className="text-white/70 text-sm mb-4">
+                Выберите вариант обеда:
+              </p>
+              
+              {/* Полный обед */}
+              <button
+                onClick={() => {
+                  setMealType('Full');
+                  go('2'); // Идем к выбору салата
+                }}
+                className="w-full p-4 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-yellow-400 rounded-xl transition-all text-left"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-white text-lg">Полный обед</span>
+                  <span className="text-yellow-400 font-bold text-xl">{pricingPlan.fullMealPrice} ₽</span>
+                </div>
+                <p className="text-white/60 text-sm">
+                  Салат + Суп + Основное блюдо + Гарнир + Напиток
+                </p>
+              </button>
+
+              {/* Легкий обед */}
+              <button
+                onClick={() => {
+                  setMealType('Light');
+                  go('3'); // Пропускаем салат, идем к супу
+                }}
+                className="w-full p-4 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-yellow-400 rounded-xl transition-all text-left"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-white text-lg">Лёгкий обед</span>
+                  <span className="text-yellow-400 font-bold text-xl">{pricingPlan.lightMealPrice} ₽</span>
+                </div>
+                <p className="text-white/60 text-sm">
+                  Суп + Основное блюдо + Гарнир + Напиток
+                </p>
+              </button>
+
+              <div className="pt-2">
+                <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
+              </div>
+            </div>
+          ) : (
+            /* Для обычных сотрудников - стандартная кнопка */
+            <div className="flex gap-3">
+              <Button 
+                onClick={()=>go(isLightPortion ? '3' : '2')}
+                disabled={portionLoading}
+              >
+                {portionLoading ? 'Загрузка...' : 'Далее'}
+              </Button>
+              <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
+            </div>
+          )}
         </>
       )}
 
@@ -521,6 +638,9 @@ export default function QuizClient() {
           paidExtras={paidExtras}
           onOpenPaidModal={() => setPaidModalOpen(true)}
           menu={menu}
+          employeeRole={employeeRole}
+          pricingPlan={pricingPlan}
+          mealType={mealType}
         />
       )}
 
@@ -734,6 +854,9 @@ function ConfirmStep({
   paidExtras,
   onOpenPaidModal,
   menu,
+  employeeRole,
+  pricingPlan,
+  mealType,
 }:{
   draft: Draft;
   onSubmit: ()=>void;
@@ -741,7 +864,18 @@ function ConfirmStep({
   paidExtras: Array<{ itemId: string; qty: number }>;
   onOpenPaidModal: () => void;
   menu: MenuItem[];
+  employeeRole?: string;
+  pricingPlan?: { contractType: string; fullMealPrice: number; lightMealPrice: number } | null;
+  mealType?: 'Full' | 'Light' | null;
 }) {
+  const isTeamMember = employeeRole === 'TeamMember';
+  const isAmbassador = employeeRole === 'Ambassador';
+  
+  // Стоимость основного обеда для TeamMember
+  const mealCost = isTeamMember && pricingPlan 
+    ? (mealType === 'Light' ? pricingPlan.lightMealPrice : pricingPlan.fullMealPrice)
+    : 0;
+  
   // Рассчитываем сумму платных блюд
   const paidTotal = useMemo(() => {
     let sum = 0;
@@ -755,7 +889,15 @@ function ConfirmStep({
   }, [paidExtras, menu]);
 
   const hasPaidExtras = paidExtras.length > 0 && paidTotal > 0;
-  const buttonLabel = hasPaidExtras ? 'Оплатить и подтвердить' : 'Подтвердить заказ';
+  
+  // Итоговая сумма к оплате
+  const totalPayable = mealCost + paidTotal;
+  
+  // Текст кнопки
+  let buttonLabel = 'Подтвердить заказ';
+  if (isTeamMember || hasPaidExtras) {
+    buttonLabel = 'Оплатить и подтвердить';
+  }
 
   return (
     <Panel title="Подтверждение заказа">
@@ -766,6 +908,30 @@ function ConfirmStep({
         {draft.mainName &&  <div>Основное: <span className="font-semibold">{draft.mainName}</span></div>}
         <div>Гарнир: <span className="font-semibold">{draft.sideName ?? '—'}</span></div>
       </div>
+
+      {/* Стоимость основного обеда для TeamMember */}
+      {isTeamMember && mealCost > 0 && (
+        <div className="border-t border-white/10 pt-4 mt-4">
+          <div className="bg-blue-500/10 border border-blue-400/30 rounded-xl p-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="text-white font-semibold">
+                  {mealType === 'Light' ? 'Лёгкий обед' : 'Полный обед'}
+                </div>
+                <div className="text-white/60 text-sm mt-1">
+                  {mealType === 'Light' 
+                    ? 'Суп + Основное + Гарнир + Напиток'
+                    : 'Салат + Суп + Основное + Гарнир + Напиток'
+                  }
+                </div>
+              </div>
+              <div className="text-yellow-400 font-bold text-2xl">
+                {mealCost} ₽
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Блок платных дополнительных блюд */}
       <div className="border-t border-white/10 pt-4 mt-4">
@@ -793,7 +959,9 @@ function ConfirmStep({
                 })}
               </div>
               <div className="border-t border-white/10 mt-3 pt-3 flex justify-between font-semibold">
-                <span className="text-white/90">К оплате сотрудником:</span>
+                <span className="text-white/90">
+                  {isTeamMember && mealCost > 0 ? 'Доп. блюда:' : 'К оплате сотрудником:'}
+                </span>
                 <span className="text-yellow-400 text-lg">{paidTotal} ₽</span>
               </div>
             </div>
@@ -807,6 +975,16 @@ function ConfirmStep({
           </button>
         </div>
       </div>
+
+      {/* Итоговая сумма для TeamMember */}
+      {isTeamMember && totalPayable > 0 && (
+        <div className="border-t border-white/10 pt-4 mt-4">
+          <div className="flex justify-between items-center text-lg">
+            <span className="text-white font-semibold">Итого к оплате:</span>
+            <span className="text-yellow-400 font-bold text-2xl">{totalPayable} ₽</span>
+          </div>
+        </div>
+      )}
 
       <div className="mt-6 flex gap-3">
         <Button onClick={onSubmit}>{buttonLabel}</Button>
