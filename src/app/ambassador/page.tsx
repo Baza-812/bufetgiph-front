@@ -75,7 +75,7 @@ function AmbassadorDashboardContent() {
         const r = await fetchJSON<{ ok: boolean; fullName?: string; role?: string }>(u.toString());
         if (r?.ok) {
           if (r.fullName) setEmployeeName(r.fullName);
-          if (r.role) setEmployeeRole(r.role);
+          if (r.role) setEmployeeRole(String(r.role).trim());
         }
       } catch {
         // не критично
@@ -85,8 +85,14 @@ function AmbassadorDashboardContent() {
 
   // 3) Проверка что пользователь - Ambassador
   useEffect(() => {
-    if (employeeRole && employeeRole !== 'Ambassador') {
+    if (!employeeRole) {
+      setError('');
+      return;
+    }
+    if (employeeRole !== 'Ambassador') {
       setError('Доступ к этой странице разрешен только для Амбассадоров');
+    } else {
+      setError('');
     }
   }, [employeeRole]);
 
@@ -98,16 +104,16 @@ function AmbassadorDashboardContent() {
         const r = await fetchJSON<{ ok: boolean; dates?: string[] }>(`/api/dates?org=${encodeURIComponent(org)}`);
         if (r.ok && r.dates) {
           setDates(r.dates);
-          // Выбираем первую дату по умолчанию
-          if (r.dates.length > 0 && !selectedDate) {
-            setSelectedDate(r.dates[0]);
-          }
+          setSelectedDate((prev) => {
+            if (prev && r.dates!.includes(prev)) return prev;
+            return r.dates![0] ?? null;
+          });
         }
       } catch (err) {
         console.error('Failed to load dates:', err);
       }
     })();
-  }, [org, selectedDate]);
+  }, [org]);
 
   // 5) Загружаем статистику для выбранной даты
   useEffect(() => {
@@ -116,11 +122,19 @@ function AmbassadorDashboardContent() {
     (async () => {
       setLoading(true);
       try {
-        const r = await fetchJSON<{ ok: boolean; stats?: TeamStats }>(
+        const r = await fetchJSON<{
+          ok: boolean;
+          stats?: TeamStats;
+          members?: TeamMember[];
+        }>(
           `/api/ambassador/team_stats?org=${encodeURIComponent(org)}&date=${selectedDate}`
         );
         if (r?.ok && r.stats) {
-          setDateStats(prev => ({ ...prev, [selectedDate]: r.stats! }));
+          const full: TeamStats = {
+            ...r.stats,
+            members: r.stats.members ?? r.members ?? [],
+          };
+          setDateStats((prev) => ({ ...prev, [selectedDate]: full }));
         }
       } catch (err) {
         console.error('Failed to load team stats:', err);
@@ -145,6 +159,7 @@ function AmbassadorDashboardContent() {
   }, [org]);
 
   const currentStats = selectedDate ? dateStats[selectedDate] : null;
+  const membersList = currentStats?.members ?? [];
 
   // Форматирование даты
   const formatDate = (isoDate: string) => {
@@ -214,7 +229,8 @@ function AmbassadorDashboardContent() {
           </Panel>
         )}
 
-        {!loading && !error && currentStats && selectedDate && (
+        {/* Статистика только после подтверждения роли (не светим данные TeamMember до редиректа) */}
+        {!loading && !error && currentStats && selectedDate && employeeRole === 'Ambassador' && (
           <>
             {/* Общая статистика */}
             <Panel title={`Статистика на ${formatDate(selectedDate)}`}>
@@ -296,11 +312,11 @@ function AmbassadorDashboardContent() {
 
             {/* Список команды */}
             <Panel title="Состав команды">
-              {currentStats.members.length === 0 ? (
+              {membersList.length === 0 ? (
                 <div className="text-white/60 text-sm">Никто еще не сделал заказ на эту дату</div>
               ) : (
                 <div className="space-y-2">
-                  {currentStats.members.map(member => (
+                  {membersList.map(member => (
                     <div 
                       key={member.id}
                       className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10"

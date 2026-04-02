@@ -134,7 +134,7 @@ export default function QuizClient() {
         empUrl.searchParams.set('token', token);
         const empR = await fetchJSON<{ ok: boolean; role?: string }>(empUrl.toString());
         if (empR?.ok && empR.role) {
-          setEmployeeRole(empR.role);
+          setEmployeeRole(String(empR.role).trim());
         }
         
         // Получаем pricing plan
@@ -505,7 +505,7 @@ export default function QuizClient() {
                   <span className="text-yellow-400 font-bold text-xl">{pricingPlan.fullMealPrice} ₽</span>
                 </div>
                 <p className="text-white/60 text-sm">
-                  Салат + Суп + Основное блюдо + Гарнир + Напиток
+                  Салат + Суп + Основное блюдо + Гарнир
                 </p>
               </button>
 
@@ -522,7 +522,7 @@ export default function QuizClient() {
                   <span className="text-yellow-400 font-bold text-xl">{pricingPlan.lightMealPrice} ₽</span>
                 </div>
                 <p className="text-white/60 text-sm">
-                  Суп + Основное блюдо + Гарнир + Напиток
+                  Салат или Суп + Основное блюдо + Гарнир
                 </p>
               </button>
 
@@ -869,7 +869,6 @@ function ConfirmStep({
   mealType?: 'Full' | 'Light' | null;
 }) {
   const isTeamMember = employeeRole === 'TeamMember';
-  const isAmbassador = employeeRole === 'Ambassador';
   
   // Стоимость основного обеда для TeamMember
   const mealCost = isTeamMember && pricingPlan 
@@ -920,8 +919,8 @@ function ConfirmStep({
                 </div>
                 <div className="text-white/60 text-sm mt-1">
                   {mealType === 'Light' 
-                    ? 'Суп + Основное + Гарнир + Напиток'
-                    : 'Салат + Суп + Основное + Гарнир + Напиток'
+                    ? 'Салат или Суп + Основное + Гарнир'
+                    : 'Салат + Суп + Основное + Гарнир'
                   }
                 </div>
               </div>

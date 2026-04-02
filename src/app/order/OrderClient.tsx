@@ -128,7 +128,7 @@ export default function OrderClient() {
         const r = await fetchJSON<{ ok: boolean; fullName?: string; role?: string }>(u.toString());
         if (r?.ok) {
           if (r.fullName) setEmployeeName(r.fullName);
-          if (r.role) setEmployeeRole(r.role);
+          if (r.role) setEmployeeRole(String(r.role).trim());
         }
       } catch {
         // не критично
@@ -168,7 +168,10 @@ export default function OrderClient() {
               `/api/ambassador/team_stats?org=${encodeURIComponent(org)}&date=${date}`
             );
             if (r?.ok && r.stats) {
-              statsMap[date] = r.stats;
+              statsMap[date] = {
+                ...r.stats,
+                members: r.stats.members ?? r.members ?? [],
+              };
             }
           } catch {
             // Пропускаем ошибки для отдельных дат
@@ -299,18 +302,20 @@ export default function OrderClient() {
         </p>
       </Panel>
 
-      {/* Баннер с новой функцией дополнительных блюд */}
+      {/* Баннер доп. блюд — скрыт для программы Амбассадоров */}
       <div className="mb-4">
-        <div className="relative overflow-hidden rounded-2xl">
-          <img 
-            src="/images/paid-extras-banner.png" 
-            alt="Дополнительные блюда" 
-            className="w-full h-auto"
-          />
-        </div>
+        {pricingPlan?.contractType !== 'Ambassador' && (
+          <div className="relative overflow-hidden rounded-2xl mb-3">
+            <img 
+              src="/images/paid-extras-banner.png" 
+              alt="Дополнительные блюда" 
+              className="w-full h-auto"
+            />
+          </div>
+        )}
         
-        {/* Краткая инструкция */}
-        <div className="mt-3 px-2 text-sm text-white/80">
+        {/* Краткая инструкция про доп. блюда */}
+        <div className="mt-1 px-2 text-sm text-white/80">
           <p className="mb-2">
             <strong className="text-white">Новая возможность!</strong> Закажите дополнительные блюда к обеду с оплатой онлайн. 
             Выберите любые позиции из меню на этапе подтверждения или добавьте к существующему заказу. 
@@ -337,7 +342,7 @@ export default function OrderClient() {
                   <span className="text-yellow-400 font-bold text-xl">{pricingPlan.fullMealPrice} ₽</span>
                 </div>
                 <p className="text-white/70 text-sm">
-                  Салат + Суп + Основное блюдо + Гарнир + Напиток
+                  Салат + Суп + Основное блюдо + Гарнир
                 </p>
               </div>
 
@@ -348,7 +353,7 @@ export default function OrderClient() {
                   <span className="text-yellow-400 font-bold text-xl">{pricingPlan.lightMealPrice} ₽</span>
                 </div>
                 <p className="text-white/70 text-sm">
-                  Суп + Основное блюдо + Гарнир + Напиток
+                  Салат или Суп + Основное блюдо + Гарнир
                 </p>
               </div>
 
@@ -360,7 +365,6 @@ export default function OrderClient() {
                 </h4>
                 <ul className="text-sm text-white/70 space-y-1 list-disc list-inside">
                   <li>Минимум <strong className="text-white">{pricingPlan.teamMinForDelivery} оплаченных обедов</strong> для доставки</li>
-                  <li>Организатор (Амбассадор) получает <strong className="text-white">бесплатный обед</strong> при заказе от <strong className="text-white">{pricingPlan.teamMinForFreeAmbassador} человек</strong></li>
                   <li>Заказ и оплата до <strong className="text-white">17:00</strong> накануне</li>
                   <li>Доставка: <strong className="text-white">{pricingPlan.deliveryAddress}</strong></li>
                 </ul>
