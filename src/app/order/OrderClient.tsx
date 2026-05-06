@@ -1125,6 +1125,7 @@ function DateModal({
             )}
 
             {(() => {
+              if (!sum) return null;
               const mainAwaiting = normOrderStatus(sum.orderStatus) === 'awaitingpayment';
               const pay = sum.paymentInfo;
               const payIncomplete = pay && pay.status !== 'succeeded';
