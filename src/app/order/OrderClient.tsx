@@ -10,7 +10,12 @@ import { fetchJSON, fmtDayLabel, MenuItem, friendlyOrderDeadlineMessage } from '
 import HintDates from '@/components/HintDates';
 import PaidExtrasModal from '@/components/PaidExtrasModal';
 
-
+function normOrderStatus(s?: string) {
+  return String(s ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
 
 type SingleResp = {
   ok: boolean;
@@ -28,6 +33,8 @@ type SingleResp = {
       paymentId: string;
     } | null;
     orderId: string;
+    /** Значение single select в Airtable (напр. AwaitingPayment, New, Confirmed) */
+    orderStatus?: string;
   };
 };
 
@@ -42,6 +49,8 @@ export default function OrderClient() {
   // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
+  /** Даты с заказом в статусе AwaitingPayment (Ambassador / основной обед без завершённой оплаты) */
+  const [awaitingPaymentByDate, setAwaitingPaymentByDate] = useState<Record<string, boolean>>({});
   const [busyReady, setBusyReady] = useState(false); // ← готовность статуса занятости/серости
 
   const [loading, setLoading] = useState(false);
@@ -212,17 +221,25 @@ export default function OrderClient() {
         employeeID, org, token,
         dates: dates.join(','),
       });
-      const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
+      const r = await fetchJSON<{
+        ok: boolean;
+        busy: Record<string, boolean>;
+        awaitingPayment?: Record<string, boolean>;
+      }>(`/api/busy?${qs.toString()}`);
+      const ap: Record<string, boolean> = {};
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
+        ap[d] = Boolean(r.awaitingPayment?.[d]);
         map[d] = r.busy[d]
           ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
           : { ok: true, summary: null };
       }
+      setAwaitingPaymentByDate(ap);
       setBusy(map);
     } catch {
       const map: Record<string, SingleResp> = {};
       for (const d of dates) map[d] = { ok: false, summary: null };
+      setAwaitingPaymentByDate({});
       setBusy(map);
     } finally {
       setBusyReady(true);
@@ -439,18 +456,27 @@ export default function OrderClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map(d => {
-            const has = Boolean(busy[d]?.summary); // СЕРОЕ если заказ уже есть
+            const has = Boolean(busy[d]?.summary); // занято, если заказ уже есть
+            const awaitingPay = Boolean(awaitingPaymentByDate[d]);
             const label = fmtDayLabel(d);
             const stats = teamStats[d];
             const showStats = pricingPlan?.contractType === 'Ambassador' && 
                              (employeeRole === 'Ambassador' || employeeRole === 'TeamMember');
+            const dateBtnClass =
+              has && awaitingPay
+                ? 'ring-2 ring-amber-400/85 ring-offset-2 ring-offset-zinc-950 bg-amber-950/35 hover:bg-amber-950/45'
+                : '';
+            const dateTitle = awaitingPay
+              ? 'Заказ создан, оплата основного обеда не завершена — откройте день и нажмите «Оплатить»'
+              : undefined;
             
             return (
               <div key={d} className="relative">
                 <Button
                   onClick={() => handlePickDate(d)}
-                  className="w-full"
+                  className={`w-full ${dateBtnClass}`}
                   variant={has ? 'ghost' : 'primary'}
+                  title={dateTitle}
                   disabled={!busyReady} // ← до загрузки «серости» клики блокируем
                 >
                   {label}
@@ -473,9 +499,31 @@ export default function OrderClient() {
           })}
         </div>
 
+        {pricingPlan?.contractType === 'Ambassador' &&
+          (employeeRole === 'Ambassador' || employeeRole === 'TeamMember') && (
+            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-white/65">
+              <span className="inline-flex items-center gap-2">
+                <span className="inline-block h-8 w-10 shrink-0 rounded-xl bg-yellow-400" aria-hidden />
+                Свободный день
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span
+                  className="inline-block h-8 w-10 shrink-0 rounded-xl bg-white/5 ring-1 ring-white/15"
+                  aria-hidden
+                />
+                Заказ принят (нет незавершённой оплаты)
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span
+                  className="inline-block h-8 w-10 shrink-0 rounded-xl bg-amber-950/40 ring-2 ring-amber-400/80"
+                  aria-hidden
+                />
+                Ожидает оплаты основного обеда
+              </span>
+            </div>
+          )}
+
         <HintDates />
-        
-        {/* Легенда */}
         
       </Panel>
 
@@ -965,6 +1013,19 @@ function DateModal({
           {!loading && sum?.orderId && (
             <>
               <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
+              {normOrderStatus(sum.orderStatus) === 'awaitingpayment' && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-amber-100/95 text-sm">
+                  <div className="font-semibold mb-0.5">Ожидает оплаты основного обеда</div>
+                  <div className="text-amber-100/80 text-xs">
+                    Заказ сохранён, но оплата не завершена (например, вы вышли из окна ЮKassa). Завершите оплату кнопкой ниже или через «Изменить», если ссылка недоступна.
+                  </div>
+                  {!(sum.paymentInfo?.paymentLink) && (
+                    <div className="mt-2 text-xs text-amber-200/90">
+                      Ссылки на оплату пока нет в системе — откройте «Изменить» и снова нажмите подтверждение: будет создан платёж и редирект в ЮKassa.
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="rounded-xl bg-white/5 border border-white/10 p-3 mb-3">
                 <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
                 <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
@@ -1063,25 +1124,34 @@ function DateModal({
               </Button>
             )}
 
-            {/* Кнопка "Оплатить" если допы есть но не оплачены */}
-            {sum?.paidExtras && sum.paidExtras.length > 0 && 
-             sum.paymentInfo && sum.paymentInfo.status !== 'succeeded' && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  // Редирект на существующий payment link или создать новый
-                  if (sum.paymentInfo?.paymentLink) {
-                    window.location.href = sum.paymentInfo.paymentLink;
-                  } else if (sum.orderId && onOpenPaidModal) {
-                    // Если нет payment link - открываем редактирование допов (создаст новый платеж)
-                    onOpenPaidModal(sum.orderId, iso);
-                  }
-                }}
-                className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
-              >
-                💳 Оплатить
-              </Button>
-            )}
+            {(() => {
+              const mainAwaiting = normOrderStatus(sum.orderStatus) === 'awaitingpayment';
+              const pay = sum.paymentInfo;
+              const payIncomplete = pay && pay.status !== 'succeeded';
+              const hasLink = Boolean(pay?.paymentLink);
+              const extrasPending =
+                (sum.paidExtras?.length ?? 0) > 0 && payIncomplete && hasLink;
+              const mainPending = mainAwaiting && payIncomplete && hasLink;
+              const showPay = extrasPending || mainPending;
+
+              if (!showPay) return null;
+
+              return (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    if (pay?.paymentLink) {
+                      window.location.href = pay.paymentLink;
+                    } else if (sum.orderId && onOpenPaidModal) {
+                      onOpenPaidModal(sum.orderId, iso);
+                    }
+                  }}
+                  className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
+                >
+                  💳 Оплатить
+                </Button>
+              );
+            })()}
 
             <Button
               variant="danger"
