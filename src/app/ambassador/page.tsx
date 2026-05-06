@@ -48,9 +48,7 @@ function AmbassadorDashboardContent() {
   const [dateStats, setDateStats] = useState<Record<string, TeamStats>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  /** Время отсечки из Airtable для напоминаний (с team_stats) */
-  const [cutoffTimeLabel, setCutoffTimeLabel] = useState('');
-  /** Время отсечки из Organizations (Cutoff Time), для текста напоминаний */
+  /** Время отсечки из Organizations (Cutoff Time), с team_stats */
   const [cutoffTimeLabel, setCutoffTimeLabel] = useState('');
 
   // 1) Получаем креды из query/localStorage

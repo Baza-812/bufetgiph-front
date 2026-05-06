@@ -38,6 +38,7 @@ type Draft = {
 // у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
 const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
+export default function QuizClient() {
   const sp = useSearchParams();
   const qFor = sp.get('forEmployeeID') || '';
   const qOrderId = sp.get('orderId') || '';
