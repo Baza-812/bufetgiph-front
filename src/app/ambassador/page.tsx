@@ -48,6 +48,10 @@ function AmbassadorDashboardContent() {
   const [dateStats, setDateStats] = useState<Record<string, TeamStats>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  /** Время отсечки из Airtable для напоминаний (с team_stats) */
+  const [cutoffTimeLabel, setCutoffTimeLabel] = useState('');
+  /** Время отсечки из Organizations (Cutoff Time), для текста напоминаний */
+  const [cutoffTimeLabel, setCutoffTimeLabel] = useState('');
 
   // 1) Получаем креды из query/localStorage
   useEffect(() => {
@@ -126,6 +130,7 @@ function AmbassadorDashboardContent() {
           ok: boolean;
           stats?: TeamStats;
           members?: TeamMember[];
+          cutoffTimeLabel?: string;
         }>(
           `/api/ambassador/team_stats?org=${encodeURIComponent(org)}&date=${selectedDate}`
         );
@@ -135,6 +140,9 @@ function AmbassadorDashboardContent() {
             members: r.stats.members ?? r.members ?? [],
           };
           setDateStats((prev) => ({ ...prev, [selectedDate]: full }));
+          if (typeof r.cutoffTimeLabel === 'string' && r.cutoffTimeLabel.trim()) {
+            setCutoffTimeLabel(r.cutoffTimeLabel.trim());
+          }
         }
       } catch (err) {
         console.error('Failed to load team stats:', err);
@@ -370,7 +378,8 @@ function AmbassadorDashboardContent() {
                       Для доставки на {formatDate(selectedDate)} необходимо еще{' '}
                       <strong className="text-white">{currentStats.minForDelivery - currentStats.paidOrders}</strong>{' '}
                       {currentStats.minForDelivery - currentStats.paidOrders === 1 ? 'заказ' : 'заказа/ов'}.
-                      Напомните коллегам о необходимости сделать заказ до 17:00 накануне.
+                      Напомните коллегам о необходимости сделать заказ до{' '}
+                      <strong className="text-white">{cutoffTimeLabel || 'указанного времени'}</strong> накануне доставки.
                     </div>
                   </div>
                 </div>

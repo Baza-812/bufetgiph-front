@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, fmtDayLabel, MenuItem } from '@/lib/api';
+import { fetchJSON, fmtDayLabel, MenuItem, friendlyOrderDeadlineMessage } from '@/lib/api';
 import HintDates from '@/components/HintDates';
 import PaidExtrasModal from '@/components/PaidExtrasModal';
 
@@ -70,6 +70,8 @@ export default function OrderClient() {
     teamMinForDelivery: number;
     teamMinForFreeAmbassador: number;
     deliveryAddress: string;
+    /** Подпись времени отсечки из Airtable (Cutoff Time), напр. «17:00» */
+    cutoffTimeLabel?: string;
     bankInfo?: {
       legalName: string;
       inn: string;
@@ -302,17 +304,15 @@ export default function OrderClient() {
         </p>
       </Panel>
 
-      {/* Баннер доп. блюд — скрыт для программы Амбассадоров */}
+      {/* Баннер доп. блюд */}
       <div className="mb-4">
-        {pricingPlan?.contractType !== 'Ambassador' && (
-          <div className="relative overflow-hidden rounded-2xl mb-3">
-            <img 
-              src="/images/paid-extras-banner.png" 
-              alt="Дополнительные блюда" 
-              className="w-full h-auto"
-            />
-          </div>
-        )}
+        <div className="relative overflow-hidden rounded-2xl mb-3">
+          <img
+            src="/images/paid-extras-banner.png"
+            alt="Дополнительные блюда"
+            className="w-full h-auto"
+          />
+        </div>
         
         {/* Краткая инструкция про доп. блюда */}
         <div className="mt-1 px-2 text-sm text-white/80">
@@ -365,7 +365,7 @@ export default function OrderClient() {
                 </h4>
                 <ul className="text-sm text-white/70 space-y-1 list-disc list-inside">
                   <li>Минимум <strong className="text-white">{pricingPlan.teamMinForDelivery} оплаченных обедов</strong> для доставки</li>
-                  <li>Заказ и оплата до <strong className="text-white">17:00</strong> накануне</li>
+                  <li>Заказ и оплата до <strong className="text-white">{pricingPlan.cutoffTimeLabel?.trim() || '—'}</strong> накануне доставки</li>
                   <li>Доставка: <strong className="text-white">{pricingPlan.deliveryAddress}</strong></li>
                 </ul>
               </div>
@@ -822,7 +822,8 @@ function PaidExtrasEditModal({
       // Если допы удалены (сумма = 0) - просто закрываем
       onClose();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      setErr(friendlyOrderDeadlineMessage(raw));
       setSaving(false);
     }
   };

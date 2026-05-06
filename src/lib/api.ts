@@ -28,6 +28,25 @@ export async function fetchJSON<T>(input: string, init?: RequestInit): Promise<T
   return (await res.json()) as T;
 }
 
+/** Заменяет сырой ответ API «403 : {error:deadline passed}» на понятный текст для пользователя */
+export function friendlyOrderDeadlineMessage(raw: string): string {
+  const jsonMatch = raw.match(/\{[\s\S]*"error"[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const j = JSON.parse(jsonMatch[0]) as { error?: string };
+      if (j.error === 'deadline passed') {
+        return 'Время приёма заказов на эту дату уже закончилось (дедлайн накануне доставки). Выберите, пожалуйста, другой доступный день в календаре.';
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (/deadline\s+passed/i.test(raw)) {
+    return 'Время приёма заказов на эту дату уже закончилось (дедлайн накануне доставки). Выберите, пожалуйста, другой доступный день в календаре.';
+  }
+  return raw;
+}
+
 
 /* ====================== Меню ====================== */
 

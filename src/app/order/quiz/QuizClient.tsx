@@ -6,7 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, mapMenuItem, MenuItem } from '@/lib/api';
+import { fetchJSON, mapMenuItem, MenuItem, friendlyOrderDeadlineMessage } from '@/lib/api';
 import { loadDraft, saveDraft } from '@/lib/draft';
 import PaidExtrasModal from '@/components/PaidExtrasModal';
 
@@ -38,7 +38,6 @@ type Draft = {
 // у MenuItem нет поля garnirnoe в типах — берём аккуратно из данных
 const isGarnirnoe = (it: MenuItem) => Boolean((it as unknown as { garnirnoe?: boolean }).garnirnoe);
 
-export default function QuizClient() {
   const sp = useSearchParams();
   const qFor = sp.get('forEmployeeID') || '';
   const qOrderId = sp.get('orderId') || '';
@@ -431,7 +430,8 @@ export default function QuizClient() {
     u.searchParams.set('token', token);
     router.push(u.toString());
   } catch (e: unknown) {
-    setErr(e instanceof Error ? e.message : String(e));
+    const raw = e instanceof Error ? e.message : String(e);
+    setErr(friendlyOrderDeadlineMessage(raw));
   } finally {
     setLoading(false);
   }
@@ -494,11 +494,12 @@ export default function QuizClient() {
               
               {/* Полный обед */}
               <button
+                type="button"
                 onClick={() => {
                   setMealType('Full');
                   go('2'); // Идем к выбору салата
                 }}
-                className="w-full p-4 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-yellow-400 rounded-xl transition-all text-left"
+                className="w-full p-4 rounded-xl text-left transition-all bg-gradient-to-br from-amber-500/30 to-amber-600/10 border-2 border-amber-400/70 hover:border-amber-300 hover:from-amber-500/40 shadow-md shadow-amber-900/30 ring-1 ring-amber-400/40"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-white text-lg">Полный обед</span>
@@ -511,11 +512,12 @@ export default function QuizClient() {
 
               {/* Легкий обед */}
               <button
+                type="button"
                 onClick={() => {
                   setMealType('Light');
                   go('3'); // Пропускаем салат, идем к супу
                 }}
-                className="w-full p-4 bg-white/5 hover:bg-white/10 border border-white/20 hover:border-yellow-400 rounded-xl transition-all text-left"
+                className="w-full p-4 rounded-xl text-left transition-all bg-gradient-to-br from-amber-500/30 to-amber-600/10 border-2 border-amber-400/70 hover:border-amber-300 hover:from-amber-500/40 shadow-md shadow-amber-900/30 ring-1 ring-amber-400/40"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-white text-lg">Лёгкий обед</span>
