@@ -390,30 +390,40 @@ export default function OrderClient() {
         <p className="text-white/80">
           Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
         </p>
+        <p className="text-white/50 text-xs mt-3">
+          <button
+            type="button"
+            onClick={() => setShowInstructionModal(true)}
+            className="text-yellow-500/90 hover:text-yellow-400 underline"
+          >
+            Как заказать дополнительные блюда с оплатой онлайн
+          </button>
+        </p>
       </Panel>
 
-      {/* Баннер доп. блюд */}
+      {/* Баннер обратной связи по обедам */}
       <div className="mb-4">
         <div className="relative overflow-hidden rounded-2xl mb-3">
           <img
-            src="/images/paid-extras-banner.png"
-            alt="Дополнительные блюда"
+            src="/images/meal-feedback-banner.png"
+            alt="Оцените обед - оставьте отзыв после обеда"
             className="w-full h-auto"
           />
         </div>
-        
-        {/* Краткая инструкция про доп. блюда */}
+
         <div className="mt-1 px-2 text-sm text-white/80">
           <p className="mb-2">
-            <strong className="text-white">Новая возможность!</strong> Закажите дополнительные блюда к обеду с оплатой онлайн. 
-            Выберите любые позиции из меню на этапе подтверждения или добавьте к существующему заказу. 
-            Оплата картой через ЮКасса. Возврат средств при отмене - автоматический.
+            <strong className="text-white">Новая возможность!</strong> Оценивайте недавние обеды в блоке ниже - это
+            занимает несколько секунд и помогает нам становиться лучше.
           </p>
           <button
-            onClick={() => setShowInstructionModal(true)}
+            type="button"
+            onClick={() =>
+              document.getElementById('meal-feedback-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
             className="text-yellow-400 hover:text-yellow-300 underline transition-colors"
           >
-            Подробнее...
+            Перейти к оценке обедов
           </button>
         </div>
       </div>
@@ -592,7 +602,7 @@ export default function OrderClient() {
           )}
 
         {org && employeeID && token && (
-          <div className="mt-8 pt-6 border-t border-white/10">
+          <div id="meal-feedback-section" className="mt-8 pt-6 border-t border-white/10 scroll-mt-4">
             <p className="text-sm font-semibold text-white mb-2">Оценка обедов</p>
 
             {feedbackStatus !== 'ok' && feedbackStatus !== 'error' && (
