@@ -17,6 +17,15 @@ function normOrderStatus(s?: string) {
     .replace(/\s+/g, '');
 }
 
+/** Эмодзи в UI → значение Single select в Airtable MealFeedback.Rating */
+const FEEDBACK_OPTIONS: { emoji: string; rating: string }[] = [
+  { emoji: '😞', rating: 'Очень плохо' },
+  { emoji: '😐', rating: 'Плохо' },
+  { emoji: '🙂', rating: 'Нормально' },
+  { emoji: '😃', rating: 'Хорошо' },
+  { emoji: '🤩', rating: 'Отлично' },
+];
+
 type SingleResp = {
   ok: boolean;
   summary: null | {
@@ -98,6 +107,10 @@ export default function OrderClient() {
     deliveryAllowed: boolean;
     ambassadorFree: boolean;
   }>>({});
+
+  const [feedbackEligibleDates, setFeedbackEligibleDates] = useState<string[]>([]);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, boolean>>({});
+  const [feedbackModalDate, setFeedbackModalDate] = useState<string | null>(null);
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -196,6 +209,32 @@ export default function OrderClient() {
     })();
   }, [org, dates, employeeRole, pricingPlan]);
 
+  const reloadFeedback = useCallback(async () => {
+    if (!employeeID || !org || !token) return;
+    try {
+      const u = new URL('/api/feedback', window.location.origin);
+      u.searchParams.set('employeeID', employeeID);
+      u.searchParams.set('org', org);
+      u.searchParams.set('token', token);
+      const r = await fetchJSON<{
+        ok: boolean;
+        eligibleDates?: string[];
+        feedbackSubmitted?: Record<string, boolean>;
+      }>(u.toString());
+      if (r?.ok) {
+        setFeedbackEligibleDates(r.eligibleDates || []);
+        setFeedbackSubmitted(r.feedbackSubmitted || {});
+      }
+    } catch {
+      setFeedbackEligibleDates([]);
+      setFeedbackSubmitted({});
+    }
+  }, [employeeID, org, token]);
+
+  useEffect(() => {
+    reloadFeedback();
+  }, [reloadFeedback]);
+
    // 4) опубликованные даты
   useEffect(() => {
     (async () => {
@@ -251,10 +290,13 @@ export default function OrderClient() {
 
   // обновлять при возвращении на вкладку (после квиза)
   useEffect(() => {
-    const onFocus = () => { reloadBusy(); };
+    const onFocus = () => {
+      reloadBusy();
+      reloadFeedback();
+    };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [reloadBusy]);
+  }, [reloadBusy, reloadFeedback]);
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
@@ -309,6 +351,11 @@ export default function OrderClient() {
       return;
     }
     setSelected(d); // занято — модалка
+  }
+
+  function handlePickFeedbackDate(d: string) {
+    if (feedbackSubmitted[d]) return;
+    setFeedbackModalDate(d);
   }
 
   return (
@@ -523,9 +570,58 @@ export default function OrderClient() {
             </div>
           )}
 
+        {feedbackEligibleDates.length > 0 && (
+          <div className="mt-8 pt-6 border-t border-white/10">
+            <p className="text-sm text-white/75 mb-3">
+              Оцените недавние обеды — это займёт несколько секунд.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {feedbackEligibleDates.map((d) => {
+                const done = Boolean(feedbackSubmitted[d]);
+                const label = fmtDayLabel(d);
+                return (
+                  <div key={`fb-${d}`} className="relative">
+                    <Button
+                      type="button"
+                      onClick={() => handlePickFeedbackDate(d)}
+                      className={`w-full ${done ? 'opacity-70' : 'bg-white/10 text-white/90 hover:bg-white/15'}`}
+                      variant="ghost"
+                      disabled={done}
+                      title={done ? 'Оценка уже отправлена' : 'Оставить отзыв об обеде'}
+                    >
+                      <span className="flex items-center justify-center gap-1.5">
+                        {label}
+                        {done && <span className="text-green-400" aria-hidden>✓</span>}
+                      </span>
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-white/45">
+              Серые даты — дни, на которые приём заказов уже закрыт; можно поставить оценку без комментария.
+            </p>
+          </div>
+        )}
+
         <HintDates />
         
       </Panel>
+
+      {feedbackModalDate && (
+        <MealFeedbackModal
+          iso={feedbackModalDate}
+          employeeID={employeeID}
+          org={org}
+          token={token}
+          alreadySubmitted={Boolean(feedbackSubmitted[feedbackModalDate])}
+          onClose={() => setFeedbackModalDate(null)}
+          onSuccess={(dateIso) => {
+            setFeedbackSubmitted((prev) => ({ ...prev, [dateIso]: true }));
+            reloadFeedback();
+          }}
+        />
+      )}
 
       {/* Модалка со составом — показываем только когда выбран день */}
       {selected && (
@@ -1164,6 +1260,149 @@ function DateModal({
 
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MealFeedbackModal({
+  iso,
+  employeeID,
+  org,
+  token,
+  alreadySubmitted,
+  onClose,
+  onSuccess,
+}: {
+  iso: string;
+  employeeID: string;
+  org: string;
+  token: string;
+  alreadySubmitted: boolean;
+  onClose: () => void;
+  onSuccess: (dateIso: string) => void;
+}) {
+  const [step, setStep] = useState<'form' | 'thanks'>(alreadySubmitted ? 'thanks' : 'form');
+  const [selectedRating, setSelectedRating] = useState<string | null>(null);
+  const [comment, setComment] = useState('');
+  const [err, setErr] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    setStep(alreadySubmitted ? 'thanks' : 'form');
+    setSelectedRating(null);
+    setComment('');
+    setErr('');
+    setSending(false);
+  }, [iso, alreadySubmitted]);
+
+  async function submit() {
+    if (!selectedRating) return;
+    setSending(true);
+    setErr('');
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeID,
+          org,
+          token,
+          date: iso,
+          rating: selectedRating,
+          comment: comment.trim() || undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || `Ошибка ${res.status}`);
+      }
+      setStep('thanks');
+      onSuccess(iso);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
+      <div className="w-full sm:max-w-md bg-panel border border-white/10 rounded-2xl p-4 shadow-xl">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div>
+            <div className="text-xs text-white/50 uppercase tracking-wide">Обед на дату</div>
+            <div className="text-lg font-bold text-white">{fmtDayLabel(iso)}</div>
+          </div>
+          <button type="button" onClick={onClose} className="text-white/60 hover:text-white text-sm shrink-0">
+            Закрыть
+          </button>
+        </div>
+
+        {step === 'thanks' ? (
+          <div className="py-4 text-center space-y-4">
+            <div className="text-4xl" aria-hidden>✓</div>
+            <p className="text-white text-base leading-relaxed">
+              Спасибо! Вы помогаете нам стать лучше.
+            </p>
+            <Button type="button" onClick={onClose} className="w-full">
+              Закрыть
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-white/90 text-sm font-medium">Как вам обед?</p>
+
+            <div className="flex flex-wrap justify-center gap-2 sm:gap-3">
+              {FEEDBACK_OPTIONS.map(({ emoji, rating }) => {
+                const isSel = selectedRating === rating;
+                return (
+                  <button
+                    key={rating}
+                    type="button"
+                    onClick={() => setSelectedRating(rating)}
+                    className={`text-3xl sm:text-4xl leading-none p-3 rounded-2xl transition border-2 ${
+                      isSel
+                        ? 'border-yellow-400 bg-yellow-400/15 scale-105 shadow-lg ring-2 ring-yellow-400/50'
+                        : 'border-transparent bg-white/5 hover:bg-white/10'
+                    }`}
+                    title={rating}
+                    aria-label={rating}
+                    aria-pressed={isSel}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/50 mb-1.5">
+                По желанию: что понравилось или что улучшить
+              </label>
+              <textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value.slice(0, 300))}
+                maxLength={300}
+                rows={3}
+                placeholder="Можно оставить пустым"
+                className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white placeholder:text-white/35 focus:outline-none focus:ring-2 focus:ring-yellow-400/40 resize-y min-h-[88px]"
+              />
+              <div className="text-right text-xs text-white/40 mt-0.5">{comment.length}/300</div>
+            </div>
+
+            {err && <div className="text-red-400 text-sm">{err}</div>}
+
+            <Button
+              type="button"
+              onClick={submit}
+              disabled={!selectedRating || sending}
+              className="w-full"
+            >
+              {sending ? 'Отправка…' : 'Отправить'}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
