@@ -202,7 +202,11 @@ Frontend: PaymentResultPage
 
 3. **Окружение (Production / Preview / Development).** У переменной в настройках указано, для каких окружений она доступна. Деплой с ветки `develop` обычно считается **Preview**. Если у ключа стоят только **Production** и **Preview**, этого достаточно для хостинга на Vercel. Опция **Development** нужна в основном для **`vercel dev`** локально, а не для `*.vercel.app` / кастомного домена в облаке.
 
-4. **Имя переменной** должно быть в точности `PAYMENT_RECONCILE_KEY` (как в коде `payment_reconcile.js`).
+4. **Имя переменной** — в точности `PAYMENT_RECONCILE_KEY` (как в коде). Допустим **запасной ключ** `RECONCILE_SECRET` с тем же значением: если в интерфейсе Vercel что-то мешает первому имени, заведите второе.
+
+5. **Диагностика `/api/health`.** Откройте на том же хосте, что и reconcile, например `https://dev-api.baza.menu/api/health`. В JSON смотрите **`reconcile_key_configured`**: если `false`, секрет в **этом** деплое реально не виден (не совпадение пароля в URL). Сравните с URL вида `https://<project>.vercel.app/api/health`: если на `*.vercel.app` уже `true`, а на кастомном домене `false`, значит **домен смотрит не на тот проект/деплой** (DNS или другой Vercel-проект).
+
+6. **Ответ 503 от `/api/payment_reconcile`** теперь может содержать объект **`deployment`** (`vercel_env`, `vercel_url`, `git_ref`) — по нему видно, **какой именно** деплой Vercel ответил (ветка preview/production).
 
 ### 4. Webhook от ЮKassa
 ```
