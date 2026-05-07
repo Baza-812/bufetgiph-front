@@ -8,12 +8,12 @@ export default function HintDates({ isManager = false }: { isManager?: boolean }
         Нажмите на дату, чтобы оформить заказ.{' '}
         <span className="inline-flex items-center gap-1">
           <span className="inline-block w-3 h-3 rounded-sm bg-yellow-400 align-middle" />
-          <span>— свободно</span>
+          <span> - свободно</span>
         </span>
         {'  '}
         <span className="inline-flex items-center gap-1 ml-3">
           <span className="inline-block w-3 h-3 rounded-sm bg-neutral-500 align-middle" />
-          <span>— уже заказано</span>
+          <span> - уже заказано</span>
         </span>
         .
       </p>

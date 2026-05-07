@@ -39,10 +39,16 @@ function PaymentResultContent() {
   const [token, setToken] = useState('');
 
   useEffect(() => {
-    setOrg(localStorage.getItem('baza.org') || '');
-    setEmployeeID(localStorage.getItem('baza.employeeID') || '');
-    setToken(localStorage.getItem('baza.token') || '');
-  }, []);
+    const o = sp.get('org') || localStorage.getItem('baza.org') || '';
+    const e = sp.get('employeeID') || localStorage.getItem('baza.employeeID') || '';
+    const t = sp.get('token') || localStorage.getItem('baza.token') || '';
+    setOrg(o);
+    setEmployeeID(e);
+    setToken(t);
+    if (o) localStorage.setItem('baza.org', o);
+    if (e) localStorage.setItem('baza.employeeID', e);
+    if (t) localStorage.setItem('baza.token', t);
+  }, [sp]);
 
   // Polling статуса платежа
   useEffect(() => {

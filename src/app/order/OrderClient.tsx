@@ -1,16 +1,30 @@
 // src/app/order/OrderClient.tsx
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
 import Input, { Field } from '@/components/ui/Input';
-import { fetchJSON, fmtDayLabel, MenuItem } from '@/lib/api';
+import { fetchJSON, fmtDayLabel, MenuItem, friendlyOrderDeadlineMessage } from '@/lib/api';
 import HintDates from '@/components/HintDates';
 import PaidExtrasModal from '@/components/PaidExtrasModal';
 
+function normOrderStatus(s?: string) {
+  return String(s ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
 
+/** Эмодзи в UI → значение Single select в Airtable MealFeedback.Rating */
+const FEEDBACK_OPTIONS: { emoji: string; rating: string }[] = [
+  { emoji: '😞', rating: 'Очень плохо' },
+  { emoji: '😐', rating: 'Плохо' },
+  { emoji: '🙂', rating: 'Нормально' },
+  { emoji: '😃', rating: 'Хорошо' },
+  { emoji: '🤩', rating: 'Отлично' },
+];
 
 type SingleResp = {
   ok: boolean;
@@ -28,6 +42,8 @@ type SingleResp = {
       paymentId: string;
     } | null;
     orderId: string;
+    /** Значение single select в Airtable (напр. AwaitingPayment, New, Confirmed) */
+    orderStatus?: string;
   };
 };
 
@@ -42,6 +58,8 @@ export default function OrderClient() {
   // данные
   const [dates, setDates] = useState<string[]>([]);
   const [busy, setBusy] = useState<Record<string, SingleResp>>({});
+  /** Даты с заказом в статусе AwaitingPayment (Ambassador / основной обед без завершённой оплаты) */
+  const [awaitingPaymentByDate, setAwaitingPaymentByDate] = useState<Record<string, boolean>>({});
   const [busyReady, setBusyReady] = useState(false); // ← готовность статуса занятости/серости
 
   const [loading, setLoading] = useState(false);
@@ -51,6 +69,7 @@ export default function OrderClient() {
   // информация о сотруднике и организации
   const [employeeName, setEmployeeName] = useState('');
   const [orgName, setOrgName] = useState('');
+  const [employeeRole, setEmployeeRole] = useState('');
 
   // для редактирования платных допов
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -60,6 +79,40 @@ export default function OrderClient() {
   
   // для модального окна с инструкцией
   const [showInstructionModal, setShowInstructionModal] = useState(false);
+
+  // для Ambassador программы
+  const [pricingPlan, setPricingPlan] = useState<{
+    contractType: string;
+    fullMealPrice: number;
+    lightMealPrice: number;
+    teamMinForDelivery: number;
+    teamMinForFreeAmbassador: number;
+    deliveryAddress: string;
+    /** Подпись времени отсечки из Airtable (Cutoff Time), напр. «17:00» */
+    cutoffTimeLabel?: string;
+    bankInfo?: {
+      legalName: string;
+      inn: string;
+      kpp: string;
+      phone: string;
+      footer: string;
+    };
+  } | null>(null);
+
+  const [teamStats, setTeamStats] = useState<Record<string, {
+    totalOrders: number;
+    paidOrders: number;
+    minForDelivery: number;
+    minForFreeAmbassador: number;
+    deliveryAllowed: boolean;
+    ambassadorFree: boolean;
+  }>>({});
+
+  const [feedbackEligibleDates, setFeedbackEligibleDates] = useState<string[]>([]);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, boolean>>({});
+  const [feedbackModalDate, setFeedbackModalDate] = useState<string | null>(null);
+  /** idle - креды ещё не готовы; loading - запрос; ok / error - ответ */
+  const [feedbackStatus, setFeedbackStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -98,13 +151,113 @@ export default function OrderClient() {
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
-        const r = await fetchJSON<{ ok: boolean; fullName?: string }>(u.toString());
-        if (r?.ok && r.fullName) setEmployeeName(r.fullName);
+        const r = await fetchJSON<{ ok: boolean; fullName?: string; role?: string }>(u.toString());
+        if (r?.ok) {
+          if (r.fullName) setEmployeeName(r.fullName);
+          if (r.role) setEmployeeRole(String(r.role).trim());
+        }
       } catch {
         // не критично
       }
     })();
   }, [employeeID, org, token]);
+
+  // 3b) загружаем pricing plan для Ambassador организаций
+  useEffect(() => {
+    if (!org) return;
+    (async () => {
+      try {
+        const r = await fetchJSON<any>(`/api/pricing_plan?org=${encodeURIComponent(org)}`);
+        if (r?.ok) {
+          setPricingPlan(r);
+        }
+      } catch (err) {
+        console.error('Failed to load pricing plan:', err);
+      }
+    })();
+  }, [org]);
+
+  // 3c) загружаем team stats для Ambassador/TeamMember
+  useEffect(() => {
+    if (!org || !dates.length) return;
+    if (employeeRole !== 'Ambassador' && employeeRole !== 'TeamMember') return;
+    if (pricingPlan?.contractType !== 'Ambassador') return;
+
+    (async () => {
+      try {
+        const statsMap: Record<string, any> = {};
+        
+        // Загружаем статистику для всех доступных дат
+        for (const date of dates) {
+          try {
+            const r = await fetchJSON<any>(
+              `/api/ambassador/team_stats?org=${encodeURIComponent(org)}&date=${date}`
+            );
+            if (r?.ok && r.stats) {
+              statsMap[date] = {
+                ...r.stats,
+                members: r.stats.members ?? r.members ?? [],
+              };
+            }
+          } catch {
+            // Пропускаем ошибки для отдельных дат
+          }
+        }
+        
+        setTeamStats(statsMap);
+      } catch (err) {
+        console.error('Failed to load team stats:', err);
+      }
+    })();
+  }, [org, dates, employeeRole, pricingPlan]);
+
+  const reloadFeedback = useCallback(async () => {
+    if (!employeeID || !org || !token) {
+      setFeedbackStatus('idle');
+      setFeedbackEligibleDates([]);
+      setFeedbackSubmitted({});
+      return;
+    }
+    setFeedbackStatus('loading');
+    try {
+      const u = new URL('/api/feedback', window.location.origin);
+      u.searchParams.set('employeeID', employeeID);
+      u.searchParams.set('org', org);
+      u.searchParams.set('token', token);
+      const r = await fetchJSON<{
+        ok: boolean;
+        eligibleDates?: string[];
+        feedbackSubmitted?: Record<string, boolean>;
+      }>(u.toString());
+      if (r?.ok) {
+        const el = r.eligibleDates || [];
+        setFeedbackEligibleDates(el);
+        // Сохраняем локально true, пока GET ещё не видит новую запись в Airtable (иначе модалка откатывается к форме)
+        setFeedbackSubmitted((prev) => {
+          const server = r.feedbackSubmitted || {};
+          const out: Record<string, boolean> = {};
+          for (const d of el) {
+            out[d] = Boolean(server[d] || prev[d]);
+          }
+          return out;
+        });
+        setFeedbackStatus('ok');
+      } else {
+        setFeedbackEligibleDates([]);
+        setFeedbackSubmitted({});
+        setFeedbackStatus('error');
+      }
+    } catch (e) {
+      console.error('[OrderClient] /api/feedback failed:', e);
+      setFeedbackEligibleDates([]);
+      setFeedbackSubmitted({});
+      setFeedbackStatus('error');
+    }
+  }, [employeeID, org, token]);
+
+  useEffect(() => {
+    reloadFeedback();
+  }, [reloadFeedback]);
 
    // 4) опубликованные даты
   useEffect(() => {
@@ -131,17 +284,25 @@ export default function OrderClient() {
         employeeID, org, token,
         dates: dates.join(','),
       });
-      const r = await fetchJSON<{ ok: boolean; busy: Record<string, boolean> }>(`/api/busy?${qs.toString()}`);
+      const r = await fetchJSON<{
+        ok: boolean;
+        busy: Record<string, boolean>;
+        awaitingPayment?: Record<string, boolean>;
+      }>(`/api/busy?${qs.toString()}`);
+      const ap: Record<string, boolean> = {};
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
+        ap[d] = Boolean(r.awaitingPayment?.[d]);
         map[d] = r.busy[d]
           ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
           : { ok: true, summary: null };
       }
+      setAwaitingPaymentByDate(ap);
       setBusy(map);
     } catch {
       const map: Record<string, SingleResp> = {};
       for (const d of dates) map[d] = { ok: false, summary: null };
+      setAwaitingPaymentByDate({});
       setBusy(map);
     } finally {
       setBusyReady(true);
@@ -153,16 +314,19 @@ export default function OrderClient() {
 
   // обновлять при возвращении на вкладку (после квиза)
   useEffect(() => {
-    const onFocus = () => { reloadBusy(); };
+    const onFocus = () => {
+      reloadBusy();
+      reloadFeedback();
+    };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [reloadBusy]);
+  }, [reloadBusy, reloadFeedback]);
 
   const name = useMemo(() => busy[selected || '']?.summary?.fullName || '', [busy, selected]);
 
   // 4) клик по дате
   async function handlePickDate(d: string) {
-    // Если занятость ещё не подгрузилась — проверим точечно, чтобы не улететь в квиз по ошибке
+    // Если занятость ещё не подгрузилась - проверим точечно, чтобы не улететь в квиз по ошибке
     if (!busyReady) {
       try {
         const u = new URL('/api/hr_orders', window.location.origin);
@@ -173,10 +337,10 @@ export default function OrderClient() {
         u.searchParams.set('date', d);
         const r = await fetchJSON<SingleResp>(u.toString());
         if (r?.summary?.orderId) {
-          setSelected(d); // есть заказ — модалка
+          setSelected(d); // есть заказ - модалка
           return;
         }
-        // свободно — квиз
+        // свободно - квиз
         const q = new URL('/order/quiz', window.location.origin);
         q.searchParams.set('date', d);
         q.searchParams.set('step', '1');
@@ -186,7 +350,7 @@ export default function OrderClient() {
         router.push(q.toString());
         return;
       } catch {
-        // на ошибке — пускаем в квиз, чтобы не стопорить пользователя
+        // на ошибке - пускаем в квиз, чтобы не стопорить пользователя
         const q = new URL('/order/quiz', window.location.origin);
         q.searchParams.set('date', d);
         q.searchParams.set('step', '1');
@@ -198,7 +362,7 @@ export default function OrderClient() {
       }
     }
 
-    // Когда занятость известна — решаем локально
+    // Когда занятость известна - решаем локально
     const isBusy = Boolean(busy[d]?.summary);
     if (!isBusy) {
       const q = new URL('/order/quiz', window.location.origin);
@@ -210,7 +374,12 @@ export default function OrderClient() {
       router.push(q.toString());
       return;
     }
-    setSelected(d); // занято — модалка
+    setSelected(d); // занято - модалка
+  }
+
+  function handlePickFeedbackDate(d: string) {
+    if (feedbackSubmitted[d]) return;
+    setFeedbackModalDate(d);
   }
 
   return (
@@ -221,33 +390,87 @@ export default function OrderClient() {
         <p className="text-white/80">
           Здесь вы можете выбрать обед на подходящий день. Нажмите на дату ниже.
         </p>
+        <p className="text-white/50 text-xs mt-3">
+          <button
+            type="button"
+            onClick={() => setShowInstructionModal(true)}
+            className="text-yellow-500/90 hover:text-yellow-400 underline"
+          >
+            Как заказать дополнительные блюда с оплатой онлайн
+          </button>
+        </p>
       </Panel>
 
-      {/* Баннер с новой функцией дополнительных блюд */}
+      {/* Баннер обратной связи по обедам */}
       <div className="mb-4">
-        <div className="relative overflow-hidden rounded-2xl">
-          <img 
-            src="/images/paid-extras-banner.png" 
-            alt="Дополнительные блюда" 
+        <div className="relative overflow-hidden rounded-2xl mb-3">
+          <img
+            src="/images/meal-feedback-banner.png"
+            alt="Оцените обед - оставьте отзыв после обеда"
             className="w-full h-auto"
           />
         </div>
-        
-        {/* Краткая инструкция */}
-        <div className="mt-3 px-2 text-sm text-white/80">
+
+        <div className="mt-1 px-2 text-sm text-white/80">
           <p className="mb-2">
-            <strong className="text-white">Новая возможность!</strong> Закажите дополнительные блюда к обеду с оплатой онлайн. 
-            Выберите любые позиции из меню на этапе подтверждения или добавьте к существующему заказу. 
-            Оплата картой через ЮКасса. Возврат средств при отмене - автоматический.
+            <strong className="text-white">Новая возможность!</strong> Оценивайте недавние обеды в блоке ниже - это
+            занимает несколько секунд и помогает нам становиться лучше.
           </p>
           <button
-            onClick={() => setShowInstructionModal(true)}
+            type="button"
+            onClick={() =>
+              document.getElementById('meal-feedback-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
             className="text-yellow-400 hover:text-yellow-300 underline transition-colors"
           >
-            Подробнее...
+            Перейти к оценке обедов
           </button>
         </div>
       </div>
+
+      {/* Блок с ценами и условиями для Ambassador организаций */}
+      {pricingPlan?.contractType === 'Ambassador' && (
+        <div className="space-y-4">
+          <Panel title="Варианты обедов">
+            <div className="space-y-3">
+              {/* Полный обед */}
+              <div className="bg-white/5 p-3 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-white text-lg">Полный обед</span>
+                  <span className="text-yellow-400 font-bold text-xl">{pricingPlan.fullMealPrice} ₽</span>
+                </div>
+                <p className="text-white/70 text-sm">
+                  Салат + Суп + Основное блюдо + Гарнир
+                </p>
+              </div>
+
+              {/* Легкий обед */}
+              <div className="bg-white/5 p-3 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-white text-lg">Лёгкий обед</span>
+                  <span className="text-yellow-400 font-bold text-xl">{pricingPlan.lightMealPrice} ₽</span>
+                </div>
+                <p className="text-white/70 text-sm">
+                  Салат или Суп + Основное блюдо + Гарнир
+                </p>
+              </div>
+
+              {/* Условия доставки */}
+              <div className="mt-4 p-3 bg-blue-500/10 rounded-lg border border-blue-400/30">
+                <h4 className="font-semibold text-white mb-2 flex items-center gap-2">
+                  <span>📦</span>
+                  <span>Условия доставки</span>
+                </h4>
+                <ul className="text-sm text-white/70 space-y-1 list-disc list-inside">
+                  <li>Минимум <strong className="text-white">{pricingPlan.teamMinForDelivery} оплаченных обедов</strong> для доставки</li>
+                  <li>Заказ и оплата до <strong className="text-white">{pricingPlan.cutoffTimeLabel?.trim() || '-'}</strong> накануне доставки</li>
+                  <li>Доставка: <strong className="text-white">{pricingPlan.deliveryAddress}</strong></li>
+                </ul>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      )}
 
       {/* Информация о сотруднике */}
       {(employeeName || orgName) && (
@@ -266,10 +489,23 @@ export default function OrderClient() {
               </div>
             )}
           </div>
+          
+          {/* Кнопка перехода в личный кабинет для Ambassador */}
+          {employeeRole === 'Ambassador' && (
+            <div className="mt-4 pt-4 border-t border-white/10">
+              <Button
+                onClick={() => router.push(`/ambassador?org=${org}&employeeID=${employeeID}&token=${token}`)}
+                className="w-full"
+              >
+                <span className="mr-2">👑</span>
+                Личный кабинет Амбассадора
+              </Button>
+            </div>
+          )}
         </Panel>
       )}
           
-      {/* креды вручную — на случай, если пришли без query */}
+      {/* креды вручную - на случай, если пришли без query */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -293,29 +529,163 @@ export default function OrderClient() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {dates.map(d => {
-            const has = Boolean(busy[d]?.summary); // СЕРОЕ если заказ уже есть
+            const has = Boolean(busy[d]?.summary); // занято, если заказ уже есть
+            const awaitingPay = Boolean(awaitingPaymentByDate[d]);
             const label = fmtDayLabel(d);
+            const stats = teamStats[d];
+            const showStats = pricingPlan?.contractType === 'Ambassador' && 
+                             (employeeRole === 'Ambassador' || employeeRole === 'TeamMember');
+            const dateBtnClass =
+              has && awaitingPay
+                ? 'ring-2 ring-amber-400/85 ring-offset-2 ring-offset-zinc-950 bg-amber-950/35 hover:bg-amber-950/45'
+                : '';
+            const dateTitle = awaitingPay
+              ? 'Заказ создан, оплата основного обеда не завершена - откройте день и нажмите «Оплатить»'
+              : undefined;
+            
             return (
-              <Button
-                key={d}
-                onClick={() => handlePickDate(d)}
-                className="w-full"
-                variant={has ? 'ghost' : 'primary'}
-                disabled={!busyReady} // ← до загрузки «серости» клики блокируем
-              >
-                {label}
-              </Button>
+              <div key={d} className="relative">
+                <Button
+                  onClick={() => handlePickDate(d)}
+                  className={`w-full ${dateBtnClass}`}
+                  variant={has ? 'ghost' : 'primary'}
+                  title={dateTitle}
+                  disabled={!busyReady} // ← до загрузки «серости» клики блокируем
+                >
+                  {label}
+                </Button>
+                
+                {/* Счетчик команды для Ambassador/TeamMember */}
+                {showStats && stats && (
+                  <div className="mt-1 text-center">
+                    <span className={`text-xs font-medium ${
+                      stats.paidOrders >= stats.minForDelivery 
+                        ? 'text-green-400' 
+                        : 'text-yellow-400'
+                    }`}>
+                      {stats.paidOrders} / {stats.minForDelivery}
+                    </span>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
 
-        <HintDates />
-        
-        {/* Легенда */}
-        
+        {!(
+          pricingPlan?.contractType === 'Ambassador' &&
+          (employeeRole === 'Ambassador' || employeeRole === 'TeamMember')
+        ) && <HintDates />}
+
+        {pricingPlan?.contractType === 'Ambassador' &&
+          (employeeRole === 'Ambassador' || employeeRole === 'TeamMember') && (
+            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-white/65">
+              <span className="inline-flex items-center gap-2">
+                <span className="inline-block h-8 w-10 shrink-0 rounded-xl bg-yellow-400" aria-hidden />
+                Свободный день
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span
+                  className="inline-block h-8 w-10 shrink-0 rounded-xl bg-white/5 ring-1 ring-white/15"
+                  aria-hidden
+                />
+                Заказ принят (нет незавершённой оплаты)
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <span
+                  className="inline-block h-8 w-10 shrink-0 rounded-xl bg-amber-950/40 ring-2 ring-amber-400/80"
+                  aria-hidden
+                />
+                Ожидает оплаты основного обеда
+              </span>
+            </div>
+          )}
+
+        {org && employeeID && token && (
+          <div id="meal-feedback-section" className="mt-8 pt-6 border-t border-white/10 scroll-mt-4">
+            <p className="text-sm font-semibold text-white mb-2">Оценка обедов</p>
+
+            {feedbackStatus !== 'ok' && feedbackStatus !== 'error' && (
+              <div className="text-white/50 text-sm">Загрузка…</div>
+            )}
+
+            {feedbackStatus === 'error' && (
+              <div className="rounded-lg border border-amber-500/35 bg-amber-950/25 px-3 py-2 text-amber-100/95 text-sm">
+                Не удалось загрузить блок оценок. Убедитесь, что задеплоен API с маршрутом{' '}
+                <code className="text-xs bg-black/30 px-1 rounded">/api/feedback</code>
+                , в Airtable создана таблица MealFeedback (см. MEAL_FEEDBACK_AIRTABLE.md в репозитории API), и откройте консоль браузера (F12) по сообщению об ошибке.
+              </div>
+            )}
+
+            {feedbackStatus === 'ok' && feedbackEligibleDates.length === 0 && (
+              <p className="text-white/55 text-sm leading-relaxed">
+                Здесь появятся до пяти последних дней, на которые у вас был заказ и уже закрыт приём заказов на эти дни.
+                Если все ваши обеды ещё в «открытом» календаре выше, оценить пока нечего.
+              </p>
+            )}
+
+            {feedbackStatus === 'ok' && feedbackEligibleDates.length > 0 && (
+              <>
+                <p className="text-sm text-white/75 mb-3">
+                  Оцените недавние обеды - это займёт несколько секунд.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {feedbackEligibleDates.map((d) => {
+                    const done = Boolean(feedbackSubmitted[d]);
+                    const label = fmtDayLabel(d);
+                    return (
+                      <div key={`fb-${d}`} className="relative">
+                        <Button
+                          type="button"
+                          onClick={() => handlePickFeedbackDate(d)}
+                          className={`w-full ${
+                            done
+                              ? '!ring-2 !ring-green-500/70 !bg-green-950/30 !text-white/85 cursor-not-allowed'
+                              : 'bg-white/10 text-white/90 hover:bg-white/15'
+                          }`}
+                          variant="ghost"
+                          disabled={done}
+                          title={done ? 'Оценка уже отправлена' : 'Оставить отзыв об обеде'}
+                        >
+                          <span className="flex items-center justify-center gap-1.5">
+                            {label}
+                            {done && (
+                              <span className="text-green-400 font-semibold shrink-0" aria-hidden>
+                                ✓
+                              </span>
+                            )}
+                          </span>
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-white/45">
+                  Оценка - только эмодзи (обязательно); комментарий по желанию. Даты здесь - это дни, на которые у вас уже
+                  был заказ, пока для них нельзя изменить заказ в календаре выше.
+                </p>
+              </>
+            )}
+          </div>
+        )}
       </Panel>
 
-      {/* Модалка со составом — показываем только когда выбран день */}
+      {feedbackModalDate && (
+        <MealFeedbackModal
+          iso={feedbackModalDate}
+          employeeID={employeeID}
+          org={org}
+          token={token}
+          alreadySubmitted={Boolean(feedbackSubmitted[feedbackModalDate])}
+          onClose={() => setFeedbackModalDate(null)}
+          onSuccess={(dateIso) => {
+            setFeedbackSubmitted((prev) => ({ ...prev, [dateIso]: true }));
+            reloadFeedback();
+          }}
+        />
+      )}
+
+      {/* Модалка со составом - показываем только когда выбран день */}
       {selected && (
         <DateModal
           iso={selected}
@@ -478,6 +848,41 @@ export default function OrderClient() {
           </div>
         </div>
       )}
+
+      {/* Футер с контактами для Ambassador организаций */}
+      {pricingPlan?.contractType === 'Ambassador' && pricingPlan.bankInfo && (
+        <div className="mt-8 border-t border-white/10 pt-6">
+          <Panel title="Контакты и реквизиты">
+            <div className="space-y-3 text-sm">
+              <div>
+                <span className="text-white/60">Организация:</span>{' '}
+                <span className="text-white font-medium">{pricingPlan.bankInfo.legalName}</span>
+              </div>
+              <div className="flex gap-6 flex-wrap">
+                <div>
+                  <span className="text-white/60">ИНН:</span>{' '}
+                  <span className="text-white">{pricingPlan.bankInfo.inn}</span>
+                </div>
+                {pricingPlan.bankInfo.kpp && (
+                  <div>
+                    <span className="text-white/60">КПП:</span>{' '}
+                    <span className="text-white">{pricingPlan.bankInfo.kpp}</span>
+                  </div>
+                )}
+              </div>
+              <div>
+                <span className="text-white/60">Телефон:</span>{' '}
+                <span className="text-white">{pricingPlan.bankInfo.phone}</span>
+              </div>
+              {pricingPlan.bankInfo.footer && (
+                <div className="mt-3 pt-3 border-t border-white/10 text-white/70">
+                  {pricingPlan.bankInfo.footer}
+                </div>
+              )}
+            </div>
+          </Panel>
+        </div>
+      )}
       </div>
     </main>
   );
@@ -623,7 +1028,8 @@ function PaidExtrasEditModal({
       // Если допы удалены (сумма = 0) - просто закрываем
       onClose();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      setErr(friendlyOrderDeadlineMessage(raw));
       setSaving(false);
     }
   };
@@ -657,7 +1063,7 @@ function PaidExtrasEditModal({
   );
 }
 
-/* ——— Модалка: состав + действия — всегда остаётся открытой; показывает лоадер, пока тянем детали ——— */
+/* --- Модалка: состав + действия - всегда остаётся открытой; показывает лоадер, пока тянем детали --- */
 function DateModal({
   iso, employeeID, org, token, info, onClose, onChanged, onOpenPaidModal,
 }: {
@@ -765,11 +1171,24 @@ function DateModal({
           {!loading && sum?.orderId && (
             <>
               <div className="text-white/80">Заказ уже оформлен на эту дату.</div>
+              {normOrderStatus(sum.orderStatus) === 'awaitingpayment' && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-amber-100/95 text-sm">
+                  <div className="font-semibold mb-0.5">Ожидает оплаты основного обеда</div>
+                  <div className="text-amber-100/80 text-xs">
+                    Заказ сохранён, но оплата не завершена (например, вы вышли из окна ЮKassa). Завершите оплату кнопкой ниже или через «Изменить», если ссылка недоступна.
+                  </div>
+                  {!(sum.paymentInfo?.paymentLink) && (
+                    <div className="mt-2 text-xs text-amber-200/90">
+                      Ссылки на оплату пока нет в системе - откройте «Изменить» и снова нажмите подтверждение: будет создан платёж и редирект в ЮKassa.
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="rounded-xl bg-white/5 border border-white/10 p-3 mb-3">
-                <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
-                <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
-                <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
-                <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
+                <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '-'}</div>
+                <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '-'}</div>
+                <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '-'}</div>
+                <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '-'}</div>
               </div>
 
               {/* Платные допы */}
@@ -863,25 +1282,35 @@ function DateModal({
               </Button>
             )}
 
-            {/* Кнопка "Оплатить" если допы есть но не оплачены */}
-            {sum?.paidExtras && sum.paidExtras.length > 0 && 
-             sum.paymentInfo && sum.paymentInfo.status !== 'succeeded' && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  // Редирект на существующий payment link или создать новый
-                  if (sum.paymentInfo?.paymentLink) {
-                    window.location.href = sum.paymentInfo.paymentLink;
-                  } else if (sum.orderId && onOpenPaidModal) {
-                    // Если нет payment link - открываем редактирование допов (создаст новый платеж)
-                    onOpenPaidModal(sum.orderId, iso);
-                  }
-                }}
-                className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
-              >
-                💳 Оплатить
-              </Button>
-            )}
+            {(() => {
+              if (!sum) return null;
+              const mainAwaiting = normOrderStatus(sum.orderStatus) === 'awaitingpayment';
+              const pay = sum.paymentInfo;
+              const payIncomplete = pay && pay.status !== 'succeeded';
+              const hasLink = Boolean(pay?.paymentLink);
+              const extrasPending =
+                (sum.paidExtras?.length ?? 0) > 0 && payIncomplete && hasLink;
+              const mainPending = mainAwaiting && payIncomplete && hasLink;
+              const showPay = extrasPending || mainPending;
+
+              if (!showPay) return null;
+
+              return (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    if (pay?.paymentLink) {
+                      window.location.href = pay.paymentLink;
+                    } else if (sum.orderId && onOpenPaidModal) {
+                      onOpenPaidModal(sum.orderId, iso);
+                    }
+                  }}
+                  className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
+                >
+                  💳 Оплатить
+                </Button>
+              );
+            })()}
 
             <Button
               variant="danger"
@@ -893,6 +1322,180 @@ function DateModal({
 
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MealFeedbackModal({
+  iso,
+  employeeID,
+  org,
+  token,
+  alreadySubmitted,
+  onClose,
+  onSuccess,
+}: {
+  iso: string;
+  employeeID: string;
+  org: string;
+  token: string;
+  alreadySubmitted: boolean;
+  onClose: () => void;
+  onSuccess: (dateIso: string) => void;
+}) {
+  const [step, setStep] = useState<'form' | 'thanks'>(alreadySubmitted ? 'thanks' : 'form');
+  const [selectedRating, setSelectedRating] = useState<string | null>(null);
+  const [comment, setComment] = useState('');
+  const [err, setErr] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const thanksTimerRef = useRef<number | null>(null);
+
+  const handleModalClose = useCallback(() => {
+    if (thanksTimerRef.current) {
+      clearTimeout(thanksTimerRef.current);
+      thanksTimerRef.current = null;
+    }
+    onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    return () => {
+      if (thanksTimerRef.current) {
+        clearTimeout(thanksTimerRef.current);
+        thanksTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Только смена даты: сброс формы и отмена старого таймера. alreadySubmitted здесь не в deps,
+  // иначе после отправки родитель ставит alreadySubmitted=true и эффект убивает автозакрытие.
+  useEffect(() => {
+    if (thanksTimerRef.current) {
+      clearTimeout(thanksTimerRef.current);
+      thanksTimerRef.current = null;
+    }
+    setStep(alreadySubmitted ? 'thanks' : 'form');
+    setSelectedRating(null);
+    setComment('');
+    setErr('');
+    setSending(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- см. комментарий выше
+  }, [iso]);
+
+  async function submit() {
+    if (!selectedRating) return;
+    setSending(true);
+    setErr('');
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeID,
+          org,
+          token,
+          date: iso,
+          rating: selectedRating,
+          comment: comment.trim() || undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || `Ошибка ${res.status}`);
+      }
+      onSuccess(iso);
+      setStep('thanks');
+      thanksTimerRef.current = window.setTimeout(() => {
+        thanksTimerRef.current = null;
+        handleModalClose();
+      }, 2000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/90 p-2 sm:p-6">
+      <div className="w-full sm:max-w-md bg-panel border border-white/10 rounded-2xl p-4 shadow-xl">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div>
+            <div className="text-xs text-white/50 uppercase tracking-wide">Обед на дату</div>
+            <div className="text-lg font-bold text-white">{fmtDayLabel(iso)}</div>
+          </div>
+          <button type="button" onClick={handleModalClose} className="text-white/60 hover:text-white text-sm shrink-0">
+            Закрыть
+          </button>
+        </div>
+
+        {step === 'thanks' ? (
+          <div className="py-4 text-center space-y-4">
+            <div className="text-4xl" aria-hidden>✓</div>
+            <p className="text-white text-base leading-relaxed">
+              Спасибо! Вы помогаете нам стать лучше.
+            </p>
+            <p className="text-white/45 text-xs">Окно закроется через пару секунд…</p>
+            <Button type="button" onClick={handleModalClose} className="w-full" variant="ghost">
+              Закрыть сейчас
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-white/90 text-sm font-medium">Как вам обед?</p>
+
+            <div className="flex flex-wrap justify-center gap-2 sm:gap-3">
+              {FEEDBACK_OPTIONS.map(({ emoji, rating }) => {
+                const isSel = selectedRating === rating;
+                return (
+                  <button
+                    key={rating}
+                    type="button"
+                    onClick={() => setSelectedRating(rating)}
+                    className={`text-3xl sm:text-4xl leading-none p-3 rounded-2xl transition border-2 ${
+                      isSel
+                        ? 'border-yellow-400 bg-yellow-400/15 scale-105 shadow-lg ring-2 ring-yellow-400/50'
+                        : 'border-transparent bg-white/5 hover:bg-white/10'
+                    }`}
+                    title={rating}
+                    aria-label={rating}
+                    aria-pressed={isSel}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/50 mb-1.5">
+                По желанию: что понравилось или что улучшить
+              </label>
+              <textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value.slice(0, 300))}
+                maxLength={300}
+                rows={3}
+                placeholder="Можно оставить пустым"
+                className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white placeholder:text-white/35 focus:outline-none focus:ring-2 focus:ring-yellow-400/40 resize-y min-h-[88px]"
+              />
+              <div className="text-right text-xs text-white/40 mt-0.5">{comment.length}/300</div>
+            </div>
+
+            {err && <div className="text-red-400 text-sm">{err}</div>}
+
+            <Button
+              type="button"
+              onClick={submit}
+              disabled={!selectedRating || sending}
+              className="w-full"
+            >
+              {sending ? 'Отправка…' : 'Отправить'}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
