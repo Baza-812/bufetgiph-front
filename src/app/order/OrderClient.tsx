@@ -111,6 +111,8 @@ export default function OrderClient() {
   const [feedbackEligibleDates, setFeedbackEligibleDates] = useState<string[]>([]);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, boolean>>({});
   const [feedbackModalDate, setFeedbackModalDate] = useState<string | null>(null);
+  /** idle — креды ещё не готовы; loading — запрос; ok / error — ответ */
+  const [feedbackStatus, setFeedbackStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
 
   // 1) забираем креды из query/localStorage (один раз)
   useEffect(() => {
@@ -210,7 +212,13 @@ export default function OrderClient() {
   }, [org, dates, employeeRole, pricingPlan]);
 
   const reloadFeedback = useCallback(async () => {
-    if (!employeeID || !org || !token) return;
+    if (!employeeID || !org || !token) {
+      setFeedbackStatus('idle');
+      setFeedbackEligibleDates([]);
+      setFeedbackSubmitted({});
+      return;
+    }
+    setFeedbackStatus('loading');
     try {
       const u = new URL('/api/feedback', window.location.origin);
       u.searchParams.set('employeeID', employeeID);
@@ -224,10 +232,17 @@ export default function OrderClient() {
       if (r?.ok) {
         setFeedbackEligibleDates(r.eligibleDates || []);
         setFeedbackSubmitted(r.feedbackSubmitted || {});
+        setFeedbackStatus('ok');
+      } else {
+        setFeedbackEligibleDates([]);
+        setFeedbackSubmitted({});
+        setFeedbackStatus('error');
       }
-    } catch {
+    } catch (e) {
+      console.error('[OrderClient] /api/feedback failed:', e);
       setFeedbackEligibleDates([]);
       setFeedbackSubmitted({});
+      setFeedbackStatus('error');
     }
   }, [employeeID, org, token]);
 
@@ -570,37 +585,62 @@ export default function OrderClient() {
             </div>
           )}
 
-        {feedbackEligibleDates.length > 0 && (
+        {org && employeeID && token && (
           <div className="mt-8 pt-6 border-t border-white/10">
-            <p className="text-sm text-white/75 mb-3">
-              Оцените недавние обеды — это займёт несколько секунд.
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {feedbackEligibleDates.map((d) => {
-                const done = Boolean(feedbackSubmitted[d]);
-                const label = fmtDayLabel(d);
-                return (
-                  <div key={`fb-${d}`} className="relative">
-                    <Button
-                      type="button"
-                      onClick={() => handlePickFeedbackDate(d)}
-                      className={`w-full ${done ? 'opacity-70' : 'bg-white/10 text-white/90 hover:bg-white/15'}`}
-                      variant="ghost"
-                      disabled={done}
-                      title={done ? 'Оценка уже отправлена' : 'Оставить отзыв об обеде'}
-                    >
-                      <span className="flex items-center justify-center gap-1.5">
-                        {label}
-                        {done && <span className="text-green-400" aria-hidden>✓</span>}
-                      </span>
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="mt-2 text-xs text-white/45">
-              Серые даты — дни, на которые приём заказов уже закрыт; можно поставить оценку без комментария.
-            </p>
+            <p className="text-sm font-semibold text-white mb-2">Оценка обедов</p>
+
+            {feedbackStatus !== 'ok' && feedbackStatus !== 'error' && (
+              <div className="text-white/50 text-sm">Загрузка…</div>
+            )}
+
+            {feedbackStatus === 'error' && (
+              <div className="rounded-lg border border-amber-500/35 bg-amber-950/25 px-3 py-2 text-amber-100/95 text-sm">
+                Не удалось загрузить блок оценок. Убедитесь, что задеплоен API с маршрутом{' '}
+                <code className="text-xs bg-black/30 px-1 rounded">/api/feedback</code>
+                , в Airtable создана таблица MealFeedback (см. MEAL_FEEDBACK_AIRTABLE.md в репозитории API), и откройте консоль браузера (F12) по сообщению об ошибке.
+              </div>
+            )}
+
+            {feedbackStatus === 'ok' && feedbackEligibleDates.length === 0 && (
+              <p className="text-white/55 text-sm leading-relaxed">
+                Здесь появятся до пяти последних дней, на которые у вас был заказ и уже закрыт приём заказов на эти дни.
+                Если все ваши обеды ещё в «открытом» календаре выше, оценить пока нечего.
+              </p>
+            )}
+
+            {feedbackStatus === 'ok' && feedbackEligibleDates.length > 0 && (
+              <>
+                <p className="text-sm text-white/75 mb-3">
+                  Оцените недавние обеды — это займёт несколько секунд.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {feedbackEligibleDates.map((d) => {
+                    const done = Boolean(feedbackSubmitted[d]);
+                    const label = fmtDayLabel(d);
+                    return (
+                      <div key={`fb-${d}`} className="relative">
+                        <Button
+                          type="button"
+                          onClick={() => handlePickFeedbackDate(d)}
+                          className={`w-full ${done ? 'opacity-70' : 'bg-white/10 text-white/90 hover:bg-white/15'}`}
+                          variant="ghost"
+                          disabled={done}
+                          title={done ? 'Оценка уже отправлена' : 'Оставить отзыв об обеде'}
+                        >
+                          <span className="flex items-center justify-center gap-1.5">
+                            {label}
+                            {done && <span className="text-green-400" aria-hidden>✓</span>}
+                          </span>
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-white/45">
+                  Кнопки ниже основного календаря — для дней, на которые приём заказов уже закрыт. Можно отправить только оценку, без текста.
+                </p>
+              </>
+            )}
           </div>
         )}
 
