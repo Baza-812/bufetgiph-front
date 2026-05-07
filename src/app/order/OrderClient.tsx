@@ -1333,7 +1333,13 @@ function MealFeedbackModal({
   onClose: () => void;
   onSuccess: (dateIso: string) => void;
 }) {
-  const thanksTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [step, setStep] = useState<'form' | 'thanks'>(alreadySubmitted ? 'thanks' : 'form');
+  const [selectedRating, setSelectedRating] = useState<string | null>(null);
+  const [comment, setComment] = useState('');
+  const [err, setErr] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const thanksTimerRef = useRef<number | null>(null);
 
   const handleModalClose = useCallback(() => {
     if (thanksTimerRef.current) {
