@@ -111,7 +111,7 @@ export default function OrderClient() {
   const [feedbackEligibleDates, setFeedbackEligibleDates] = useState<string[]>([]);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState<Record<string, boolean>>({});
   const [feedbackModalDate, setFeedbackModalDate] = useState<string | null>(null);
-  /** idle — креды ещё не готовы; loading — запрос; ok / error — ответ */
+  /** idle - креды ещё не готовы; loading - запрос; ok / error - ответ */
   const [feedbackStatus, setFeedbackStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
 
   // 1) забираем креды из query/localStorage (один раз)
@@ -326,7 +326,7 @@ export default function OrderClient() {
 
   // 4) клик по дате
   async function handlePickDate(d: string) {
-    // Если занятость ещё не подгрузилась — проверим точечно, чтобы не улететь в квиз по ошибке
+    // Если занятость ещё не подгрузилась - проверим точечно, чтобы не улететь в квиз по ошибке
     if (!busyReady) {
       try {
         const u = new URL('/api/hr_orders', window.location.origin);
@@ -337,10 +337,10 @@ export default function OrderClient() {
         u.searchParams.set('date', d);
         const r = await fetchJSON<SingleResp>(u.toString());
         if (r?.summary?.orderId) {
-          setSelected(d); // есть заказ — модалка
+          setSelected(d); // есть заказ - модалка
           return;
         }
-        // свободно — квиз
+        // свободно - квиз
         const q = new URL('/order/quiz', window.location.origin);
         q.searchParams.set('date', d);
         q.searchParams.set('step', '1');
@@ -350,7 +350,7 @@ export default function OrderClient() {
         router.push(q.toString());
         return;
       } catch {
-        // на ошибке — пускаем в квиз, чтобы не стопорить пользователя
+        // на ошибке - пускаем в квиз, чтобы не стопорить пользователя
         const q = new URL('/order/quiz', window.location.origin);
         q.searchParams.set('date', d);
         q.searchParams.set('step', '1');
@@ -362,7 +362,7 @@ export default function OrderClient() {
       }
     }
 
-    // Когда занятость известна — решаем локально
+    // Когда занятость известна - решаем локально
     const isBusy = Boolean(busy[d]?.summary);
     if (!isBusy) {
       const q = new URL('/order/quiz', window.location.origin);
@@ -374,7 +374,7 @@ export default function OrderClient() {
       router.push(q.toString());
       return;
     }
-    setSelected(d); // занято — модалка
+    setSelected(d); // занято - модалка
   }
 
   function handlePickFeedbackDate(d: string) {
@@ -453,7 +453,7 @@ export default function OrderClient() {
                 </h4>
                 <ul className="text-sm text-white/70 space-y-1 list-disc list-inside">
                   <li>Минимум <strong className="text-white">{pricingPlan.teamMinForDelivery} оплаченных обедов</strong> для доставки</li>
-                  <li>Заказ и оплата до <strong className="text-white">{pricingPlan.cutoffTimeLabel?.trim() || '—'}</strong> накануне доставки</li>
+                  <li>Заказ и оплата до <strong className="text-white">{pricingPlan.cutoffTimeLabel?.trim() || '-'}</strong> накануне доставки</li>
                   <li>Доставка: <strong className="text-white">{pricingPlan.deliveryAddress}</strong></li>
                 </ul>
               </div>
@@ -495,7 +495,7 @@ export default function OrderClient() {
         </Panel>
       )}
           
-      {/* креды вручную — на случай, если пришли без query */}
+      {/* креды вручную - на случай, если пришли без query */}
       {(!org || !employeeID || !token) && (
         <Panel title="Данные доступа">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -530,7 +530,7 @@ export default function OrderClient() {
                 ? 'ring-2 ring-amber-400/85 ring-offset-2 ring-offset-zinc-950 bg-amber-950/35 hover:bg-amber-950/45'
                 : '';
             const dateTitle = awaitingPay
-              ? 'Заказ создан, оплата основного обеда не завершена — откройте день и нажмите «Оплатить»'
+              ? 'Заказ создан, оплата основного обеда не завершена - откройте день и нажмите «Оплатить»'
               : undefined;
             
             return (
@@ -617,7 +617,7 @@ export default function OrderClient() {
             {feedbackStatus === 'ok' && feedbackEligibleDates.length > 0 && (
               <>
                 <p className="text-sm text-white/75 mb-3">
-                  Оцените недавние обеды — это займёт несколько секунд.
+                  Оцените недавние обеды - это займёт несколько секунд.
                 </p>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                   {feedbackEligibleDates.map((d) => {
@@ -651,7 +651,8 @@ export default function OrderClient() {
                   })}
                 </div>
                 <p className="mt-2 text-xs text-white/45">
-                  Кнопки ниже основного календаря — для дней, на которые приём заказов уже закрыт. Можно отправить только оценку, без текста.
+                  Оценка - только эмодзи (обязательно); комментарий по желанию. Даты здесь - это дни, на которые у вас уже
+                  был заказ, пока для них нельзя изменить заказ в календаре выше.
                 </p>
               </>
             )}
@@ -674,7 +675,7 @@ export default function OrderClient() {
         />
       )}
 
-      {/* Модалка со составом — показываем только когда выбран день */}
+      {/* Модалка со составом - показываем только когда выбран день */}
       {selected && (
         <DateModal
           iso={selected}
@@ -1052,7 +1053,7 @@ function PaidExtrasEditModal({
   );
 }
 
-/* ——— Модалка: состав + действия — всегда остаётся открытой; показывает лоадер, пока тянем детали ——— */
+/* --- Модалка: состав + действия - всегда остаётся открытой; показывает лоадер, пока тянем детали --- */
 function DateModal({
   iso, employeeID, org, token, info, onClose, onChanged, onOpenPaidModal,
 }: {
@@ -1168,16 +1169,16 @@ function DateModal({
                   </div>
                   {!(sum.paymentInfo?.paymentLink) && (
                     <div className="mt-2 text-xs text-amber-200/90">
-                      Ссылки на оплату пока нет в системе — откройте «Изменить» и снова нажмите подтверждение: будет создан платёж и редирект в ЮKassa.
+                      Ссылки на оплату пока нет в системе - откройте «Изменить» и снова нажмите подтверждение: будет создан платёж и редирект в ЮKassa.
                     </div>
                   )}
                 </div>
               )}
               <div className="rounded-xl bg-white/5 border border-white/10 p-3 mb-3">
-                <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '—'}</div>
-                <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '—'}</div>
-                <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '—'}</div>
-                <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '—'}</div>
+                <div><span className="text-white/60">Сотрудник:</span> {sum?.fullName || '-'}</div>
+                <div><span className="text-white/60">Meal Box:</span> {sum?.mealBox || '-'}</div>
+                <div><span className="text-white/60">Экстра 1:</span> {sum?.extra1 || '-'}</div>
+                <div><span className="text-white/60">Экстра 2:</span> {sum?.extra2 || '-'}</div>
               </div>
 
               {/* Платные допы */}
@@ -1358,6 +1359,8 @@ function MealFeedbackModal({
     };
   }, []);
 
+  // Только смена даты: сброс формы и отмена старого таймера. alreadySubmitted здесь не в deps,
+  // иначе после отправки родитель ставит alreadySubmitted=true и эффект убивает автозакрытие.
   useEffect(() => {
     if (thanksTimerRef.current) {
       clearTimeout(thanksTimerRef.current);
@@ -1368,7 +1371,8 @@ function MealFeedbackModal({
     setComment('');
     setErr('');
     setSending(false);
-  }, [iso, alreadySubmitted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- см. комментарий выше
+  }, [iso]);
 
   async function submit() {
     if (!selectedRating) return;
@@ -1395,7 +1399,7 @@ function MealFeedbackModal({
       setStep('thanks');
       thanksTimerRef.current = window.setTimeout(() => {
         thanksTimerRef.current = null;
-        onClose();
+        handleModalClose();
       }, 2000);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
