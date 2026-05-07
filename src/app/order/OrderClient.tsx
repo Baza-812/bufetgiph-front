@@ -1,7 +1,7 @@
 // src/app/order/OrderClient.tsx
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Panel from '@/components/ui/Panel';
 import Button from '@/components/ui/Button';
@@ -230,8 +230,17 @@ export default function OrderClient() {
         feedbackSubmitted?: Record<string, boolean>;
       }>(u.toString());
       if (r?.ok) {
-        setFeedbackEligibleDates(r.eligibleDates || []);
-        setFeedbackSubmitted(r.feedbackSubmitted || {});
+        const el = r.eligibleDates || [];
+        setFeedbackEligibleDates(el);
+        // Сохраняем локально true, пока GET ещё не видит новую запись в Airtable (иначе модалка откатывается к форме)
+        setFeedbackSubmitted((prev) => {
+          const server = r.feedbackSubmitted || {};
+          const out: Record<string, boolean> = {};
+          for (const d of el) {
+            out[d] = Boolean(server[d] || prev[d]);
+          }
+          return out;
+        });
         setFeedbackStatus('ok');
       } else {
         setFeedbackEligibleDates([]);
@@ -469,14 +478,6 @@ export default function OrderClient() {
                 <span className="font-semibold">{orgName}</span>
               </div>
             )}
-            {employeeRole && (
-              <div className="text-white/80">
-                <span className="text-white/60">Роль:</span>{' '}
-                <span className="font-semibold">
-                  {employeeRole === 'Ambassador' ? '👑 Амбассадор' : employeeRole}
-                </span>
-              </div>
-            )}
           </div>
           
           {/* Кнопка перехода в личный кабинет для Ambassador */}
@@ -561,6 +562,11 @@ export default function OrderClient() {
           })}
         </div>
 
+        {!(
+          pricingPlan?.contractType === 'Ambassador' &&
+          (employeeRole === 'Ambassador' || employeeRole === 'TeamMember')
+        ) && <HintDates />}
+
         {pricingPlan?.contractType === 'Ambassador' &&
           (employeeRole === 'Ambassador' || employeeRole === 'TeamMember') && (
             <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-white/65">
@@ -622,14 +628,22 @@ export default function OrderClient() {
                         <Button
                           type="button"
                           onClick={() => handlePickFeedbackDate(d)}
-                          className={`w-full ${done ? 'opacity-70' : 'bg-white/10 text-white/90 hover:bg-white/15'}`}
+                          className={`w-full ${
+                            done
+                              ? '!ring-2 !ring-green-500/70 !bg-green-950/30 !text-white/85 cursor-not-allowed'
+                              : 'bg-white/10 text-white/90 hover:bg-white/15'
+                          }`}
                           variant="ghost"
                           disabled={done}
                           title={done ? 'Оценка уже отправлена' : 'Оставить отзыв об обеде'}
                         >
                           <span className="flex items-center justify-center gap-1.5">
                             {label}
-                            {done && <span className="text-green-400" aria-hidden>✓</span>}
+                            {done && (
+                              <span className="text-green-400 font-semibold shrink-0" aria-hidden>
+                                ✓
+                              </span>
+                            )}
                           </span>
                         </Button>
                       </div>
@@ -643,9 +657,6 @@ export default function OrderClient() {
             )}
           </div>
         )}
-
-        <HintDates />
-        
       </Panel>
 
       {feedbackModalDate && (
@@ -1322,13 +1333,30 @@ function MealFeedbackModal({
   onClose: () => void;
   onSuccess: (dateIso: string) => void;
 }) {
-  const [step, setStep] = useState<'form' | 'thanks'>(alreadySubmitted ? 'thanks' : 'form');
-  const [selectedRating, setSelectedRating] = useState<string | null>(null);
-  const [comment, setComment] = useState('');
-  const [err, setErr] = useState('');
-  const [sending, setSending] = useState(false);
+  const thanksTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleModalClose = useCallback(() => {
+    if (thanksTimerRef.current) {
+      clearTimeout(thanksTimerRef.current);
+      thanksTimerRef.current = null;
+    }
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
+    return () => {
+      if (thanksTimerRef.current) {
+        clearTimeout(thanksTimerRef.current);
+        thanksTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (thanksTimerRef.current) {
+      clearTimeout(thanksTimerRef.current);
+      thanksTimerRef.current = null;
+    }
     setStep(alreadySubmitted ? 'thanks' : 'form');
     setSelectedRating(null);
     setComment('');
@@ -1357,8 +1385,12 @@ function MealFeedbackModal({
       if (!res.ok) {
         throw new Error(data.error || `Ошибка ${res.status}`);
       }
-      setStep('thanks');
       onSuccess(iso);
+      setStep('thanks');
+      thanksTimerRef.current = window.setTimeout(() => {
+        thanksTimerRef.current = null;
+        onClose();
+      }, 2000);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1374,7 +1406,7 @@ function MealFeedbackModal({
             <div className="text-xs text-white/50 uppercase tracking-wide">Обед на дату</div>
             <div className="text-lg font-bold text-white">{fmtDayLabel(iso)}</div>
           </div>
-          <button type="button" onClick={onClose} className="text-white/60 hover:text-white text-sm shrink-0">
+          <button type="button" onClick={handleModalClose} className="text-white/60 hover:text-white text-sm shrink-0">
             Закрыть
           </button>
         </div>
@@ -1385,8 +1417,9 @@ function MealFeedbackModal({
             <p className="text-white text-base leading-relaxed">
               Спасибо! Вы помогаете нам стать лучше.
             </p>
-            <Button type="button" onClick={onClose} className="w-full">
-              Закрыть
+            <p className="text-white/45 text-xs">Окно закроется через пару секунд…</p>
+            <Button type="button" onClick={handleModalClose} className="w-full" variant="ghost">
+              Закрыть сейчас
             </Button>
           </div>
         ) : (
