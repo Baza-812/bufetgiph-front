@@ -7,6 +7,15 @@ import { renderKitchenDailyXLSX } from '@/lib/xlsx';
 
 export const runtime = 'nodejs';
 
+/** Имена полей типа строки заказа (как в Airtable Order Lines); через запятую в env REPORT_ORDER_LINE_TYPE_FIELDS */
+function reportOrderLineTypeFieldNames(): string[] {
+  const raw = process.env.REPORT_ORDER_LINE_TYPE_FIELDS || 'Line Type,Type';
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 type Body = { recipientId?: string; date?: string };
 
 export async function POST(req: NextRequest) {
@@ -456,12 +465,14 @@ async function collectKitchenDataFromArrays(ordersAll: Airtable.Record<any>[], o
   const F_ITEM_NAME = ['Item Name', 'Name', 'Title'];
   const F_QTY = ['Quantity', 'Qty', 'Count'];
   const F_LINE_CATEGORY = ['Category (from Dish)', 'Category'];
-  const F_LINE_TYPE = ['Line Type', 'Type'];
+  const F_LINE_TYPE = [...new Set([...reportOrderLineTypeFieldNames(), 'Line Type', 'Type'])];
 
   // группируем линии по заказу, берём категорию прямо из Order Lines
   // ВАЖНО: исключаем линии с Line Type='Pending' (неоплаченные платные допы)
   const orderLineMap = new Map<string, { name: string; qty: number; cat: string }[]>();
   for (const l of lines) {
+    if (!lineIds.has(l.getId())) continue;
+
     const orderRef = getLinks(l, F_LINE_ORDER)[0];
     if (!orderRef) continue;
 
