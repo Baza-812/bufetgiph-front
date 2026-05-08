@@ -10,9 +10,10 @@ import { fetchJSON } from '@/lib/api';
 type OrgResp = { ok: boolean; name?: string; orgName?: string; portionType?: string; error?: string };
 type RegisterResp = {
   ok: boolean;
-  // backend возвращает ok=true как при создании новой записи,
-  // так и при режиме "существует — выслать ссылку".
-  // Ссылку в UI не показываем.
+  /** false если нет RESEND/MAIL_FROM или ошибка Resend — запись сотрудника всё равно создана */
+  emailSent?: boolean;
+  /** совместимость со старым API */
+  sent?: boolean;
   error?: string;
 };
 
@@ -74,8 +75,14 @@ export default function RegisterPage() {
 
       if (!resp.ok) throw new Error(resp.error || 'Не удалось завершить регистрацию');
 
-      // Успешно: просто показываем сообщение.
-      setOkMsg('Готово! Мы отправили письмо с персональной ссылкой для заказа обедов.');
+      const mailed = Boolean(resp.emailSent ?? resp.sent);
+      if (mailed) {
+        setOkMsg('Готово! Мы отправили письмо с персональной ссылкой для заказа обедов.');
+      } else {
+        setOkMsg(
+          'Регистрация сохранена. Письмо сейчас не удалось отправить — напишите в поддержку или попробуйте снова через некоторое время.',
+        );
+      }
       setFirstName('');
       setLastName('');
       setEmail('');
