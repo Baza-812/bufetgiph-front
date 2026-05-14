@@ -429,12 +429,12 @@ export default function OrderClient() {
         </p>
       </Panel>
 
-      {/* Баннер обратной связи по обедам */}
+      {/* Сезонный баннер (меню) */}
       <div className="mb-4">
         <div className="relative overflow-hidden rounded-2xl mb-3">
           <img
-            src="/images/meal-feedback-banner.png"
-            alt="Оцените обед - оставьте отзыв после обеда"
+            src="/images/summer-menu-banner.png"
+            alt="Лето в меню: со следующей недели холодные супы — холодный борщ и окрошка"
             className="w-full h-auto"
           />
         </div>
