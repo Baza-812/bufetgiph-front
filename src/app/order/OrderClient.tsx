@@ -47,6 +47,8 @@ type SingleResp = {
   };
 };
 
+type OrderDaySummary = NonNullable<SingleResp['summary']>;
+
 export default function OrderClient() {
   const router = useRouter();
 
@@ -70,6 +72,9 @@ export default function OrderClient() {
   const [employeeName, setEmployeeName] = useState('');
   const [orgName, setOrgName] = useState('');
   const [employeeRole, setEmployeeRole] = useState('');
+  const [dinnerEmployeeId, setDinnerEmployeeId] = useState('');
+  const [dinnerEnabled, setDinnerEnabled] = useState(false);
+  const [dinnerTypeHint, setDinnerTypeHint] = useState('');
 
   // для редактирования платных допов
   const [menu, setMenu] = useState<MenuItem[]>([]);
@@ -151,10 +156,20 @@ export default function OrderClient() {
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
-        const r = await fetchJSON<{ ok: boolean; fullName?: string; role?: string }>(u.toString());
+        const r = await fetchJSON<{
+          ok: boolean;
+          fullName?: string;
+          role?: string;
+          dinner?: boolean;
+          dinnerType?: string;
+          dinnerEmployeeId?: string;
+        }>(u.toString());
         if (r?.ok) {
           if (r.fullName) setEmployeeName(r.fullName);
           if (r.role) setEmployeeRole(String(r.role).trim());
+          setDinnerEnabled(Boolean(r.dinner));
+          setDinnerTypeHint(String(r.dinnerType || '').trim());
+          setDinnerEmployeeId(String(r.dinnerEmployeeId || '').trim());
         }
       } catch {
         // не критично
@@ -284,18 +299,31 @@ export default function OrderClient() {
         employeeID, org, token,
         dates: dates.join(','),
       });
+      if (dinnerEmployeeId) {
+        qs.set('dinnerEmployeeID', dinnerEmployeeId);
+      }
       const r = await fetchJSON<{
         ok: boolean;
         busy: Record<string, boolean>;
         awaitingPayment?: Record<string, boolean>;
+        dinnerBusy?: Record<string, boolean>;
+        dinnerAwaitingPayment?: Record<string, boolean>;
       }>(`/api/busy?${qs.toString()}`);
       const ap: Record<string, boolean> = {};
       const map: Record<string, SingleResp> = {};
       for (const d of dates) {
-        ap[d] = Boolean(r.awaitingPayment?.[d]);
-        map[d] = r.busy[d]
-          ? { ok: true, summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as any }
-          : { ok: true, summary: null };
+        const lunchBusy = Boolean(r.busy[d]);
+        const dBusy = dinnerEmployeeId ? Boolean(r.dinnerBusy?.[d]) : false;
+        const lunchAwait = Boolean(r.awaitingPayment?.[d]);
+        const dAwait = dinnerEmployeeId ? Boolean(r.dinnerAwaitingPayment?.[d]) : false;
+        ap[d] = lunchAwait || dAwait;
+        map[d] =
+          lunchBusy || dBusy
+            ? {
+                ok: true,
+                summary: { orderId: '__has__', fullName: '', date: d, mealBox: '', extra1: '', extra2: '' } as OrderDaySummary,
+              }
+            : { ok: true, summary: null };
       }
       setAwaitingPaymentByDate(ap);
       setBusy(map);
@@ -307,7 +335,7 @@ export default function OrderClient() {
     } finally {
       setBusyReady(true);
     }
-  }, [dates, employeeID, org, token]);
+  }, [dates, employeeID, org, token, dinnerEmployeeId]);
 
   // первичная загрузка busy
   useEffect(() => { reloadBusy(); }, [reloadBusy]);
@@ -693,6 +721,9 @@ export default function OrderClient() {
           org={org}
           token={token}
           info={busy[selected]}
+          dinnerEmployeeID={dinnerEmployeeId}
+          dinnerEnabled={dinnerEnabled}
+          dinnerTypeHint={dinnerTypeHint}
           onClose={() => setSelected(null)}
           onChanged={reloadBusy}
           onOpenPaidModal={(orderId, date) => {
@@ -1065,64 +1096,89 @@ function PaidExtrasEditModal({
 
 /* --- Модалка: состав + действия - всегда остаётся открытой; показывает лоадер, пока тянем детали --- */
 function DateModal({
-  iso, employeeID, org, token, info, onClose, onChanged, onOpenPaidModal,
+  iso,
+  employeeID,
+  org,
+  token,
+  info,
+  dinnerEmployeeID,
+  dinnerEnabled,
+  dinnerTypeHint,
+  onClose,
+  onChanged,
+  onOpenPaidModal,
 }: {
   iso: string;
-  employeeID: string; org: string; token: string;
-  info?: SingleResp; onClose: ()=>void; onChanged: ()=>void;
+  employeeID: string;
+  org: string;
+  token: string;
+  dinnerEmployeeID?: string;
+  dinnerEnabled?: boolean;
+  dinnerTypeHint?: string;
+  info?: SingleResp;
+  onClose: () => void;
+  onChanged: () => void;
   onOpenPaidModal?: (orderId: string, date: string) => void;
 }) {
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState('');
   const [sum, setSum] = useState<SingleResp['summary'] | null>(info?.summary || null);
+  const [dSum, setDSum] = useState<OrderDaySummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [showCancelSuccess, setShowCancelSuccess] = useState(false);
 
-  // дозагружаем детали, если у нас только «заглушка» (orderId='__has__') или ничего нет
   useEffect(() => {
     let ignore = false;
     (async () => {
-      const needFetch = !info?.summary || info.summary.orderId === '__has__';
-      if (!needFetch) { setSum(info!.summary); return; }
       try {
-        setLoading(true); setErr('');
+        setLoading(true);
+        setErr('');
         const u = new URL('/api/hr_orders', window.location.origin);
-        u.searchParams.set('mode','single');
+        u.searchParams.set('mode', 'single');
         u.searchParams.set('employeeID', employeeID);
         u.searchParams.set('org', org);
         u.searchParams.set('token', token);
         u.searchParams.set('date', iso);
-        const r = await fetchJSON<SingleResp>(u.toString());
-        console.log('[DateModal] hr_orders response:', JSON.stringify(r?.summary, null, 2));
-        console.log('[DateModal] paymentInfo:', r?.summary?.paymentInfo);
-        if (!ignore) setSum(r?.summary || null);
+        if (dinnerEmployeeID) u.searchParams.set('dinnerEmployeeID', dinnerEmployeeID);
+        const r = await fetchJSON<SingleResp & { dinnerSummary?: OrderDaySummary | null }>(u.toString());
+        if (!ignore) {
+          setSum(r?.summary || null);
+          setDSum(r?.dinnerSummary ?? null);
+        }
       } catch (e) {
         if (!ignore) setErr(e instanceof Error ? e.message : String(e));
       } finally {
         if (!ignore) setLoading(false);
       }
     })();
-    return () => { ignore = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [iso, employeeID, org, token]);
+    return () => {
+      ignore = true;
+    };
+  }, [iso, employeeID, org, token, dinnerEmployeeID]);
 
-  async function cancelOrder() {
-    if (!sum?.orderId) return;
-    const hasPaidExtras = sum.paidExtras && sum.paidExtras.length > 0;
-    const hasSucceededPayment = sum.paymentInfo?.status === 'succeeded';
-    
+  async function cancelOrderFor(summary: OrderDaySummary | null) {
+    if (!summary?.orderId) return;
+    const hasPaidExtras = summary.paidExtras && summary.paidExtras.length > 0;
+    const hasSucceededPayment = summary.paymentInfo?.status === 'succeeded';
+
     try {
-      setWorking(true); setErr('');
-      
+      setWorking(true);
+      setErr('');
+
       await fetchJSON('/api/order_cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ employeeID, org, token, orderId: sum.orderId, reason: 'user_cancel' })
+        body: JSON.stringify({
+          employeeID,
+          org,
+          token,
+          orderId: summary.orderId,
+          reason: 'user_cancel',
+        }),
       });
-      
+
       setWorking(false);
-      
-      // Если был оплаченный платеж - показываем сообщение о возврате
+
       if (hasPaidExtras && hasSucceededPayment) {
         setShowCancelSuccess(true);
         setTimeout(() => {
@@ -1133,10 +1189,18 @@ function DateModal({
         onClose();
         onChanged();
       }
-    } catch(e: unknown) {
+    } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
       setWorking(false);
     }
+  }
+
+  async function cancelOrder() {
+    await cancelOrderFor(sum);
+  }
+
+  async function cancelDinnerOrder() {
+    await cancelOrderFor(dSum);
   }
 
   // Экран успешной отмены с возвратом
@@ -1245,7 +1309,44 @@ function DateModal({
             </>
           )}
 
-          {!loading && !sum?.orderId && (
+          {!loading && dinnerEnabled && dinnerEmployeeID && (
+            <div className="border-t border-white/10 pt-3 mt-3">
+              <div className="text-white/90 font-semibold mb-2">Ужин</div>
+              {!dSum?.orderId && (
+                <p className="text-white/60 text-sm mb-2">Ужин на эту дату ещё не заказан.</p>
+              )}
+              {dSum?.orderId && (
+                <>
+                  <div className="rounded-xl bg-white/5 border border-violet-500/25 p-3 mb-2">
+                    <div>
+                      <span className="text-white/60">Состав:</span> {dSum.mealBox || '-'}
+                    </div>
+                    <div>
+                      <span className="text-white/60">Экстра 1:</span> {dSum.extra1 || '-'}
+                    </div>
+                    <div>
+                      <span className="text-white/60">Экстра 2:</span> {dSum.extra2 || '-'}
+                    </div>
+                  </div>
+                  {dSum.paidExtras && dSum.paidExtras.length > 0 && (
+                    <div className="rounded-xl bg-violet-950/30 border border-violet-500/25 p-3 mb-2 text-sm">
+                      <div className="text-white/90 font-semibold mb-1">Доп. блюда к ужину</div>
+                      {dSum.paidExtras.map((ex, i) => (
+                        <div key={i} className="flex justify-between text-white/80">
+                          <span>
+                            {ex.name} × {ex.qty}
+                          </span>
+                          <span className="text-yellow-400">{ex.lineSum} ₽</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {!loading && !sum?.orderId && !dSum?.orderId && (
             <div className="text-white/70">
               Не удалось получить состав заказа. Вы можете перейти к изменению.
             </div>
@@ -1256,69 +1357,134 @@ function DateModal({
           <div className="flex flex-wrap gap-2 pt-2">
             <Button onClick={onClose}>ОК</Button>
 
-            <Button
-              variant="ghost"
-              onClick={() => {
-                const u = new URL('/order/quiz', window.location.origin);
-                u.searchParams.set('date', iso);
-                u.searchParams.set('step', '1');
-                u.searchParams.set('org', org);
-                u.searchParams.set('employeeID', employeeID);
-                u.searchParams.set('token', token);
-                if (sum?.orderId) u.searchParams.set('orderId', sum.orderId);
-                window.location.href = u.toString();
-              }}
-            >
-              Изменить
-            </Button>
-
-            {sum?.orderId && onOpenPaidModal && (
-              <Button
-                variant="ghost"
-                onClick={() => onOpenPaidModal(sum.orderId, iso)}
-                className="!bg-green-600 hover:!bg-green-700 !text-white"
-              >
-                Доп блюда
-              </Button>
-            )}
-
-            {(() => {
-              if (!sum) return null;
-              const mainAwaiting = normOrderStatus(sum.orderStatus) === 'awaitingpayment';
-              const pay = sum.paymentInfo;
-              const payIncomplete = pay && pay.status !== 'succeeded';
-              const hasLink = Boolean(pay?.paymentLink);
-              const extrasPending =
-                (sum.paidExtras?.length ?? 0) > 0 && payIncomplete && hasLink;
-              const mainPending = mainAwaiting && payIncomplete && hasLink;
-              const showPay = extrasPending || mainPending;
-
-              if (!showPay) return null;
-
-              return (
+            {sum?.orderId && (
+              <>
                 <Button
                   variant="ghost"
                   onClick={() => {
-                    if (pay?.paymentLink) {
-                      window.location.href = pay.paymentLink;
-                    } else if (sum.orderId && onOpenPaidModal) {
-                      onOpenPaidModal(sum.orderId, iso);
-                    }
+                    const u = new URL('/order/quiz', window.location.origin);
+                    u.searchParams.set('date', iso);
+                    u.searchParams.set('step', '1');
+                    u.searchParams.set('org', org);
+                    u.searchParams.set('employeeID', employeeID);
+                    u.searchParams.set('token', token);
+                    u.searchParams.set('orderId', sum.orderId);
+                    window.location.href = u.toString();
                   }}
-                  className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
                 >
-                  💳 Оплатить
+                  Изменить
                 </Button>
-              );
-            })()}
 
-            <Button
-              variant="danger"
-              onClick={cancelOrder}
-              disabled={working || !sum?.orderId}
-            >
-              {working ? 'Отмена…' : 'Отменить'}
-            </Button>
+                {onOpenPaidModal && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => onOpenPaidModal(sum.orderId, iso)}
+                    className="!bg-green-600 hover:!bg-green-700 !text-white"
+                  >
+                    Доп блюда
+                  </Button>
+                )}
+
+                {(() => {
+                  const mainAwaiting = normOrderStatus(sum.orderStatus) === 'awaitingpayment';
+                  const pay = sum.paymentInfo;
+                  const payIncomplete = pay && pay.status !== 'succeeded';
+                  const hasLink = Boolean(pay?.paymentLink);
+                  const extrasPending =
+                    (sum.paidExtras?.length ?? 0) > 0 && payIncomplete && hasLink;
+                  const mainPending = mainAwaiting && payIncomplete && hasLink;
+                  const showPay = extrasPending || mainPending;
+
+                  if (!showPay) return null;
+
+                  return (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        if (pay?.paymentLink) {
+                          window.location.href = pay.paymentLink;
+                        } else if (sum.orderId && onOpenPaidModal) {
+                          onOpenPaidModal(sum.orderId, iso);
+                        }
+                      }}
+                      className="!bg-yellow-600 hover:!bg-yellow-700 !text-white"
+                    >
+                      💳 Оплатить
+                    </Button>
+                  );
+                })()}
+
+                <Button variant="danger" onClick={cancelOrder} disabled={working}>
+                  {working ? 'Отмена…' : 'Отменить'}
+                </Button>
+              </>
+            )}
+
+            {dinnerEnabled &&
+              dinnerEmployeeID &&
+              sum?.orderId &&
+              !dSum?.orderId && (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    const u = new URL('/order/quiz', window.location.origin);
+                    u.searchParams.set('date', iso);
+                    u.searchParams.set('step', '1');
+                    u.searchParams.set('org', org);
+                    u.searchParams.set('employeeID', employeeID);
+                    u.searchParams.set('token', token);
+                    u.searchParams.set('meal', 'dinner');
+                    u.searchParams.set(
+                      'dinnerType',
+                      (dinnerTypeHint || 'Standard').trim() || 'Standard'
+                    );
+                    window.location.href = u.toString();
+                  }}
+                >
+                  Заказать ужин
+                </Button>
+              )}
+
+            {dinnerEnabled && dinnerEmployeeID && dSum?.orderId && (
+              <>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={() => {
+                    const u = new URL('/order/quiz', window.location.origin);
+                    u.searchParams.set('date', iso);
+                    u.searchParams.set('step', '1');
+                    u.searchParams.set('org', org);
+                    u.searchParams.set('employeeID', employeeID);
+                    u.searchParams.set('token', token);
+                    u.searchParams.set('meal', 'dinner');
+                    u.searchParams.set('dinnerType', (dinnerTypeHint || 'Standard').trim() || 'Standard');
+                    u.searchParams.set('orderId', dSum.orderId);
+                    window.location.href = u.toString();
+                  }}
+                >
+                  Изменить ужин
+                </Button>
+                {onOpenPaidModal && (
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={() => onOpenPaidModal(dSum.orderId, iso)}
+                    className="!bg-violet-700 hover:!bg-violet-600 !text-white"
+                  >
+                    Доп блюда (ужин)
+                  </Button>
+                )}
+                <Button
+                  variant="danger"
+                  type="button"
+                  onClick={cancelDinnerOrder}
+                  disabled={working || !dSum.orderId}
+                >
+                  Отменить ужин
+                </Button>
+              </>
+            )}
 
           </div>
         </div>

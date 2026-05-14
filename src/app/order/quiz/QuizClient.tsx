@@ -45,6 +45,8 @@ export default function QuizClient() {
   const qOrg  = sp.get('org') || '';
   const qEmp  = sp.get('employeeID') || '';
   const qTok  = sp.get('token') || '';
+  const isDinnerMeal = (sp.get('meal') || '').toLowerCase() === 'dinner';
+  const qDinnerType = (sp.get('dinnerType') || '').trim();
   const router = useRouter();
 
   const date = sp.get('date') || '';
@@ -77,6 +79,10 @@ export default function QuizClient() {
     lightMealPrice: number;
   } | null>(null);
   const [mealType, setMealType] = useState<'Full' | 'Light' | null>(null); // для TeamMember
+
+  const [dinnerEmployeeId, setDinnerEmployeeId] = useState('');
+  const [dinnerEnabled, setDinnerEnabled] = useState(false);
+  const [dinnerTypeFromApi, setDinnerTypeFromApi] = useState('');
 
   // если дата в URL поменялась — синхронизируем черновик
   useEffect(() => {
@@ -132,9 +138,20 @@ export default function QuizClient() {
         empUrl.searchParams.set('employeeID', employeeID);
         empUrl.searchParams.set('org', org);
         empUrl.searchParams.set('token', token);
-        const empR = await fetchJSON<{ ok: boolean; role?: string }>(empUrl.toString());
+        const empR = await fetchJSON<{
+          ok: boolean;
+          role?: string;
+          dinner?: boolean;
+          dinnerType?: string;
+          dinnerEmployeeId?: string;
+        }>(empUrl.toString());
         if (empR?.ok && empR.role) {
           setEmployeeRole(String(empR.role).trim());
+        }
+        if (empR?.ok) {
+          setDinnerEnabled(Boolean(empR.dinner));
+          setDinnerTypeFromApi(String(empR.dinnerType || '').trim());
+          setDinnerEmployeeId(String(empR.dinnerEmployeeId || '').trim());
         }
         
         // Получаем pricing plan
@@ -152,6 +169,15 @@ export default function QuizClient() {
       }
     })();
   }, [employeeID, org, token]);
+
+  // Ужин для TeamMember: тип набора из Dinner Type / URL (без выбора на шаге 1)
+  useEffect(() => {
+    if (!isDinnerMeal || employeeRole !== 'TeamMember') return;
+    const dt = (qDinnerType || dinnerTypeFromApi || '').trim().toLowerCase();
+    const light =
+      dt === 'light' || dt.includes('лёгк') || dt.includes('легк');
+    setMealType(light ? 'Light' : 'Full');
+  }, [isDinnerMeal, employeeRole, qDinnerType, dinnerTypeFromApi]);
 
   // Грузим меню
   useEffect(() => {
@@ -211,6 +237,13 @@ export default function QuizClient() {
   const isLightPortion = useMemo(() => {
     return portionType === 'Light';
   }, [portionType]);
+
+  const dinnerPortionLight = useMemo(() => {
+    const dt = (qDinnerType || dinnerTypeFromApi || '').trim().toLowerCase();
+    return dt === 'light' || dt.includes('лёгк') || dt.includes('легк');
+  }, [qDinnerType, dinnerTypeFromApi]);
+
+  const effectiveLightMeal = isDinnerMeal ? dinnerPortionLight : isLightPortion;
   
   // Показываем загрузку пока не узнаем тип порции
   if (portionLoading || portionType === null) {
@@ -265,7 +298,7 @@ export default function QuizClient() {
 
     // extras: для Light — только 1 (суп), для Standard/Upsized — максимум 2 (салат и суп)
     // Для TeamMember с Light meal type - также пропускаем салат
-    const isLightMeal = isLightPortion || (isTeamMemberRole && mealType === 'Light');
+    const isLightMeal = effectiveLightMeal || (!isDinnerMeal && isTeamMemberRole && mealType === 'Light');
     
     const extras: string[] = [];
     if (isLightMeal) {
@@ -337,6 +370,9 @@ export default function QuizClient() {
         clientToken: crypto.randomUUID(),
       };
       if (qFor) bodyCreate.forEmployeeID = qFor;
+      if (isDinnerMeal && dinnerEmployeeId) {
+        bodyCreate.dinnerEmployeeId = dinnerEmployeeId;
+      }
 
       const r = await fetchJSON<{ ok: boolean; orderId?: string; error?: string }>(
         '/api/order',
@@ -371,9 +407,11 @@ export default function QuizClient() {
       if (isTeamMemberRole && hasPaidExtras) {
         description = `Обед (${mealCost}₽) + Доп. блюда (${paidExtrasTotal}₽)`;
       } else if (isTeamMemberRole) {
-        description = `Обед ${mealType === 'Light' ? 'Лёгкий' : 'Полный'}`;
+        description = isDinnerMeal
+          ? `Ужин ${mealType === 'Light' ? 'Лёгкий' : 'Полный'}`
+          : `Обед ${mealType === 'Light' ? 'Лёгкий' : 'Полный'}`;
       } else {
-        description = `Дополнительные блюда к заказу`;
+        description = isDinnerMeal ? 'Ужин (доп. блюда)' : `Дополнительные блюда к заказу`;
       }
       
       // Используем Next.js API route (серверный proxy, нет проблем с CORS)
@@ -441,7 +479,14 @@ export default function QuizClient() {
 
   return (
     <main key={`quiz-${portionType}`}>
-      <Panel title={<span className="text-white">{niceDate}</span>}>
+      <Panel
+        title={
+          <span className="text-white">
+            {niceDate}
+            {isDinnerMeal ? ' — ужин' : ''}
+          </span>
+        }
+      >
 
         {!org || !employeeID || !token ? (
           <div className="mb-4 text-sm text-white/70">
@@ -459,20 +504,20 @@ export default function QuizClient() {
 
         <div className="flex items-center gap-2 text-xs text-white/60">
           <span className={cxStep(step,'1')}>1. Меню</span>
-          {!isLightPortion && (
+          {!effectiveLightMeal && (
             <>
               <span>→</span>
               <span className={cxStep(step,'2')}>2. Салат</span>
             </>
           )}
           <span>→</span>
-          <span className={cxStep(step,'3')}>{isLightPortion ? '2' : '3'}. Суп</span>
+          <span className={cxStep(step,'3')}>{effectiveLightMeal ? '2' : '3'}. Суп</span>
           <span>→</span>
-          <span className={cxStep(step,'4')}>{isLightPortion ? '3' : '4'}. Основное</span>
+          <span className={cxStep(step,'4')}>{effectiveLightMeal ? '3' : '4'}. Основное</span>
           <span>→</span>
-          <span className={cxStep(step,'5')}>{isLightPortion ? '4' : '5'}. Гарнир</span>
+          <span className={cxStep(step,'5')}>{effectiveLightMeal ? '4' : '5'}. Гарнир</span>
           <span>→</span>
-          <span className={cxStep(step,'6')}>{isLightPortion ? '5' : '6'}. Подтверждение</span>
+          <span className={cxStep(step,'6')}>{effectiveLightMeal ? '5' : '6'}. Подтверждение</span>
         </div>
       </Panel>
 
@@ -488,6 +533,30 @@ export default function QuizClient() {
           
           {/* Для TeamMember - выбор варианта обеда */}
           {employeeRole === 'TeamMember' && pricingPlan?.contractType === 'Ambassador' ? (
+            isDinnerMeal ? (
+              <div className="space-y-3">
+                <p className="text-white/70 text-sm mb-2">
+                  {dinnerPortionLight ? (
+                    <>
+                      Лёгкий ужин: суп + основное + гарнир (без салата в корпоративной части).
+                      Стоимость:{' '}
+                      <span className="text-yellow-400 font-bold">{pricingPlan.lightMealPrice} ₽</span>
+                    </>
+                  ) : (
+                    <>
+                      Полный ужин: салат + суп + основное + гарнир. Стоимость:{' '}
+                      <span className="text-yellow-400 font-bold">{pricingPlan.fullMealPrice} ₽</span>
+                    </>
+                  )}
+                </p>
+                <div className="flex gap-3">
+                  <Button onClick={() => go(effectiveLightMeal ? '3' : '2')}>Далее</Button>
+                  <Button variant="ghost" onClick={() => history.back()}>
+                    Отмена
+                  </Button>
+                </div>
+              </div>
+            ) : (
             <div className="space-y-3">
               <p className="text-white/70 text-sm mb-4">
                 Выберите вариант обеда:
@@ -533,11 +602,12 @@ export default function QuizClient() {
                 <Button variant="ghost" onClick={()=>history.back()}>Отмена</Button>
               </div>
             </div>
+            )
           ) : (
             /* Для обычных сотрудников - стандартная кнопка */
             <div className="flex gap-3">
               <Button 
-                onClick={()=>go(isLightPortion ? '3' : '2')}
+                onClick={()=>go(effectiveLightMeal ? '3' : '2')}
                 disabled={portionLoading}
               >
                 {portionLoading ? 'Загрузка...' : 'Далее'}
@@ -578,7 +648,7 @@ export default function QuizClient() {
           onSwapSalad={()=>go('3s')}
           onSwapOther={()=>go('3a')}
           draft={draft}
-          onBack={()=>go(isLightPortion ? '1' : '2')}
+          onBack={()=>go(effectiveLightMeal ? '1' : '2')}
         />
       )}
 
@@ -860,6 +930,8 @@ function ConfirmStep({
   employeeRole,
   pricingPlan,
   mealType,
+  isDinnerMeal = false,
+  dinnerUpsell = null,
 }:{
   draft: Draft;
   onSubmit: ()=>void;
@@ -870,6 +942,14 @@ function ConfirmStep({
   employeeRole?: string;
   pricingPlan?: { contractType: string; fullMealPrice: number; lightMealPrice: number } | null;
   mealType?: 'Full' | 'Light' | null;
+  isDinnerMeal?: boolean;
+  dinnerUpsell?: {
+    date: string;
+    org: string;
+    employeeID: string;
+    token: string;
+    dinnerType: string;
+  } | null;
 }) {
   const isTeamMember = employeeRole === 'TeamMember';
   
@@ -901,8 +981,10 @@ function ConfirmStep({
     buttonLabel = 'Оплатить и подтвердить';
   }
 
+  const mealWord = isDinnerMeal ? 'ужин' : 'обед';
+
   return (
-    <Panel title="Подтверждение заказа">
+    <Panel title={isDinnerMeal ? 'Подтверждение заказа ужина' : 'Подтверждение заказа'}>
       {/* Корпоративный набор */}
       <div className="space-y-2 text-sm mb-4">
         {draft.saladName && <div>Салат: <span className="font-semibold">{draft.saladName}{draft.saladIsSwap ? ' (замена)' : ''}</span></div>}
@@ -977,6 +1059,35 @@ function ConfirmStep({
           </button>
         </div>
       </div>
+
+      {dinnerUpsell && (
+        <div className="border-t border-white/10 pt-4 mt-4">
+          <div className="rounded-xl bg-violet-950/40 border border-violet-500/30 p-4">
+            <div className="text-white font-semibold mb-1">Ужин</div>
+            <p className="text-white/70 text-sm mb-3">
+              После оформления обеда можно сразу перейти к заказу ужина (отдельный набор на ту же дату).
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              className="!bg-violet-700 hover:!bg-violet-600 !text-white"
+              onClick={() => {
+                const u = new URL('/order/quiz', window.location.origin);
+                u.searchParams.set('date', dinnerUpsell.date);
+                u.searchParams.set('step', '1');
+                u.searchParams.set('org', dinnerUpsell.org);
+                u.searchParams.set('employeeID', dinnerUpsell.employeeID);
+                u.searchParams.set('token', dinnerUpsell.token);
+                u.searchParams.set('meal', 'dinner');
+                u.searchParams.set('dinnerType', dinnerUpsell.dinnerType);
+                window.location.href = u.toString();
+              }}
+            >
+              Заказать ужин
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Итоговая сумма для TeamMember */}
       {isTeamMember && totalPayable > 0 && (
