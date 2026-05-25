@@ -45,6 +45,15 @@ type HRListItem = {
 
 type HRListResp = { ok: boolean; items: HRListItem[] };
 
+type RegisterBroadcastResp = {
+  ok?: boolean;
+  org?: string;
+  total?: number;
+  sent?: number;
+  skipped?: number;
+  results?: { id: string; status: string; reason?: string; email?: string; error?: string }[];
+};
+
 export default function HRConsolePage() {
   // креды HR
   const [org, setOrg] = useState('');
@@ -61,6 +70,8 @@ export default function HRConsolePage() {
   // сотрудники и заказы на выбранную дату
   const [rows, setRows] = useState<HREmployee[]>([]);
   const [orderByEmp, setOrderByEmp] = useState<Record<string, SingleSummary>>({});
+  const [broadcastAllBusy, setBroadcastAllBusy] = useState(false);
+  const [broadcastEmpId, setBroadcastEmpId] = useState<string | null>(null);
 
   // начальная подстановка из URL/localStorage
   useEffect(() => {
@@ -201,6 +212,80 @@ export default function HRConsolePage() {
     window.location.href = u.toString();
   }
 
+  async function sendRegistrationEmails(targetEmployeeId?: string) {
+    if (!org || !employeeID || !token) {
+      setErr('Укажите org, employeeID и token');
+      return;
+    }
+    const body: Record<string, string> = { org, employeeID, token };
+    if (targetEmployeeId) body.targetEmployeeId = targetEmployeeId;
+    try {
+      if (targetEmployeeId) setBroadcastEmpId(targetEmployeeId);
+      else setBroadcastAllBusy(true);
+      setErr('');
+      const js = await fetchJSON<RegisterBroadcastResp>('/api/register_broadcast_org', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const sent = js.sent ?? 0;
+      const skipped = js.skipped ?? 0;
+      const r0 = js.results?.[0];
+
+      if (targetEmployeeId) {
+        if (sent === 0) {
+          if (r0?.status === 'skipped') {
+            setErr(
+              r0.reason === 'no_email'
+                ? 'У сотрудника нет email — письмо не отправлено'
+                : r0.reason === 'not_active'
+                  ? 'Сотрудник не Active — письмо не отправлено'
+                  : r0.reason === 'no_order_token_dry_run'
+                    ? 'Нет токена заказа (dry run)'
+                    : 'Письмо не отправлено',
+            );
+          } else if (r0?.status === 'error') {
+            setErr(r0.error || 'Ошибка отправки письма');
+          } else {
+            setErr('Письмо не отправлено');
+          }
+          return;
+        }
+        await loadEmployees();
+        return;
+      }
+
+      if (typeof window !== 'undefined') {
+        window.alert(`Отправлено писем: ${sent}.\nПропущено: ${skipped}.`);
+      }
+      if (sent === 0 && skipped > 0) {
+        setErr(
+          `Письма не отправлены: для ${skipped} записей не выполнены условия (email, статус Active и т.д.).`,
+        );
+      } else {
+        setErr('');
+      }
+      if (sent > 0) await loadEmployees();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(msg);
+    } finally {
+      setBroadcastEmpId(null);
+      setBroadcastAllBusy(false);
+    }
+  }
+
+  async function sendToAllInvites() {
+    if (!sorted.length) return;
+    if (
+      !confirm(
+        `Разослать письмо с персональной ссылкой всем сотрудникам из списка (${sorted.length} чел.)? Активным с email уйдёт письмо; остальные будут пропущены на стороне сервера.`,
+      )
+    )
+      return;
+    await sendRegistrationEmails();
+  }
+
   async function cancelOrder(emp: HREmployee) {
     const s = orderByEmp[emp.id];
     if (!s?.orderId) return;
@@ -287,7 +372,19 @@ export default function HRConsolePage() {
                   <th className="py-2 pr-4">ФИО</th>
                   <th className="py-2 pr-4">E-mail</th>
                   <th className="py-2 pr-4">Статус</th>
-                  <th className="py-2 pr-4">Ссылка</th>
+                  <th className="py-2 pr-4 align-bottom">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>Ссылка</span>
+                      <button
+                        type="button"
+                        onClick={() => void sendToAllInvites()}
+                        disabled={broadcastAllBusy || broadcastEmpId !== null || loading || !sorted.length}
+                        className="text-xs inline-flex items-center px-2 py-1 rounded-lg bg-amber-500/90 text-neutral-900 font-medium hover:bg-amber-400 disabled:opacity-40 disabled:pointer-events-none"
+                      >
+                        {broadcastAllBusy ? 'Отправка…' : 'Отправить всем'}
+                      </button>
+                    </div>
+                  </th>
                   <th className="py-2 pr-4">Заказ на {fmtDayLabel(date)}</th>
                   <th className="py-2 pr-0">Действия</th>
                 </tr>
@@ -302,11 +399,27 @@ export default function HRConsolePage() {
                       <td className="py-2 pr-4">{emp.email || '—'}</td>
                       <td className="py-2 pr-4">{emp.status || '—'}</td>
                       <td className="py-2 pr-4">
-                        {emp.hasToken && emp.personalUrl ? (
-                          <CopyLink url={emp.personalUrl} />
-                        ) : (
-                          <span className="text-white/50">нет</span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {emp.hasToken && emp.personalUrl ? (
+                            <CopyLink url={emp.personalUrl} />
+                          ) : (
+                            <span className="text-white/50">нет</span>
+                          )}
+                          <button
+                            type="button"
+                            title={emp.email ? 'Отправить письмо с персональной ссылкой' : 'Нет email'}
+                            disabled={
+                              !emp.email ||
+                              broadcastAllBusy ||
+                              broadcastEmpId !== null ||
+                              loading
+                            }
+                            onClick={() => void sendRegistrationEmails(emp.id)}
+                            className="text-xs inline-flex items-center px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-40 disabled:pointer-events-none"
+                          >
+                            {broadcastEmpId === emp.id ? '…' : 'Отправить'}
+                          </button>
+                        </div>
                       </td>
                       <td className="py-2 pr-4">
                         {hasOrder ? (
